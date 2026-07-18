@@ -1,6 +1,6 @@
-# Seeker
+# Grepdesk
 
-A fast, lightweight desktop search tool built with Avalonia UI. Seeker indexes
+A fast, lightweight desktop search tool built with Avalonia UI. Grepdesk indexes
 your files for instant name-based search, and separately lets you search
 *inside* file contents (text, code, docs) without needing a pre-built index.
 
@@ -29,7 +29,7 @@ your files for instant name-based search, and separately lets you search
 
 ## Why
 
-Most file search tools stop at file names. Seeker adds a second mode for
+Most file search tools stop at file names. Grepdesk adds a second mode for
 searching *inside* files, plus the small quality-of-life actions (terminal,
 editor, explorer) that turn "found it" into "now I can actually use it" —
 without leaving the app.
@@ -67,8 +67,8 @@ support straightforward to add later.
 ## Getting Started
 
 ```bash
-git clone https://github.com/<your-username>/seeker.git
-cd seeker
+git clone https://github.com/FurkanKirat/Grepdesk.git
+cd Grepdesk
 dotnet build
 dotnet run --project Grepdesk.UI
 ```
