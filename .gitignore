@@ -1,0 +1,160 @@
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+x64/
+x86/
+[Aa]rm/
+[Aa]rm64/
+bsearch/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio 2015/2017/2019/2022 cache directories
+.vs/
+
+# Omit bin and obj folders
+[Bb]in/
+[Oo]bj/
+
+# JetBrains Rider / Resharper
+.idea/
+*.sln.DotSettings.user
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log
+
+# Keep lockfiles
+# (Do NOT ignore package-lock.json or yarn.lock)
+
+# Node build/output
+dist/
+build/
+out/
+release/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+ENV/
+.env
+.env.*
+.pytest_cache/
+pip-log.txt
+
+# Build / binaries
+*.exe
+*.dll
+*.pdb
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# Logs and temp files
+logs/
+*.log
+*.tmp
+*.temp
+*.swp
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Caches
+.cache/
+.cache-loader/
+
+# Databases
+*.sqlite3
+*.db
+
+# Secrets
+secrets.yml
+.env.local
+
+# Misc
+*.tgz
+*.bak
+*.backup
+
+# Visual Studio / .NET specific
+# User-specific project files
+*.csproj.user
+*.userprefs
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio database and caches
+*.sdf
+*.dbmdl
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+
+# MonoDevelop
+*.userprefs
+
+# NuGet packages
+packages/
+*.nupkg
+.nuget/
+.paket/
+paket-files/
+
+# dotnet build / artifacts
+project.lock.json
+project.fragment.lock.json
+project.assets.json
+artifacts/
+publish/
+app.publish/
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# IIS Express
+IISExpress/
+
+# Resharper
+_ReSharper*/
+*.ReSharper
+*.DotSettings.user
+
+# Rider
+.idea/
+
+# Temporary files from IDEs and compilers
+*.iobj
+*.ipdb
+*_i.c
+*_p.c
+
+# End of file

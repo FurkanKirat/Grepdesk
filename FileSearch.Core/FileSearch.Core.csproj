@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PdfPig" Version="0.1.16-alpha-20260714-a9ac3" />
+  </ItemGroup>
+
+  <!--
+    .docx / .xlsx are plain zip+XML, so no extra package is required for those.
+    For production-grade .pdf text extraction, add:
+      <PackageReference Include="PdfPig" Version="0.1.9" />
+    and swap the body of PdfExtractor.ExtractTextAsync to use it — the interface
+    (IContentExtractor) does not need to change.
+  -->
+
+</Project>
