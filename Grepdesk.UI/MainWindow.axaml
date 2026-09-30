@@ -22,10 +22,51 @@
         </Style>
     </Window.Styles>
 
-    <TabControl Margin="12" Background="Transparent">
+    <Window.Resources>
+        <!-- Shared template for both file-name and content search results.
+             Snippet TextBlock is bound to ResultItem.Snippet; when Snippet is
+             null/empty it collapses via IsVisible binding with a converter,
+             so Tab 1 (no snippet) and Tab 2 (with snippet) can share one template. -->
+        <DataTemplate x:Key="ResultItemTemplate" x:DataType="ui:ResultItem">
+            <DockPanel Margin="4,3" ToolTip.Tip="{Binding FullPath}">
+                <TextBlock DockPanel.Dock="Left"
+                           Text="{Binding Icon}"
+                           FontSize="16"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"/>
+                <StackPanel>
+                    <TextBlock Text="{Binding FileName}"
+                               Foreground="#cdd6f4"
+                               FontSize="13"
+                               FontWeight="Medium"/>
+                    <TextBlock Text="{Binding Directory}"
+                               Foreground="#6c7086"
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Snippet}"
+                               Foreground="#89b4fa"
+                               FontSize="11"
+                               FontStyle="Italic"
+                               TextWrapping="Wrap"
+                               IsVisible="{Binding HasSnippet}"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel Margin="12">
+    <CheckBox x:Name="ContextMenuCheckBox"
+              DockPanel.Dock="Bottom"
+              Content="Add &quot;Open with Grepdesk&quot; to Explorer right-click menu"
+              FontSize="12"
+              Margin="0,8,0,0"
+              IsVisible="False"/>
+
+    <TabControl Background="Transparent">
 
         <!-- ===================== TAB 1 : FILE NAME SEARCH ===================== -->
-        <TabItem Header="Dosya Adı Arama">
+        <TabItem x:Name="FileNameSearchTabItem" Header="File Name Search">
             <DockPanel Margin="0,10,0,0">
                 <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
                     <TextBox x:Name="SearchBox"
@@ -39,14 +80,14 @@
 
                     <DockPanel>
                         <TextBlock x:Name="StatusText"
-                                   Text="Taramak için bir seçenek belirleyin"
+                                   Text="Choose an option to start scanning"
                                    Foreground="#a6adc8"
                                    FontSize="12"
                                    VerticalAlignment="Center"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-                            <Button x:Name="ChooseFolderButton" Content="Klasör Seç..."/>
-                            <Button x:Name="ScanAllButton" Content="Tüm PC'yi Tara"/>
-                            <Button x:Name="ReindexButton" Content="Yeniden Tara" IsEnabled="False"/>
+                            <Button x:Name="ChooseFolderButton" Content="Choose Folder..."/>
+                            <Button x:Name="ScanAllButton" Content="Scan Entire PC"/>
+                            <Button x:Name="ReindexButton" Content="Rescan" IsEnabled="False"/>
                         </StackPanel>
                     </DockPanel>
                 </StackPanel>
@@ -56,49 +97,28 @@
                          BorderBrush="#313244"
                          BorderThickness="1"
                          CornerRadius="6"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="ui:ResultItem">
-                            <DockPanel Margin="4,3" ToolTip.Tip="{Binding FullPath}">
-                                <TextBlock DockPanel.Dock="Left"
-                                           Text="{Binding Icon}"
-                                           FontSize="16"
-                                           Margin="0,0,8,0"
-                                           VerticalAlignment="Center"/>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding FileName}"
-                                               Foreground="#cdd6f4"
-                                               FontSize="13"
-                                               FontWeight="Medium"/>
-                                    <TextBlock Text="{Binding Directory}"
-                                               Foreground="#6c7086"
-                                               FontSize="11"
-                                               TextTrimming="CharacterEllipsis"/>
-                                </StackPanel>
-                            </DockPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                         ItemTemplate="{StaticResource ResultItemTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
             </DockPanel>
         </TabItem>
 
         <!-- ===================== TAB 2 : CONTENT SEARCH ===================== -->
-        <TabItem Header="İçerik Arama">
+        <TabItem x:Name="ContentSearchTabItem" Header="Content Search">
             <DockPanel Margin="0,10,0,0">
                 <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
 
                     <DockPanel>
-                        <TextBlock Text="Aranacak klasör:"
+                        <TextBlock Text="Folder to search:"
                                    Foreground="#a6adc8"
                                    FontSize="12"
                                    VerticalAlignment="Center"
                                    Margin="0,0,8,0"
                                    DockPanel.Dock="Left"/>
                         <Button x:Name="ContentChooseFolderButton"
-                                Content="Klasör Seç..."
+                                Content="Choose Folder..."
                                 DockPanel.Dock="Right"/>
                         <TextBlock x:Name="ContentFolderText"
-                                   Text="(seçilmedi)"
+                                   Text="(not selected)"
                                    Foreground="#cdd6f4"
                                    FontSize="12"
                                    VerticalAlignment="Center"
@@ -106,7 +126,7 @@
                     </DockPanel>
 
                     <TextBox x:Name="ContentSearchBox"
-                             Watermark="Dosya içinde aranacak metin — Enter'a basın..."
+                             Watermark="Text to search inside files — press Enter..."
                              FontSize="16"
                              Padding="10,8"
                              Background="#313244"
@@ -116,12 +136,13 @@
 
                     <DockPanel>
                         <TextBlock x:Name="ContentStatusText"
-                                   Text="Önce bir klasör seçin"
+                                   Text="Select a folder first"
                                    Foreground="#a6adc8"
                                    FontSize="12"
                                    VerticalAlignment="Center"/>
-                        <TextBlock DockPanel.Dock="Right"
-                                   Text="Destek: .txt .md .cs .json .html .docx .xlsx .pdf(*) vb."
+                        <TextBlock x:Name="SupportedFormatsText"
+                                   DockPanel.Dock="Right"
+                                   Text="Supported: .txt .md .cs .json .html .docx .xlsx .pdf(*) etc."
                                    Foreground="#6c7086"
                                    FontSize="11"
                                    HorizontalAlignment="Right"
@@ -134,37 +155,11 @@
                          BorderBrush="#313244"
                          BorderThickness="1"
                          CornerRadius="6"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="ui:ResultItem">
-                            <DockPanel Margin="4,3" ToolTip.Tip="{Binding FullPath}">
-                                <TextBlock DockPanel.Dock="Left"
-                                           Text="{Binding Icon}"
-                                           FontSize="16"
-                                           Margin="0,0,8,0"
-                                           VerticalAlignment="Center"/>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding FileName}"
-                                               Foreground="#cdd6f4"
-                                               FontSize="13"
-                                               FontWeight="Medium"/>
-                                    <TextBlock Text="{Binding Directory}"
-                                               Foreground="#6c7086"
-                                               FontSize="11"
-                                               TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding Snippet}"
-                                               Foreground="#89b4fa"
-                                               FontSize="11"
-                                               FontStyle="Italic"
-                                               TextWrapping="Wrap"
-                                               Margin="0,2,0,0"/>
-                                </StackPanel>
-                            </DockPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                         ItemTemplate="{StaticResource ResultItemTemplate}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
             </DockPanel>
         </TabItem>
 
     </TabControl>
+    </DockPanel>
 </Window>

@@ -1,16 +1,10 @@
-using System;
-using System.Collections.Generic;
-using Avalonia.Controls;
+﻿using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
 using System.Collections.ObjectModel;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Grepdesk.Core.Editor;
 using Grepdesk.UI.Helpers;
 
@@ -18,9 +12,12 @@ namespace Grepdesk.UI;
 
 public partial class MainWindow : Window
 {
+    // Short alias — LocalizationService.Instance is verbose to repeat at every call site.
+    private static LocalizationService Loc => LocalizationService.Instance;
+
     private readonly IPlatformShell _shell = PlatformShellFactory.CreatePlatformShell();
     private readonly EditorDetector _editorDetector;
-    
+
     // ---- shared file-name index (tab 1) ----
     private readonly FileIndex _index = new();
     private readonly ObservableCollection<ResultItem> _results = [];
@@ -34,10 +31,13 @@ public partial class MainWindow : Window
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
 
-    public MainWindow()
+    public MainWindow() : this(null) { }
+
+    public MainWindow(string? startFolder)
     {
         InitializeComponent();
         _editorDetector = new EditorDetector(_shell);
+        ApplyStaticLocalizedText();
 
         // --- Tab 1 wiring ---
         ResultsList.ItemsSource = _results;
@@ -53,12 +53,12 @@ public partial class MainWindow : Window
 
         _index.ProgressChanged += count =>
             Dispatcher.UIThread.Post(() =>
-                StatusText.Text = $"Indexing... {count:N0} files");
+                StatusText.Text = Loc.Get("IndexingProgress", count));
 
         _index.IndexingComplete += () =>
             Dispatcher.UIThread.Post(() =>
             {
-                StatusText.Text = $"Ready — {_index.Count:N0} items indexed";
+                StatusText.Text = Loc.Get("ReadyIndexed", _index.Count);
                 ReindexButton.IsEnabled = true;
             });
 
@@ -70,6 +70,82 @@ public partial class MainWindow : Window
         ContentResultsList.PointerReleased += OnAnyResultRightClick;
         ContentChooseFolderButton.Click += async (_, _) => await ChooseContentFolderAsync();
         ContentSearchBox.KeyDown += OnContentSearchKeyDown;
+
+        InitContextMenuIntegration();
+
+        if (startFolder is not null)
+            Opened += async (_, _) => await OpenWithFolderAsync(startFolder);
+    }
+
+    /// <summary>
+    /// Opt-in "Open with Grepdesk" entry in the file manager's context menu.
+    /// The registry itself is the source of truth for the checkbox state.
+    /// </summary>
+    private void InitContextMenuIntegration()
+    {
+        if (!_shell.SupportsFolderContextMenu || Environment.ProcessPath is not { } exePath)
+            return;
+
+        ContextMenuCheckBox.Content = Loc.Get("ContextMenuIntegration");
+        ContextMenuCheckBox.IsVisible = true;
+        ContextMenuCheckBox.IsChecked = _shell.IsFolderContextMenuRegistered();
+
+        // Already opted in: rewrite the entry so it follows the exe if it was
+        // moved, and picks up the current language for the menu label.
+        if (ContextMenuCheckBox.IsChecked == true)
+            _shell.RegisterFolderContextMenu(exePath, Loc.Get("ContextMenuEntryLabel"));
+
+        ContextMenuCheckBox.IsCheckedChanged += (_, _) =>
+        {
+            var enable = ContextMenuCheckBox.IsChecked == true;
+            var result = enable
+                ? _shell.RegisterFolderContextMenu(exePath, Loc.Get("ContextMenuEntryLabel"))
+                : _shell.UnregisterFolderContextMenu();
+
+            if (!result.IsSuccess)
+            {
+                StatusText.Text = Loc.Get("ContextMenuUpdateFailed");
+                ContextMenuCheckBox.IsChecked = _shell.IsFolderContextMenuRegistered();
+            }
+        };
+    }
+
+    /// <summary>
+    /// Launched with a folder (e.g. from Explorer's context menu): use it
+    /// as the root for both tabs and start indexing right away.
+    /// </summary>
+    private async Task OpenWithFolderAsync(string folder)
+    {
+        _contentSearchFolder = folder;
+        ContentFolderText.Text = folder;
+        ContentStatusText.Text = Loc.Get("ContentReadyPrompt");
+
+        _selectedRoots = [folder];
+        await StartIndexingAsync();
+    }
+
+    /// <summary>
+    /// Sets the text on controls whose XAML values are just design-time
+    /// placeholders (Watermark, button Content, initial status text).
+    /// These aren't bound, so they need to be set once in code after
+    /// InitializeComponent() using the currently loaded language.
+    /// </summary>
+    private void ApplyStaticLocalizedText()
+    {
+        SearchBox.Watermark = Loc.Get("SearchWatermark");
+        StatusText.Text = Loc.Get("StatusChooseOption");
+        ChooseFolderButton.Content = Loc.Get("ChooseFolder");
+        ScanAllButton.Content = Loc.Get("ScanAllPc");
+        ReindexButton.Content = Loc.Get("Rescan");
+
+        ContentFolderText.Text = Loc.Get("NotSelected");
+        ContentSearchBox.Watermark = Loc.Get("ContentSearchWatermark");
+        ContentStatusText.Text = Loc.Get("SelectFolderFirst");
+        SupportedFormatsText.Text = Loc.Get("SupportedFormats");
+        ContentChooseFolderButton.Content = Loc.Get("ChooseFolder");
+
+        FileNameSearchTabItem.Header = Loc.Get("FileNameSearchTab");
+        ContentSearchTabItem.Header = Loc.Get("ContentSearchTab");
     }
 
     // =====================================================================
@@ -83,7 +159,7 @@ public partial class MainWindow : Window
 
         var folders = await provider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Taranacak klasörü seç",
+            Title = Loc.Get("ChooseFolderDialogTitle"),
             AllowMultiple = true
         });
 
@@ -111,7 +187,7 @@ public partial class MainWindow : Window
     {
         _indexCts.Cancel();
         _indexCts = new CancellationTokenSource();
-        StatusText.Text = "Indexing...";
+        StatusText.Text = Loc.Get("Indexing");
         ReindexButton.IsEnabled = false;
         _results.Clear();
 
@@ -125,7 +201,7 @@ public partial class MainWindow : Window
         if (query == _lastQuery) return;
         await Search(query);
     }
-    
+
     private async Task Search(string query)
     {
         _lastQuery = query;
@@ -164,20 +240,20 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(query))
         {
             StatusText.Text = _index.Count > 0
-                ? $"Ready — {_index.Count:N0} items indexed"
-                : "Taramak için bir seçenek belirleyin";
+                ? Loc.Get("ReadyIndexed", _index.Count)
+                : Loc.Get("StatusChooseOption");
             return;
         }
 
         if (_index.IsIndexing)
         {
-            StatusText.Text = "Still indexing, please wait...";
+            StatusText.Text = Loc.Get("StillIndexing");
             return;
         }
 
         if (_index.Count == 0)
         {
-            StatusText.Text = "Önce bir klasör seçin veya tüm PC'yi tarayın";
+            StatusText.Text = Loc.Get("SelectFolderOrScanAll");
             return;
         }
 
@@ -187,15 +263,15 @@ public partial class MainWindow : Window
             _results.Add(new ResultItem(r));
 
         StatusText.Text = results.Count >= 500
-            ? $"Showing first 500 results for \"{query}\""
-            : $"{results.Count} results for \"{query}\"";
+            ? Loc.Get("ShowingFirst500", query)
+            : Loc.Get("ResultsCount", results.Count, query);
     }
-    
+
     private void OnAnyResultDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (sender is not ListBox { SelectedItem: ResultItem item }) return;
         var result = _shell.OpenPath(item.Result.FullPath);
-        ReportShellResult(result, "Dosya açılamadı");
+        ReportShellResult(result, Loc.Get("FileOpenFailed"));
     }
 
     private void OnAnyResultRightClick(object? sender, PointerReleasedEventArgs e)
@@ -203,44 +279,44 @@ public partial class MainWindow : Window
         if (e.InitialPressMouseButton != MouseButton.Right) return;
         if (sender is not ListBox list) return;
 
-        // Sağ tıklanan öğeyi bul ve seç
+        // Find and select the right-clicked item
         if (e.Source is Control { DataContext: ResultItem item })
         {
             list.SelectedItem = item;
 
             var menuItems = new List<Control>();
 
-            var openItem = new MenuItem { Header = "Aç" };
+            var openItem = new MenuItem { Header = Loc.Get("ContextMenuOpen") };
             openItem.Click += (_, _) =>
             {
                 var result = _shell.OpenPath(item.Result.FullPath);
-                ReportShellResult(result, "Dosya açılamadı");
+                ReportShellResult(result, Loc.Get("FileOpenFailed"));
             };
 
-            var showItem = new MenuItem { Header = "Klasörde Göster" };
+            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
             showItem.Click += (_, _) =>
             {
                 var result = _shell.ShowInFileManager(item.Result.FullPath);
-                ReportShellResult(result, "Klasörde gösterilemedi");
+                ReportShellResult(result, Loc.Get("ShowInFolderFailed"));
             };
 
-            var copyItem = new MenuItem { Header = "Yolu Kopyala" };
+            var copyItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath") };
             copyItem.Click += async (_, _) =>
             {
                 var clipboard = TopLevel.GetTopLevel(list)?.Clipboard;
                 if (clipboard is not null)
                 {
                     await clipboard.SetTextAsync(item.Result.FullPath);
-                    StatusText.Text = "Yol kopyalandı";
+                    StatusText.Text = Loc.Get("PathCopied");
                 }
             };
 
-            var terminalItem = new MenuItem { Header = "Terminalde Aç" };
+            var terminalItem = new MenuItem { Header = Loc.Get("ContextMenuOpenInTerminal") };
             terminalItem.Click += (_, _) =>
             {
                 var res = item.Result;
                 var result = _shell.OpenInTerminal(res.IsDirectory ? res.FullPath : res.Directory);
-                ReportShellResult(result, "Terminal açılamadı");
+                ReportShellResult(result, Loc.Get("TerminalOpenFailed"));
             };
 
             menuItems.Add(openItem);
@@ -263,7 +339,7 @@ public partial class MainWindow : Window
                     editorItem.Click += (_, _) =>
                     {
                         var result = _shell.OpenInEditor(editor, item.Result.FullPath);
-                        ReportShellResult(result, $"{editor.Header} başarısız oldu");
+                        ReportShellResult(result, Loc.Get("EditorOpenFailed", editor.Header));
                     };
                     menuItems.Add(editorItem);
                 }
@@ -277,16 +353,16 @@ public partial class MainWindow : Window
             menu.Open(list);
         }
     }
-    
+
     private void ReportShellResult(ShellActionResult result, string failureMessagePrefix)
     {
         StatusText.Text = result.IsSuccess
-            ? StatusText.Text // başarılıysa mevcut durumu bozma, sessiz geç
+            ? StatusText.Text // silently keep current status on success
             : result.Exception is not null
                 ? $"{failureMessagePrefix}: {result.Exception.Message}"
                 : $"{failureMessagePrefix} ({result.Status})";
     }
-    
+
     // =====================================================================
     // TAB 2 — content search (searches inside file contents, not just names)
     // =====================================================================
@@ -298,7 +374,7 @@ public partial class MainWindow : Window
 
         var folders = await provider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "İçinde arama yapılacak klasörü seç",
+            Title = Loc.Get("ChooseContentFolderDialogTitle"),
             AllowMultiple = false
         });
 
@@ -309,7 +385,7 @@ public partial class MainWindow : Window
 
         _contentSearchFolder = path;
         ContentFolderText.Text = path;
-        ContentStatusText.Text = "Hazır — arama yapmak için metin girip Enter'a basın";
+        ContentStatusText.Text = Loc.Get("ContentReadyPrompt");
     }
 
     private async void OnContentSearchKeyDown(object? sender, KeyEventArgs e)
@@ -324,7 +400,7 @@ public partial class MainWindow : Window
 
         if (_contentSearchFolder is null)
         {
-            ContentStatusText.Text = "Önce aranacak klasörü seçin";
+            ContentStatusText.Text = Loc.Get("SelectFolderFirstContent");
             return;
         }
 
@@ -333,7 +409,7 @@ public partial class MainWindow : Window
         var token = _contentSearchCts.Token;
 
         _contentResults.Clear();
-        ContentStatusText.Text = "Dosyalar taranıyor...";
+        ContentStatusText.Text = Loc.Get("ScanningFiles");
 
         // Walk the chosen folder directly — content search doesn't depend on
         // tab 1's name index, so it works even if that index was never built.
@@ -346,7 +422,7 @@ public partial class MainWindow : Window
         {
             Interlocked.Increment(ref skippedCount);
             Dispatcher.UIThread.Post(() =>
-                ContentStatusText.Text = $"Taranıyor... {matchCount} eşleşme, {skippedCount} dosya okunamadı");
+                ContentStatusText.Text = Loc.Get("ScanningProgress", matchCount, skippedCount));
         }
 
         try
@@ -356,16 +432,16 @@ public partial class MainWindow : Window
                 _contentResults.Add(new ResultItem(new SearchResult(match.FullPath), match.Snippet));
                 matchCount++;
                 ContentStatusText.Text = skippedCount == 0
-                    ? $"Taranıyor... {matchCount} eşleşme bulundu"
-                    : $"Taranıyor... {matchCount} eşleşme, {skippedCount} dosya okunamadı";
+                    ? Loc.Get("ScanningMatches", matchCount)
+                    : Loc.Get("ScanningProgress", matchCount, skippedCount);
             }
 
             if (!token.IsCancellationRequested)
             {
-                var summary = matchCount == 0 ? "Eşleşme bulunamadı" : $"{matchCount} eşleşme bulundu";
+                var summary = matchCount == 0 ? Loc.Get("NoMatchesFound") : Loc.Get("MatchesFound", matchCount);
                 ContentStatusText.Text = skippedCount == 0
                     ? summary
-                    : $"{summary} — {skippedCount} dosya okunamadı (bozuk/kilitli/desteklenmeyen sıkıştırma)";
+                    : Loc.Get("MatchesFoundWithSkipped", summary, skippedCount);
             }
         }
         catch (OperationCanceledException) { }
@@ -409,4 +485,5 @@ public class ResultItem(SearchResult result, string? snippet = null)
     public string FullPath => Result.FullPath;
     public string Icon => Result.IsDirectory ? "📁" : "📄";
     public string? Snippet { get; } = snippet;
+    public bool HasSnippet => Snippet != null;
 }

@@ -88,4 +88,14 @@ public class LinuxShell : IPlatformShell
         }
         return null;
     }
+
+    public bool SupportsFolderContextMenu => false;
+
+    public bool IsFolderContextMenuRegistered() => false;
+
+    public ShellActionResult RegisterFolderContextMenu(string executablePath, string label) =>
+        ShellActionResult.Failure(ShellActionStatus.NotSupported);
+
+    public ShellActionResult UnregisterFolderContextMenu() =>
+        ShellActionResult.Failure(ShellActionStatus.NotSupported);
 }

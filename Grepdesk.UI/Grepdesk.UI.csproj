@@ -30,5 +30,11 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
+  
+	<ItemGroup>
+		<None Include="Assets\Lang\*.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
 
 </Project>

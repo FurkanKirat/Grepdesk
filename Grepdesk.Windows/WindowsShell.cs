@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.Versioning;
+using Microsoft.Win32;
 using Grepdesk.Core;
 using Grepdesk.Core.Editor;
 
 namespace Grepdesk.Windows;
 
+[SupportedOSPlatform("windows")]
 public class WindowsShell : IPlatformShell
 {
     public ShellActionResult OpenPath(string path)
@@ -108,5 +111,58 @@ public class WindowsShell : IPlatformShell
             }
         }
         return null;
+    }
+
+    // HKCU keys: no admin rights needed, and only affect the current user.
+    //   Directory\Background\shell → right-click on empty space inside a folder (%V = that folder)
+    //   Directory\shell            → right-click on a folder itself          (%1 = that folder)
+    private const string ContextMenuKeyName = "Grepdesk";
+    private static readonly (string ParentKey, string Arg)[] ContextMenuKeys =
+    [
+        (@"Software\Classes\Directory\Background\shell", "%V"),
+        (@"Software\Classes\Directory\shell", "%1")
+    ];
+
+    public bool SupportsFolderContextMenu => true;
+
+    public bool IsFolderContextMenuRegistered()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey($@"{ContextMenuKeys[0].ParentKey}\{ContextMenuKeyName}");
+        return key is not null;
+    }
+
+    public ShellActionResult RegisterFolderContextMenu(string executablePath, string label)
+    {
+        try
+        {
+            foreach (var (parentKey, arg) in ContextMenuKeys)
+            {
+                using var key = Registry.CurrentUser.CreateSubKey($@"{parentKey}\{ContextMenuKeyName}");
+                key.SetValue("", label);
+                key.SetValue("Icon", $"\"{executablePath}\"");
+
+                using var command = key.CreateSubKey("command");
+                command.SetValue("", $"\"{executablePath}\" \"{arg}\"");
+            }
+            return ShellActionResult.Success(null);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.OperationFailed, ex);
+        }
+    }
+
+    public ShellActionResult UnregisterFolderContextMenu()
+    {
+        try
+        {
+            foreach (var (parentKey, _) in ContextMenuKeys)
+                Registry.CurrentUser.DeleteSubKeyTree($@"{parentKey}\{ContextMenuKeyName}", throwOnMissingSubKey: false);
+            return ShellActionResult.Success(null);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.OperationFailed, ex);
+        }
     }
 }
