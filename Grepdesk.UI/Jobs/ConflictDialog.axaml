@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Grepdesk.UI.Jobs.ConflictDialog"
+        Width="480"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#1e1e2e">
+
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,6"/>
+        </Style>
+        <Style Selector="TextBlock.label">
+            <Setter Property="Foreground" Value="#6c7086"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        <Style Selector="TextBlock.value">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Margin="16" Spacing="12">
+        <TextBlock x:Name="MessageText"
+                   Foreground="#cdd6f4"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap"/>
+
+        <Grid ColumnDefinitions="*,16,*">
+            <StackPanel Grid.Column="0" Spacing="2">
+                <TextBlock x:Name="SourceLabel" Classes="label"/>
+                <TextBlock x:Name="SourceSize" Classes="value"/>
+                <TextBlock x:Name="SourceDate" Classes="value"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="2">
+                <TextBlock x:Name="DestinationLabel" Classes="label"/>
+                <TextBlock x:Name="DestinationSize" Classes="value"/>
+                <TextBlock x:Name="DestinationDate" Classes="value"/>
+            </StackPanel>
+        </Grid>
+
+        <CheckBox x:Name="ApplyToAllCheckBox" Foreground="#a6adc8" FontSize="12"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="OverwriteButton"/>
+            <Button x:Name="SkipButton"/>
+            <Button x:Name="KeepBothButton"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

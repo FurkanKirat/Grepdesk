@@ -9,10 +9,4 @@ public interface IPlatformShell
     ShellActionResult OpenInTerminal(string directoryPath);
     ShellActionResult OpenInEditor(AvailableEditor editor, string resultPath);
     string? FindExecutableOnPath(string exeName);
-
-    // "Open with Grepdesk" entry in the OS file manager's folder context menu.
-    bool SupportsFolderContextMenu { get; }
-    bool IsFolderContextMenuRegistered();
-    ShellActionResult RegisterFolderContextMenu(string executablePath, string label);
-    ShellActionResult UnregisterFolderContextMenu();
 }

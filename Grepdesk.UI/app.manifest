@@ -8,4 +8,11 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
+  <!-- Lets copy/extract handle paths longer than 260 characters (also needs
+       the LongPathsEnabled policy, which is on by default on recent Windows). -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
 </assembly>

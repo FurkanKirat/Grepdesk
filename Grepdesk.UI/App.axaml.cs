@@ -1,11 +1,17 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Grepdesk.UI.Startup;
 
 namespace Grepdesk.UI;
 
 public class App : Application
 {
+    // Set by Program.Main before Avalonia starts.
+    internal static AppCommand StartupCommand { get; set; } = new(CommandKind.OpenSearch, []);
+    internal static SingleInstanceHost? Host { get; set; }
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
@@ -18,10 +24,19 @@ public class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Explorer's "Open with Grepdesk" context menu passes the folder
-            // as the first argument (see tools/install-context-menu.ps1).
-            var startFolder = desktop.Args?.FirstOrDefault(Directory.Exists);
-            desktop.MainWindow = new MainWindow(startFolder);
+            if (StartupCommand.IsJob)
+            {
+                // Job mode: no search window; the process lives as long as
+                // its job windows do.
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                new JobDispatcher(desktop, Host).Start(StartupCommand);
+            }
+            else
+            {
+                // Explorer's "Open with Grepdesk" passes the folder as the argument.
+                var startFolder = StartupCommand.Paths.FirstOrDefault(Directory.Exists);
+                desktop.MainWindow = new MainWindow(startFolder);
+            }
         }
 
         base.OnFrameworkInitializationCompleted();

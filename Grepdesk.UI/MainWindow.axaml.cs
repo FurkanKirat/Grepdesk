@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 
     private readonly IPlatformShell _shell = PlatformShellFactory.CreatePlatformShell();
     private readonly EditorDetector _editorDetector;
+    private readonly IShellIntegration? _shellIntegration = PlatformShellFactory.CreateShellIntegration();
 
     // ---- shared file-name index (tab 1) ----
     private readonly FileIndex _index = new();
@@ -71,43 +72,53 @@ public partial class MainWindow : Window
         ContentChooseFolderButton.Click += async (_, _) => await ChooseContentFolderAsync();
         ContentSearchBox.KeyDown += OnContentSearchKeyDown;
 
-        InitContextMenuIntegration();
+        InitExplorerMenuSettings();
 
         if (startFolder is not null)
             Opened += async (_, _) => await OpenWithFolderAsync(startFolder);
     }
 
     /// <summary>
-    /// Opt-in "Open with Grepdesk" entry in the file manager's context menu.
+    /// Opt-in Explorer context-menu entries, one checkbox per feature.
     /// The registry itself is the source of truth for the checkbox state.
     /// </summary>
-    private void InitContextMenuIntegration()
+    private void InitExplorerMenuSettings()
     {
-        if (!_shell.SupportsFolderContextMenu || Environment.ProcessPath is not { } exePath)
+        if (_shellIntegration is null || Environment.ProcessPath is not { } exePath)
             return;
 
-        ContextMenuCheckBox.Content = Loc.Get("ContextMenuIntegration");
-        ContextMenuCheckBox.IsVisible = true;
-        ContextMenuCheckBox.IsChecked = _shell.IsFolderContextMenuRegistered();
+        ExplorerMenuPanel.IsVisible = true;
+        ExplorerMenuLabel.Text = Loc.Get(OperatingSystem.IsWindows() ? "ExplorerMenuHeader" : "FileManagerMenuHeader");
 
-        // Already opted in: rewrite the entry so it follows the exe if it was
-        // moved, and picks up the current language for the menu label.
-        if (ContextMenuCheckBox.IsChecked == true)
-            _shell.RegisterFolderContextMenu(exePath, Loc.Get("ContextMenuEntryLabel"));
+        Bind(MenuOpenWithCheckBox, ShellFeature.OpenWith, "FeatureOpenWith");
+        Bind(MenuExtractCheckBox, ShellFeature.Extract, "FeatureExtract");
+        Bind(MenuCompressCheckBox, ShellFeature.Compress, "FeatureCompress");
+        Bind(MenuPasteCheckBox, ShellFeature.Paste, "FeaturePaste");
 
-        ContextMenuCheckBox.IsCheckedChanged += (_, _) =>
+        void Bind(CheckBox box, ShellFeature feature, string labelKey)
         {
-            var enable = ContextMenuCheckBox.IsChecked == true;
-            var result = enable
-                ? _shell.RegisterFolderContextMenu(exePath, Loc.Get("ContextMenuEntryLabel"))
-                : _shell.UnregisterFolderContextMenu();
+            var shell = _shellIntegration;
+            box.Content = Loc.Get(labelKey);
+            box.IsChecked = shell.IsEnabled(feature);
 
-            if (!result.IsSuccess)
+            // Already opted in: rewrite the entries so they follow the exe if
+            // it was moved, and pick up the current language for the labels.
+            if (box.IsChecked == true)
+                shell.Enable(feature, exePath, Loc.Get);
+
+            box.IsCheckedChanged += (_, _) =>
             {
-                StatusText.Text = Loc.Get("ContextMenuUpdateFailed");
-                ContextMenuCheckBox.IsChecked = _shell.IsFolderContextMenuRegistered();
-            }
-        };
+                var result = box.IsChecked == true
+                    ? shell.Enable(feature, exePath, Loc.Get)
+                    : shell.Disable(feature);
+
+                if (!result.IsSuccess)
+                {
+                    StatusText.Text = Loc.Get("ContextMenuUpdateFailed");
+                    box.IsChecked = shell.IsEnabled(feature);
+                }
+            };
+        }
     }
 
     /// <summary>

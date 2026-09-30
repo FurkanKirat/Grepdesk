@@ -56,12 +56,21 @@
     </Window.Resources>
 
     <DockPanel Margin="12">
-    <CheckBox x:Name="ContextMenuCheckBox"
-              DockPanel.Dock="Bottom"
-              Content="Add &quot;Open with Grepdesk&quot; to Explorer right-click menu"
-              FontSize="12"
-              Margin="0,8,0,0"
-              IsVisible="False"/>
+    <WrapPanel x:Name="ExplorerMenuPanel"
+               DockPanel.Dock="Bottom"
+               Margin="0,8,0,0"
+               IsVisible="False">
+        <TextBlock x:Name="ExplorerMenuLabel"
+                   Text="Explorer menu:"
+                   Foreground="#a6adc8"
+                   FontSize="12"
+                   VerticalAlignment="Center"
+                   Margin="0,0,12,0"/>
+        <CheckBox x:Name="MenuOpenWithCheckBox" FontSize="12" Margin="0,0,12,0"/>
+        <CheckBox x:Name="MenuExtractCheckBox" FontSize="12" Margin="0,0,12,0"/>
+        <CheckBox x:Name="MenuCompressCheckBox" FontSize="12" Margin="0,0,12,0"/>
+        <CheckBox x:Name="MenuPasteCheckBox" FontSize="12"/>
+    </WrapPanel>
 
     <TabControl Background="Transparent">
 

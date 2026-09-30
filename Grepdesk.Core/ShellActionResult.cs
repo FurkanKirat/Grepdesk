@@ -9,7 +9,6 @@ public enum ShellActionStatus
     IncompatibleTarget,   // örn. File-only editöre klasör verildi
     ProcessStartFailed,   // Process.Start exception fırlattı
     PathNotFound,         // hedef path artık diskte yok
-    NotSupported,         // bu platformda desteklenmiyor
     OperationFailed       // registry vb. sistem işlemi başarısız
 }
 

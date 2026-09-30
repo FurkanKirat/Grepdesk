@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Grepdesk.UI.Jobs.JobWindow"
+        Title="Grepdesk"
+        Width="500"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Background="#1e1e2e">
+
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="14,6"/>
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Margin="16" Spacing="8">
+        <TextBlock x:Name="TitleText"
+                   Foreground="#cdd6f4"
+                   FontSize="15"
+                   FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis"/>
+
+        <TextBlock x:Name="CurrentText"
+                   Foreground="#6c7086"
+                   FontSize="11"
+                   TextTrimming="CharacterEllipsis"/>
+
+        <ProgressBar x:Name="Bar"
+                     Minimum="0"
+                     Maximum="1"
+                     Height="8"
+                     CornerRadius="4"
+                     Foreground="#89b4fa"
+                     Background="#313244"/>
+
+        <TextBlock x:Name="StatsText"
+                   Foreground="#a6adc8"
+                   FontSize="12"/>
+
+        <StackPanel x:Name="ErrorsPanel" Spacing="6" IsVisible="False" Margin="0,4,0,0">
+            <TextBlock x:Name="ErrorsHeader"
+                       Foreground="#f38ba8"
+                       FontSize="12"
+                       FontWeight="SemiBold"/>
+            <ListBox x:Name="ErrorsList"
+                     MaxHeight="180"
+                     Background="#181825"
+                     BorderBrush="#313244"
+                     BorderThickness="1"
+                     CornerRadius="6"
+                     FontSize="11"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
+            <Button x:Name="PauseButton"/>
+            <Button x:Name="CancelButton"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
