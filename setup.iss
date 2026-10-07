@@ -45,6 +45,18 @@ Name: "{autodesktop}\Grepdesk"; Filename: "{app}\Grepdesk.UI.exe"; Tasks: deskto
 ; Windows açılışında çalıştırma kaydı
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Grepdesk"; ValueData: """{app}\Grepdesk.UI.exe"""; Flags: uninsdeletevalue; Tasks: startup
 
+; Explorer sağ tık menüsü kayıtları: uygulama Ayarlar'dan yazar, kurulum yazmaz
+; (dontcreatekey). Kaldırırken silinir, yoksa menüde silinmiş exe'yi gösteren
+; girdiler kalır. Liste WindowsShellIntegration ile aynı olmalı (test kontrol eder).
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Grepdesk"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\Grepdesk"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\GrepdeskExtractHere"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\GrepdeskExtractTo"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\*\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
+
 [Run]
 ; Kurulum bittiğinde çalıştırma kutucuğu
 Filename: "{app}\Grepdesk.UI.exe"; Description: "{cm:LaunchProgram,Grepdesk}"; Flags: nowait postinstall skipifsilent

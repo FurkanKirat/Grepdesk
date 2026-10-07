@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.Versioning;
 using Grepdesk.Core;
 using Microsoft.Win32;
@@ -46,6 +47,12 @@ public class WindowsShellIntegration : IShellIntegration
     };
 
     private static string KeyPath(Verb verb) => $@"{Classes}{verb.ParentKey}\{verb.Name}";
+
+    /// <summary>
+    /// Every key Grepdesk may write under HKCU. The installer deletes these on
+    /// uninstall (setup.iss); a test keeps the two lists in sync.
+    /// </summary>
+    public static IEnumerable<string> AllKeyPaths => Verbs.Values.SelectMany(v => v).Select(KeyPath).Distinct();
 
     public bool IsEnabled(ShellFeature feature)
     {
