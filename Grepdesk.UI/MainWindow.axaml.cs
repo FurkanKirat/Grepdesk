@@ -12,6 +12,7 @@ using Grepdesk.Core.ContentSearch;
 using System.Collections.ObjectModel;
 using Grepdesk.Core.Editor;
 using Grepdesk.UI.Helpers;
+using Grepdesk.UI.Updates;
 using Grepdesk.UI.Viewer;
 
 namespace Grepdesk.UI;
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
     private string? _contentSearchFolder;
     private string? _contentQuery;
     private FileViewerWindow? _viewer;
+    private readonly UpdateChecker _updateChecker = UpdateChecker.CreateDefault();
 
     // ---- shared ----
     private readonly DiskUsage.DriveScans _driveScans = new();
@@ -113,6 +115,7 @@ public partial class MainWindow : Window
         InitLanguageSetting();
         InitExplorerMenuSettings();
         InitAbout();
+        InitUpdates();
         ApplyLanguage();
 
         if (startFolder is not null)
@@ -257,6 +260,10 @@ public partial class MainWindow : Window
             AboutHeader.Text = Loc.Get("AboutHeader");
             AboutVersionText.Text = Loc.Get("AboutVersion", AppInfo.Display);
             AboutLogsButton.Content = Loc.Get("ErrorOpenLogs");
+            CheckUpdatesCheckBox.Content = Loc.Get("CheckUpdates");
+            CheckUpdatesHint.Text = Loc.Get("CheckUpdatesHint");
+            CheckNowButton.Content = Loc.Get("CheckNow");
+            ShowUpdateNotice();
 
             // Settings: language
             LanguageHeader.Text = Loc.Get("LanguageHeader");
@@ -318,6 +325,75 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(ErrorLog.Directory); // empty until something goes wrong
             ReportShellResult(_shell.OpenPath(ErrorLog.Directory), Loc.Get("FileOpenFailed"));
         };
+    }
+
+    // =====================================================================
+    // Update check
+    // =====================================================================
+
+    private void InitUpdates()
+    {
+        CheckUpdatesCheckBox.IsChecked = Settings.CheckForUpdates;
+        CheckUpdatesCheckBox.IsCheckedChanged += async (_, _) =>
+        {
+            Settings.CheckForUpdates = CheckUpdatesCheckBox.IsChecked == true;
+            Settings.Save();
+            if (Settings.CheckForUpdates) await CheckForUpdatesAsync(manual: false);
+        };
+        CheckNowButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
+        UpdateNotice.Click += (_, _) =>
+        {
+            if (Settings.AvailableUpdateUrl is { } url)
+                ReportShellResult(_shell.OpenPath(url), Loc.Get("FileOpenFailed"));
+        };
+
+        // At most once a day, a few seconds after start so it doesn't compete with the first scan.
+        if (Settings.CheckForUpdates && !(DateTime.UtcNow - Settings.LastUpdateCheck < TimeSpan.FromDays(1)))
+            Opened += async (_, _) =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                await CheckForUpdatesAsync(manual: false);
+            };
+    }
+
+    /// <param name="manual">From the Check now button: say what came of it.</param>
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (manual)
+        {
+            CheckNowButton.IsEnabled = false;
+            SetStatus(UpdateResultText, () => Loc.Get("UpdateChecking"));
+        }
+
+        var result = await _updateChecker.CheckAsync(AppInfo.Version, CancellationToken.None);
+        if (result.Status != UpdateStatus.Failed)
+        {
+            Settings.LastUpdateCheck = DateTime.UtcNow;
+            Settings.AvailableUpdateVersion = result.Version;
+            Settings.AvailableUpdateUrl = result.Url;
+            Settings.Save();
+            ShowUpdateNotice();
+        }
+
+        if (manual)
+        {
+            CheckNowButton.IsEnabled = true;
+            SetStatus(UpdateResultText, () => result.Status switch
+            {
+                UpdateStatus.Available => Loc.Get("UpdateAvailable", result.Version!),
+                UpdateStatus.UpToDate => Loc.Get("UpdateUpToDate", AppInfo.Version),
+                _ => Loc.Get("UpdateFailed"),
+            });
+        }
+    }
+
+    private void ShowUpdateNotice()
+    {
+        var version = Settings.AvailableUpdateVersion;
+        UpdateNotice.IsVisible = version is not null && Settings.AvailableUpdateUrl is not null
+                                 && UpdateChecker.IsNewer(version, AppInfo.Version);
+        UpdateNoticeTitle.Text = Loc.Get("UpdateAvailable", version ?? "");
+        UpdateNoticeHint.Text = Loc.Get("UpdateNoticeHint");
     }
 
     private void InitPreview()

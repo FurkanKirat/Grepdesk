@@ -14,6 +14,7 @@ and unzipping, and copying or moving large folders.
 - Sort by name, size or date across **all** matches, not just the first page
 - Filter by type (folders, documents, images, code, archives, video, audio), minimum size and last modified
 - Preview panel: images, rendered Markdown, the start of text and code files, the text of Office documents and PDFs; on Windows also video frames, album art and the first slide of presentations, with duration, resolution and similar details
+- Optional update check (off by default): tells you when a new release is out on GitHub
 - Viewer window for text, code and Markdown files (Space): the whole file, read-only, with line numbers and Ctrl+F
 
 ### 📄 Content Search

@@ -276,6 +276,17 @@
                     </ListBoxItem>
                 </ListBox>
 
+                <!-- Shown when a newer release is out; opens its page -->
+                <Button x:Name="UpdateNotice" DockPanel.Dock="Bottom" IsVisible="False"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                        Margin="0,0,0,8" Padding="10,7"
+                        Background="#1f2b45" BorderBrush="#89b4fa" BorderThickness="1" CornerRadius="6">
+                    <StackPanel Spacing="1">
+                        <TextBlock x:Name="UpdateNoticeTitle" Foreground="#89b4fa" FontSize="12" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="UpdateNoticeHint" Foreground="#a6adc8" FontSize="11" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Button>
+
                 <ListBox x:Name="FeatureNav" Classes="nav">
                     <ListBoxItem>
                         <StackPanel Orientation="Horizontal">
@@ -496,17 +507,27 @@
 
                     <!-- About -->
                     <Border Classes="card" Padding="16,14">
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
-                                        VerticalAlignment="Center" Margin="16,0,0,0">
-                                <Button x:Name="AboutLogsButton"/>
-                                <Button x:Name="AboutGitHubButton" Content="GitHub"/>
+                        <StackPanel Spacing="12">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center" Margin="16,0,0,0">
+                                    <Button x:Name="AboutLogsButton"/>
+                                    <Button x:Name="AboutGitHubButton" Content="GitHub"/>
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <TextBlock x:Name="AboutHeader" Classes="sectionTitle"/>
+                                    <TextBlock x:Name="AboutVersionText" Classes="hint"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <StackPanel>
+                                <CheckBox x:Name="CheckUpdatesCheckBox"/>
+                                <TextBlock x:Name="CheckUpdatesHint" Classes="hint" Margin="28,-4,0,0"/>
                             </StackPanel>
-                            <StackPanel Spacing="3">
-                                <TextBlock x:Name="AboutHeader" Classes="sectionTitle"/>
-                                <TextBlock x:Name="AboutVersionText" Classes="hint"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Button x:Name="CheckNowButton"/>
+                                <TextBlock x:Name="UpdateResultText" Classes="hint" VerticalAlignment="Center"/>
                             </StackPanel>
-                        </DockPanel>
+                        </StackPanel>
                     </Border>
                 </StackPanel>
             </ScrollViewer>

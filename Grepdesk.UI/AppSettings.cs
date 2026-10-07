@@ -26,6 +26,15 @@ internal sealed class AppSettings
 
     public bool ShowPreview { get; set; } = true;
 
+    /// <summary>Off until the user turns it on: the check contacts GitHub.</summary>
+    public bool CheckForUpdates { get; set; }
+
+    public DateTime? LastUpdateCheck { get; set; }
+
+    /// <summary>The newest release seen, kept so the notice survives restarts between checks.</summary>
+    public string? AvailableUpdateVersion { get; set; }
+    public string? AvailableUpdateUrl { get; set; }
+
     public static AppSettings Current { get; } = Load();
 
     private static AppSettings Load()

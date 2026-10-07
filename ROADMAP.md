@@ -36,8 +36,9 @@ order within each section.
   background mode, so starting at login just opens a window with nothing
   scanned. Remove the option, or ship it with a tray icon and a global
   hotkey that brings up search.
-- [ ] **Update check.** No way to get a fix to users. At least an opt-in
-  check against GitHub Releases on startup; better, a winget package.
+- [x] **Update check.** Opt-in check against GitHub Releases on startup (at
+  most daily) and a Check now button in Settings → About.
+- [ ] **winget package**, so updates arrive through `winget upgrade`.
 - [ ] **Memory and startup of the index.** A full-disk scan holds ~2 GB for
   ~3.5M entries and is redone on every start. Persist the index to disk and
   use a more compact layout (e.g. interned parent folders, struct arrays).
