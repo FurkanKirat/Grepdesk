@@ -48,6 +48,15 @@ order within each section.
 
 ## Features
 
+- [ ] **Copy speed to another drive.** Copying 10,000 small files from C: to
+  D: takes ~10 s whatever the worker count, while robocopy takes ~1.4 s.
+  Found so far: not the engine (plain parallel `File.Copy` behaves the same);
+  creating empty files on D: is fast, writing content is ~1 ms per file and
+  doesn't scale with threads (Defender's scan on close fits); 8 workers beat
+  32 on both drives in some runs, so `WorkerPolicy`'s 32 may be too many.
+  Runs were noisy: measure with more repetitions in random order, and look at
+  the filter stack (`fltmc instances -v D:`, admin) and a WPR trace of
+  robocopy vs Grepdesk.
 - [ ] **Copy & Verify** for the copy/move engine: hash source and destination
   (XXH3 default, SHA-256 optional). Read the destination unbuffered, or the
   check only sees the OS cache. For moves, delete the source only after the
