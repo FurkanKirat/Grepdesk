@@ -38,8 +38,7 @@ All jobs show progress, speed and time left, can be paused or cancelled, and
 only ask about a conflict when overwriting would actually lose data.
 
 ### 🖱️ Explorer Integration
-Tick the features you want under **Explorer menu** at the bottom of the main
-window. Entries are written to the current user's registry (no admin rights)
+Tick the features you want on the **Settings** page (bottom of the sidebar). Entries are written to the current user's registry (no admin rights)
 and follow the exe if it moves. On Windows 11 they appear under
 **Show more options**. Selecting many files launches one process per file;
 Grepdesk merges them into a single job.

@@ -16,11 +16,12 @@ public class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // Load strings for the current system language before any window
+        // Load strings for the chosen (or system) language before any window
         // is constructed, so XAML bindings resolve correctly on first render.
-        // Falls back to en.json automatically if the system language file
-        // isn't found (see LocalizationService.Load).
-        LocalizationService.Instance.Load(LocalizationService.DetectSystemLanguage());
+        // Falls back to en.json automatically if the language file isn't
+        // found (see LocalizationService.Load).
+        LocalizationService.Instance.Load(
+            AppSettings.Current.Language ?? LocalizationService.DetectSystemLanguage());
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

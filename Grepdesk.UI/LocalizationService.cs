@@ -79,6 +79,36 @@ public sealed class LocalizationService
         }
     }
 
+    /// <summary>Language codes that have a strings file, e.g. ["en", "tr"].</summary>
+    public static IReadOnlyList<string> AvailableLanguages()
+    {
+        try
+        {
+            return Directory.GetFiles(LangDirectory, "*.json")
+                .Select(f => Path.GetFileNameWithoutExtension(f))
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return [FallbackLanguage];
+        }
+    }
+
+    /// <summary>A language's name in that language, e.g. "Türkçe" for "tr".</summary>
+    public static string DisplayName(string languageCode)
+    {
+        try
+        {
+            var name = CultureInfo.GetCultureInfo(languageCode).NativeName;
+            return name.Length > 0 ? char.ToUpper(name[0], CultureInfo.GetCultureInfo(languageCode)) + name[1..] : languageCode;
+        }
+        catch (CultureNotFoundException)
+        {
+            return languageCode;
+        }
+    }
+
     /// <summary>Gets a localized string, or the key itself if missing (visible fallback for debugging).</summary>
     public string Get(string key) => _strings.TryGetValue(key, out var value) ? value : key;
 

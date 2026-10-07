@@ -2,43 +2,149 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:Grepdesk.UI"
         x:Class="Grepdesk.UI.MainWindow"
-        Title="FileSearch"
-        Width="800" Height="600"
-        MinWidth="500" MinHeight="300"
+        Title="Grepdesk"
+        Icon="avares://Grepdesk.UI/Assets/icon.ico"
+        Width="1180" Height="700"
+        MinWidth="680" MinHeight="420"
         Background="#1e1e2e">
 
     <Window.Styles>
-        <Style Selector="TabItem">
-            <Setter Property="Foreground" Value="#cdd6f4"/>
-        </Style>
         <Style Selector="Button">
             <Setter Property="Background" Value="#313244"/>
             <Setter Property="Foreground" Value="#cdd6f4"/>
             <Setter Property="CornerRadius" Value="6"/>
-            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Padding" Value="12,6"/>
         </Style>
         <Style Selector="CheckBox">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="CornerRadius" Value="6"/>
+        </Style>
+
+        <!-- Page header -->
+        <Style Selector="TextBlock.pageTitle">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style Selector="TextBlock.pageSubtitle">
+            <Setter Property="Foreground" Value="#7f849c"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style Selector="TextBlock.label">
             <Setter Property="Foreground" Value="#a6adc8"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.hint">
+            <Setter Property="Foreground" Value="#6c7086"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style Selector="TextBlock.sectionTitle">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style Selector="TextBox.search">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="CornerRadius" Value="6"/>
+        </Style>
+
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#181825"/>
+            <Setter Property="BorderBrush" Value="#313244"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,8"/>
+        </Style>
+
+        <Style Selector="ListBox.results">
+            <Setter Property="Background" Value="#181825"/>
+            <Setter Property="BorderBrush" Value="#313244"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+        <Style Selector="ListBox.results ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#232334"/>
+        </Style>
+        <Style Selector="ListBox.results ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+
+        <!-- Sidebar navigation -->
+        <Style Selector="ListBox.nav">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem">
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#252536"/>
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="PathIcon.navIcon">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.navText">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
     </Window.Styles>
 
     <Window.Resources>
         <!-- Shared template for both file-name and content search results.
-             Snippet TextBlock is bound to ResultItem.Snippet; when Snippet is
-             null/empty it collapses via IsVisible binding with a converter,
-             so Tab 1 (no snippet) and Tab 2 (with snippet) can share one template. -->
+             The snippet line only shows for content search results. -->
         <DataTemplate x:Key="ResultItemTemplate" x:DataType="ui:ResultItem">
-            <DockPanel Margin="4,3" ToolTip.Tip="{Binding FullPath}">
-                <TextBlock DockPanel.Dock="Left"
-                           Text="{Binding Icon}"
-                           FontSize="16"
-                           Margin="0,0,8,0"
-                           VerticalAlignment="Center"/>
-                <StackPanel>
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="2,3" ToolTip.Tip="{Binding FullPath}">
+                <Panel Grid.Column="0" Width="38" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <PathIcon Data="{StaticResource IconFolder}" Width="18" Height="18"
+                              Foreground="#f9e2af" IsVisible="{Binding ShowFolderIcon}"/>
+                    <PathIcon Data="{StaticResource IconDocument}" Width="17" Height="17"
+                              Foreground="#7f849c" IsVisible="{Binding ShowDocumentIcon}"/>
+                    <Border IsVisible="{Binding ShowBadge}"
+                            Background="{Binding Kind.Background}"
+                            BorderBrush="{Binding Kind.Foreground}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Height="20"
+                            HorizontalAlignment="Stretch">
+                        <TextBlock Text="{Binding Kind.Label}"
+                                   Foreground="{Binding Kind.Foreground}"
+                                   FontSize="9"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+                </Panel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="{Binding FileName}"
                                Foreground="#cdd6f4"
                                FontSize="13"
-                               FontWeight="Medium"/>
+                               FontWeight="Medium"
+                               TextTrimming="CharacterEllipsis"/>
                     <TextBlock Text="{Binding Directory}"
                                Foreground="#6c7086"
                                FontSize="11"
@@ -51,124 +157,217 @@
                                IsVisible="{Binding HasSnippet}"
                                Margin="0,2,0,0"/>
                 </StackPanel>
-            </DockPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="12,0,4,0" MinWidth="90">
+                    <TextBlock Text="{Binding SizeText}"
+                               Foreground="#a6adc8"
+                               FontSize="11"
+                               TextAlignment="Right"/>
+                    <TextBlock Text="{Binding ModifiedText}"
+                               Foreground="#6c7086"
+                               FontSize="10"
+                               TextAlignment="Right"/>
+                </StackPanel>
+            </Grid>
         </DataTemplate>
     </Window.Resources>
 
-    <DockPanel Margin="12">
-    <WrapPanel x:Name="ExplorerMenuPanel"
-               DockPanel.Dock="Bottom"
-               Margin="0,8,0,0"
-               IsVisible="False">
-        <TextBlock x:Name="ExplorerMenuLabel"
-                   Text="Explorer menu:"
-                   Foreground="#a6adc8"
-                   FontSize="12"
-                   VerticalAlignment="Center"
-                   Margin="0,0,12,0"/>
-        <CheckBox x:Name="MenuOpenWithCheckBox" FontSize="12" Margin="0,0,12,0"/>
-        <CheckBox x:Name="MenuExtractCheckBox" FontSize="12" Margin="0,0,12,0"/>
-        <CheckBox x:Name="MenuCompressCheckBox" FontSize="12" Margin="0,0,12,0"/>
-        <CheckBox x:Name="MenuPasteCheckBox" FontSize="12"/>
-    </WrapPanel>
+    <Grid ColumnDefinitions="210,*">
 
-    <TabControl Background="Transparent">
+        <!-- ============================ SIDEBAR ============================ -->
+        <Border Grid.Column="0" Background="#181825" BorderBrush="#313244" BorderThickness="0,0,1,0">
+            <DockPanel Margin="10,14">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="8,0,0,18">
+                    <Image Source="avares://Grepdesk.UI/Assets/icon.png" Width="26" Height="26"/>
+                    <TextBlock Text="Grepdesk"
+                               Foreground="#cdd6f4"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
 
-        <!-- ===================== TAB 1 : FILE NAME SEARCH ===================== -->
-        <TabItem x:Name="FileNameSearchTabItem" Header="File Name Search">
-            <DockPanel Margin="0,10,0,0">
-                <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
-                    <TextBox x:Name="SearchBox"
-                             Watermark="Search files and folders..."
-                             FontSize="16"
-                             Padding="10,8"
-                             Background="#313244"
-                             Foreground="White"
-                             BorderBrush="#45475a"
-                             CornerRadius="6"/>
+                <ListBox x:Name="SettingsNav" Classes="nav" DockPanel.Dock="Bottom">
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconSettings}"/>
+                            <TextBlock x:Name="NavSettingsText" Classes="navText" Text="Settings"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                </ListBox>
 
+                <ListBox x:Name="FeatureNav" Classes="nav">
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconSearch}"/>
+                            <TextBlock x:Name="NavNameSearchText" Classes="navText" Text="File Name Search"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconDocument}"/>
+                            <TextBlock x:Name="NavContentSearchText" Classes="navText" Text="Content Search"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- ============================= PAGES ============================= -->
+        <Panel x:Name="PageHost" Grid.Column="1" Margin="20,16,20,14">
+
+            <!-- ================ PAGE : FILE NAME SEARCH ================ -->
+            <DockPanel x:Name="NameSearchPage">
+                <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
+                    <TextBlock x:Name="NameSearchTitle" Classes="pageTitle" Text="File Name Search"/>
+                    <TextBlock x:Name="NameSearchSubtitle" Classes="pageSubtitle"/>
+                </StackPanel>
+
+                <Border DockPanel.Dock="Top" Classes="card" Margin="0,0,0,10">
                     <DockPanel>
-                        <TextBlock x:Name="StatusText"
-                                   Text="Choose an option to start scanning"
-                                   Foreground="#a6adc8"
-                                   FontSize="12"
-                                   VerticalAlignment="Center"/>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
                             <Button x:Name="ChooseFolderButton" Content="Choose Folder..."/>
                             <Button x:Name="ScanAllButton" Content="Scan Entire PC"/>
                             <Button x:Name="ReindexButton" Content="Rescan" IsEnabled="False"/>
                         </StackPanel>
-                    </DockPanel>
-                </StackPanel>
-
-                <ListBox x:Name="ResultsList"
-                         Background="#181825"
-                         BorderBrush="#313244"
-                         BorderThickness="1"
-                         CornerRadius="6"
-                         ItemTemplate="{StaticResource ResultItemTemplate}"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-            </DockPanel>
-        </TabItem>
-
-        <!-- ===================== TAB 2 : CONTENT SEARCH ===================== -->
-        <TabItem x:Name="ContentSearchTabItem" Header="Content Search">
-            <DockPanel Margin="0,10,0,0">
-                <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
-
-                    <DockPanel>
-                        <TextBlock Text="Folder to search:"
-                                   Foreground="#a6adc8"
-                                   FontSize="12"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0"
-                                   DockPanel.Dock="Left"/>
-                        <Button x:Name="ContentChooseFolderButton"
-                                Content="Choose Folder..."
-                                DockPanel.Dock="Right"/>
-                        <TextBlock x:Name="ContentFolderText"
-                                   Text="(not selected)"
+                        <TextBlock x:Name="ScopeLabel" Classes="label" DockPanel.Dock="Left" Margin="0,0,8,0" Text="Search in:"/>
+                        <TextBlock x:Name="ScopeText"
                                    Foreground="#cdd6f4"
                                    FontSize="12"
                                    VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
+                </Border>
 
-                    <TextBox x:Name="ContentSearchBox"
-                             Watermark="Text to search inside files — press Enter..."
-                             FontSize="16"
-                             Padding="10,8"
-                             Background="#313244"
-                             Foreground="White"
-                             BorderBrush="#45475a"
-                             CornerRadius="6"/>
+                <TextBox x:Name="SearchBox" Classes="search" DockPanel.Dock="Top" Margin="0,0,0,10"
+                         Watermark="Search files and folders..."/>
 
-                    <DockPanel>
-                        <TextBlock x:Name="ContentStatusText"
-                                   Text="Select a folder first"
-                                   Foreground="#a6adc8"
-                                   FontSize="12"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="SupportedFormatsText"
-                                   DockPanel.Dock="Right"
-                                   Text="Supported: .txt .md .cs .json .html .docx .xlsx .pdf(*) etc."
-                                   Foreground="#6c7086"
-                                   FontSize="11"
-                                   HorizontalAlignment="Right"
-                                   VerticalAlignment="Center"/>
+                <DockPanel DockPanel.Dock="Top" Margin="2,0,0,8">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+                        <TextBlock x:Name="NameSortLabel" Classes="label" Text="Sort:"/>
+                        <ComboBox x:Name="NameSortBox" MinWidth="200" FontSize="12"/>
+                    </StackPanel>
+                    <TextBlock x:Name="StatusText" Classes="label" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <DockPanel Grid.Column="0">
+                        <Button x:Name="ShowMoreButton"
+                                DockPanel.Dock="Bottom"
+                                HorizontalAlignment="Center"
+                                Margin="0,8,0,0"
+                                IsVisible="False"/>
+                        <ListBox x:Name="ResultsList" Classes="results"
+                                 ItemTemplate="{StaticResource ResultItemTemplate}"/>
                     </DockPanel>
+                    <ui:PreviewPane x:Name="NamePreview" Grid.Column="1" Width="320" Margin="10,0,0,0"/>
+                </Grid>
+            </DockPanel>
+
+            <!-- ================ PAGE : CONTENT SEARCH ================ -->
+            <DockPanel x:Name="ContentSearchPage" IsVisible="False">
+                <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
+                    <TextBlock x:Name="ContentSearchTitle" Classes="pageTitle" Text="Content Search"/>
+                    <TextBlock x:Name="ContentSearchSubtitle" Classes="pageSubtitle"/>
                 </StackPanel>
 
-                <ListBox x:Name="ContentResultsList"
-                         Background="#181825"
-                         BorderBrush="#313244"
-                         BorderThickness="1"
-                         CornerRadius="6"
-                         ItemTemplate="{StaticResource ResultItemTemplate}"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-            </DockPanel>
-        </TabItem>
+                <Border DockPanel.Dock="Top" Classes="card" Margin="0,0,0,10">
+                    <DockPanel>
+                        <Button x:Name="ContentChooseFolderButton"
+                                DockPanel.Dock="Right"
+                                Margin="12,0,0,0"
+                                Content="Choose Folder..."/>
+                        <TextBlock x:Name="ContentScopeLabel" Classes="label" DockPanel.Dock="Left" Margin="0,0,8,0" Text="Search in:"/>
+                        <TextBlock x:Name="ContentFolderText"
+                                   Foreground="#cdd6f4"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Border>
 
-    </TabControl>
-    </DockPanel>
+                <TextBox x:Name="ContentSearchBox" Classes="search" DockPanel.Dock="Top" Margin="0,0,0,10"
+                         Watermark="Text to search inside files - press Enter..."/>
+
+                <DockPanel DockPanel.Dock="Top" Margin="2,0,0,8">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+                        <TextBlock x:Name="ContentSortLabel" Classes="label" Text="Sort:"/>
+                        <ComboBox x:Name="ContentSortBox" MinWidth="200" FontSize="12"/>
+                    </StackPanel>
+                    <TextBlock x:Name="ContentStatusText" Classes="label" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+
+                <TextBlock x:Name="SupportedFormatsText" DockPanel.Dock="Bottom" Classes="hint" Margin="2,8,0,0"/>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <ListBox x:Name="ContentResultsList" Grid.Column="0" Classes="results"
+                             ItemTemplate="{StaticResource ResultItemTemplate}"/>
+                    <ui:PreviewPane x:Name="ContentPreview" Grid.Column="1" Width="320" Margin="10,0,0,0"/>
+                </Grid>
+            </DockPanel>
+
+            <!-- ===================== PAGE : SETTINGS ===================== -->
+            <ScrollViewer x:Name="SettingsPage" IsVisible="False">
+                <StackPanel Spacing="14" MaxWidth="720" HorizontalAlignment="Left">
+                    <StackPanel Spacing="2">
+                        <TextBlock x:Name="SettingsTitle" Classes="pageTitle" Text="Settings"/>
+                        <TextBlock x:Name="SettingsSubtitle" Classes="pageSubtitle"/>
+                    </StackPanel>
+
+                    <!-- Language -->
+                    <Border Classes="card" Padding="16,14">
+                        <DockPanel>
+                            <ComboBox x:Name="LanguageBox" DockPanel.Dock="Right" MinWidth="220"
+                                      VerticalAlignment="Center" Margin="16,0,0,0"/>
+                            <StackPanel Spacing="3">
+                                <TextBlock x:Name="LanguageHeader" Classes="sectionTitle"/>
+                                <TextBlock x:Name="LanguageDescription" Classes="hint"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Display -->
+                    <Border Classes="card" Padding="16,14">
+                        <StackPanel Spacing="10">
+                            <TextBlock x:Name="DisplayHeader" Classes="sectionTitle"/>
+                            <StackPanel>
+                                <CheckBox x:Name="ShowPreviewCheckBox"/>
+                                <TextBlock x:Name="ShowPreviewHint" Classes="hint" Margin="28,-4,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Explorer integration -->
+                    <Border Classes="card" Padding="16,14">
+                        <StackPanel Spacing="12">
+                            <StackPanel Spacing="3">
+                                <TextBlock x:Name="IntegrationHeader" Classes="sectionTitle"/>
+                                <TextBlock x:Name="IntegrationDescription" Classes="hint"/>
+                            </StackPanel>
+
+                            <StackPanel x:Name="IntegrationOptions" Spacing="10">
+                                <StackPanel>
+                                    <CheckBox x:Name="MenuOpenWithCheckBox"/>
+                                    <TextBlock x:Name="MenuOpenWithHint" Classes="hint" Margin="28,-4,0,0"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <CheckBox x:Name="MenuExtractCheckBox"/>
+                                    <TextBlock x:Name="MenuExtractHint" Classes="hint" Margin="28,-4,0,0"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <CheckBox x:Name="MenuCompressCheckBox"/>
+                                    <TextBlock x:Name="MenuCompressHint" Classes="hint" Margin="28,-4,0,0"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <CheckBox x:Name="MenuPasteCheckBox"/>
+                                    <TextBlock x:Name="MenuPasteHint" Classes="hint" Margin="28,-4,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <TextBlock x:Name="IntegrationUnsupportedText" Classes="hint" IsVisible="False"/>
+                            <TextBlock x:Name="SettingsStatusText" Foreground="#f38ba8" FontSize="12" IsVisible="False"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Panel>
+    </Grid>
 </Window>

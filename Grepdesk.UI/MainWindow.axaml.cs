@@ -1,4 +1,4 @@
-﻿using Avalonia.Controls;
+using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -14,23 +14,37 @@ public partial class MainWindow : Window
 {
     // Short alias — LocalizationService.Instance is verbose to repeat at every call site.
     private static LocalizationService Loc => LocalizationService.Instance;
+    private static AppSettings Settings => AppSettings.Current;
+
+    // Results are shown a page at a time; the full match list is still sorted
+    // as a whole, so the first page really is the top of the chosen order.
+    private const int PageSize = 500;
+
+    // Below this width the preview panel would squeeze the result list too much.
+    private const double MinWidthForPreview = 760;
 
     private readonly IPlatformShell _shell = PlatformShellFactory.CreatePlatformShell();
     private readonly EditorDetector _editorDetector;
     private readonly IShellIntegration? _shellIntegration = PlatformShellFactory.CreateShellIntegration();
 
-    // ---- shared file-name index (tab 1) ----
+    // ---- file-name search ----
     private readonly FileIndex _index = new();
     private readonly ObservableCollection<ResultItem> _results = [];
     private CancellationTokenSource _indexCts = new();
     private CancellationTokenSource _searchCts = new();
     private string _lastQuery = "";
     private List<string>? _selectedRoots; // null = whole PC
+    private bool _scopeChosen;
+    private List<SearchResult> _allMatches = []; // every match for the last query, unsorted
 
-    // ---- content search (tab 2) ----
+    // ---- content search ----
     private readonly ObservableCollection<ResultItem> _contentResults = [];
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
+
+    // ---- shared ----
+    private readonly Dictionary<TextBlock, Func<string>> _statusTexts = [];
+    private bool _updatingControls;
 
     public MainWindow() : this(null) { }
 
@@ -38,15 +52,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _editorDetector = new EditorDetector(_shell);
-        ApplyStaticLocalizedText();
 
-        // --- Tab 1 wiring ---
+        InitNavigation();
+
+        // --- File name search wiring ---
         ResultsList.ItemsSource = _results;
 
         SearchBox.TextChanged += OnSearchTextChanged;
         SearchBox.KeyDown += OnSearchKeyDown;
         ResultsList.DoubleTapped += OnAnyResultDoubleTapped;
         ResultsList.PointerReleased += OnAnyResultRightClick;
+        ShowMoreButton.Click += async (_, _) => await ShowMoreAsync();
 
         ChooseFolderButton.Click += async (_, _) => await ChooseFolderAsync();
         ScanAllButton.Click += async (_, _) => await ScanWholeComputerAsync();
@@ -54,28 +70,267 @@ public partial class MainWindow : Window
 
         _index.ProgressChanged += count =>
             Dispatcher.UIThread.Post(() =>
-                StatusText.Text = Loc.Get("IndexingProgress", count));
+                SetStatus(StatusText, () => Loc.Get("IndexingProgress", count)));
 
         _index.IndexingComplete += () =>
             Dispatcher.UIThread.Post(() =>
             {
-                StatusText.Text = Loc.Get("ReadyIndexed", _index.Count);
+                SetStatus(StatusText, () => Loc.Get("ReadyIndexed", _index.Count));
                 ReindexButton.IsEnabled = true;
             });
 
         // No automatic scan on launch — user picks a folder or "scan whole PC" first.
+        SetStatus(StatusText, () => Loc.Get("StatusChooseOption"));
 
-        // --- Tab 2 wiring ---
+        // --- Content search wiring ---
         ContentResultsList.ItemsSource = _contentResults;
         ContentResultsList.DoubleTapped += OnAnyResultDoubleTapped;
         ContentResultsList.PointerReleased += OnAnyResultRightClick;
         ContentChooseFolderButton.Click += async (_, _) => await ChooseContentFolderAsync();
         ContentSearchBox.KeyDown += OnContentSearchKeyDown;
+        SetStatus(ContentStatusText, () => Loc.Get("SelectFolderFirst"));
 
+        InitPreview();
+        InitSorting();
+        InitLanguageSetting();
         InitExplorerMenuSettings();
+        ApplyLanguage();
 
         if (startFolder is not null)
             Opened += async (_, _) => await OpenWithFolderAsync(startFolder);
+    }
+
+    // =====================================================================
+    // Navigation, language, preview, sorting
+    // =====================================================================
+
+    /// <summary>
+    /// Sidebar: features at the top, settings pinned to the bottom. They are
+    /// two separate lists, so selecting in one clears the other.
+    /// </summary>
+    private void InitNavigation()
+    {
+        Control[] featurePages = [NameSearchPage, ContentSearchPage];
+
+        FeatureNav.SelectionChanged += (_, _) =>
+        {
+            if (FeatureNav.SelectedIndex < 0) return;
+            SettingsNav.SelectedIndex = -1;
+            ShowPage(featurePages[FeatureNav.SelectedIndex]);
+        };
+
+        SettingsNav.SelectionChanged += (_, _) =>
+        {
+            if (SettingsNav.SelectedIndex < 0) return;
+            FeatureNav.SelectedIndex = -1;
+            ShowPage(SettingsPage);
+        };
+
+        FeatureNav.SelectedIndex = 0;
+    }
+
+    private void ShowPage(Control page)
+    {
+        NameSearchPage.IsVisible = page == NameSearchPage;
+        ContentSearchPage.IsVisible = page == ContentSearchPage;
+        SettingsPage.IsVisible = page == SettingsPage;
+
+        if (page == NameSearchPage) SearchBox.Focus();
+        else if (page == ContentSearchPage) ContentSearchBox.Focus();
+    }
+
+    /// <summary>
+    /// Status lines are stored as functions so a language switch can re-render
+    /// them ("1.234 results" stays a result count, just in the new language).
+    /// </summary>
+    private void SetStatus(TextBlock target, Func<string> text)
+    {
+        _statusTexts[target] = text;
+        target.Text = text();
+    }
+
+    private TextBlock CurrentStatusText => ContentSearchPage.IsVisible ? ContentStatusText : StatusText;
+
+    private void InitLanguageSetting()
+    {
+        LanguageBox.SelectionChanged += (_, _) =>
+        {
+            if (_updatingControls || LanguageBox.SelectedIndex < 0) return;
+
+            var languages = LocalizationService.AvailableLanguages();
+            Settings.Language = LanguageBox.SelectedIndex == 0 ? null : languages[LanguageBox.SelectedIndex - 1];
+            Settings.Save();
+
+            Loc.Load(Settings.Language ?? LocalizationService.DetectSystemLanguage());
+            ApplyLanguage();
+            RefreshExplorerMenuLabels();
+        };
+    }
+
+    /// <summary>
+    /// Sets every piece of UI text from the current language. Runs once at
+    /// startup and again whenever the language is changed in Settings, so it
+    /// must not reset any state (chosen folders, results, status).
+    /// </summary>
+    private void ApplyLanguage()
+    {
+        _updatingControls = true;
+        try
+        {
+            NavNameSearchText.Text = NameSearchTitle.Text = Loc.Get("FileNameSearchTab");
+            NavContentSearchText.Text = ContentSearchTitle.Text = Loc.Get("ContentSearchTab");
+            NavSettingsText.Text = SettingsTitle.Text = Loc.Get("SettingsTab");
+            NameSearchSubtitle.Text = Loc.Get("NameSearchSubtitle");
+            ContentSearchSubtitle.Text = Loc.Get("ContentSearchSubtitle");
+            SettingsSubtitle.Text = Loc.Get("SettingsSubtitle");
+
+            // File name search
+            SearchBox.Watermark = Loc.Get("SearchWatermark");
+            ChooseFolderButton.Content = Loc.Get("ChooseFolder");
+            ScanAllButton.Content = Loc.Get("ScanAllPc");
+            ReindexButton.Content = Loc.Get("Rescan");
+            ScopeLabel.Text = Loc.Get("ScopeLabel");
+            UpdateScopeText();
+            UpdateShowMoreButton();
+
+            // Content search
+            ContentScopeLabel.Text = Loc.Get("ScopeLabel");
+            ContentFolderText.Text = _contentSearchFolder ?? Loc.Get("NotSelected");
+            ContentSearchBox.Watermark = Loc.Get("ContentSearchWatermark");
+            SupportedFormatsText.Text = Loc.Get("SupportedFormats");
+            ContentChooseFolderButton.Content = Loc.Get("ChooseFolder");
+
+            // Sorting
+            NameSortLabel.Text = ContentSortLabel.Text = Loc.Get("SortLabel");
+            var sortLabels = Enum.GetValues<SortMode>().Select(m => Loc.Get("Sort" + m)).ToList();
+            foreach (var box in new[] { NameSortBox, ContentSortBox })
+            {
+                box.ItemsSource = sortLabels;
+                box.SelectedIndex = (int)Settings.Sort;
+            }
+
+            // Settings: language
+            LanguageHeader.Text = Loc.Get("LanguageHeader");
+            LanguageDescription.Text = Loc.Get("LanguageDescription");
+            var languages = LocalizationService.AvailableLanguages();
+            var systemName = LocalizationService.DisplayName(LocalizationService.DetectSystemLanguage());
+            LanguageBox.ItemsSource = languages
+                .Select(LocalizationService.DisplayName)
+                .Prepend(Loc.Get("LanguageSystemDefault", systemName))
+                .ToList();
+            LanguageBox.SelectedIndex = Settings.Language is { } code && languages.Contains(code)
+                ? languages.ToList().IndexOf(code) + 1
+                : 0;
+
+            // Settings: display
+            DisplayHeader.Text = Loc.Get("DisplayHeader");
+            ShowPreviewCheckBox.Content = Loc.Get("ShowPreview");
+            ShowPreviewHint.Text = Loc.Get("ShowPreviewHint");
+
+            // Settings: Explorer integration
+            var isWindows = OperatingSystem.IsWindows();
+            IntegrationHeader.Text = Loc.Get(isWindows ? "ExplorerMenuHeader" : "FileManagerMenuHeader");
+            IntegrationDescription.Text = Loc.Get(isWindows ? "ExplorerMenuDescription" : "FileManagerMenuDescription");
+            IntegrationUnsupportedText.Text = Loc.Get("IntegrationUnsupported");
+            SetFeatureText(MenuOpenWithCheckBox, MenuOpenWithHint, "FeatureOpenWith");
+            SetFeatureText(MenuExtractCheckBox, MenuExtractHint, "FeatureExtract");
+            SetFeatureText(MenuCompressCheckBox, MenuCompressHint, "FeatureCompress");
+            SetFeatureText(MenuPasteCheckBox, MenuPasteHint, "FeaturePaste");
+            if (SettingsStatusText.IsVisible)
+                SettingsStatusText.Text = Loc.Get("ContextMenuUpdateFailed");
+
+            foreach (var (target, text) in _statusTexts)
+                target.Text = text();
+
+            NamePreview.ApplyLanguage();
+            ContentPreview.ApplyLanguage();
+        }
+        finally
+        {
+            _updatingControls = false;
+        }
+
+        static void SetFeatureText(CheckBox box, TextBlock hint, string key)
+        {
+            box.Content = Loc.Get(key);
+            hint.Text = Loc.Get(key + "Hint");
+        }
+    }
+
+    private void InitPreview()
+    {
+        ResultsList.SelectionChanged += (_, _) => NamePreview.Show(ResultsList.SelectedItem as ResultItem);
+        ContentResultsList.SelectionChanged += (_, _) => ContentPreview.Show(ContentResultsList.SelectedItem as ResultItem);
+
+        foreach (var pane in new[] { NamePreview, ContentPreview })
+        {
+            pane.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
+            pane.ShowInFolderRequested += path => ReportShellResult(_shell.ShowInFileManager(path), Loc.Get("ShowInFolderFailed"));
+        }
+
+        ShowPreviewCheckBox.IsChecked = Settings.ShowPreview;
+        ShowPreviewCheckBox.IsCheckedChanged += (_, _) =>
+        {
+            Settings.ShowPreview = ShowPreviewCheckBox.IsChecked == true;
+            Settings.Save();
+            UpdatePreviewVisibility();
+        };
+
+        PageHost.SizeChanged += (_, _) => UpdatePreviewVisibility();
+        UpdatePreviewVisibility();
+    }
+
+    private void UpdatePreviewVisibility()
+    {
+        var visible = Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForPreview;
+        NamePreview.IsVisible = ContentPreview.IsVisible = visible;
+    }
+
+    /// <summary>
+    /// One sort order for both result lists; each page has its own combo box,
+    /// kept in sync so switching pages never shows a different order.
+    /// </summary>
+    private void InitSorting()
+    {
+        foreach (var box in new[] { NameSortBox, ContentSortBox })
+        {
+            box.SelectionChanged += async (_, _) =>
+            {
+                if (_updatingControls || box.SelectedIndex < 0 || (SortMode)box.SelectedIndex == Settings.Sort) return;
+
+                Settings.Sort = (SortMode)box.SelectedIndex;
+                Settings.Save();
+
+                _updatingControls = true;
+                NameSortBox.SelectedIndex = ContentSortBox.SelectedIndex = box.SelectedIndex;
+                _updatingControls = false;
+
+                ResortContentResults();
+                await ResortNameResultsAsync();
+            };
+        }
+    }
+
+    private void ResortContentResults()
+    {
+        var sorted = _contentResults.ToList();
+        sorted.Sort(ResultOrdering.ForItems(Settings.Sort));
+        _contentResults.Clear();
+        foreach (var item in sorted)
+            _contentResults.Add(item);
+    }
+
+    /// <summary>Keeps a streaming list (content search) ordered as items arrive.</summary>
+    private static void InsertSorted(ObservableCollection<ResultItem> list, ResultItem item, Comparison<ResultItem> compare)
+    {
+        int lo = 0, hi = list.Count;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (compare(list[mid], item) <= 0) lo = mid + 1;
+            else hi = mid;
+        }
+        list.Insert(lo, item);
     }
 
     /// <summary>
@@ -85,26 +340,25 @@ public partial class MainWindow : Window
     private void InitExplorerMenuSettings()
     {
         if (_shellIntegration is null || Environment.ProcessPath is not { } exePath)
+        {
+            IntegrationOptions.IsVisible = false;
+            IntegrationUnsupportedText.IsVisible = true;
             return;
+        }
 
-        ExplorerMenuPanel.IsVisible = true;
-        ExplorerMenuLabel.Text = Loc.Get(OperatingSystem.IsWindows() ? "ExplorerMenuHeader" : "FileManagerMenuHeader");
+        Bind(MenuOpenWithCheckBox, ShellFeature.OpenWith);
+        Bind(MenuExtractCheckBox, ShellFeature.Extract);
+        Bind(MenuCompressCheckBox, ShellFeature.Compress);
+        Bind(MenuPasteCheckBox, ShellFeature.Paste);
 
-        Bind(MenuOpenWithCheckBox, ShellFeature.OpenWith, "FeatureOpenWith");
-        Bind(MenuExtractCheckBox, ShellFeature.Extract, "FeatureExtract");
-        Bind(MenuCompressCheckBox, ShellFeature.Compress, "FeatureCompress");
-        Bind(MenuPasteCheckBox, ShellFeature.Paste, "FeaturePaste");
+        // Already opted in: rewrite the entries so they follow the exe if
+        // it was moved, and pick up the current language for the labels.
+        RefreshExplorerMenuLabels();
 
-        void Bind(CheckBox box, ShellFeature feature, string labelKey)
+        void Bind(CheckBox box, ShellFeature feature)
         {
             var shell = _shellIntegration;
-            box.Content = Loc.Get(labelKey);
             box.IsChecked = shell.IsEnabled(feature);
-
-            // Already opted in: rewrite the entries so they follow the exe if
-            // it was moved, and pick up the current language for the labels.
-            if (box.IsChecked == true)
-                shell.Enable(feature, exePath, Loc.Get);
 
             box.IsCheckedChanged += (_, _) =>
             {
@@ -112,55 +366,50 @@ public partial class MainWindow : Window
                     ? shell.Enable(feature, exePath, Loc.Get)
                     : shell.Disable(feature);
 
+                SettingsStatusText.IsVisible = !result.IsSuccess;
                 if (!result.IsSuccess)
                 {
-                    StatusText.Text = Loc.Get("ContextMenuUpdateFailed");
+                    SettingsStatusText.Text = Loc.Get("ContextMenuUpdateFailed");
                     box.IsChecked = shell.IsEnabled(feature);
                 }
             };
         }
     }
 
+    private void RefreshExplorerMenuLabels()
+    {
+        if (_shellIntegration is null || Environment.ProcessPath is not { } exePath) return;
+
+        foreach (var feature in Enum.GetValues<ShellFeature>())
+            if (_shellIntegration.IsEnabled(feature))
+                _shellIntegration.Enable(feature, exePath, Loc.Get);
+    }
+
     /// <summary>
     /// Launched with a folder (e.g. from Explorer's context menu): use it
-    /// as the root for both tabs and start indexing right away.
+    /// as the root for both pages and start indexing right away.
     /// </summary>
     private async Task OpenWithFolderAsync(string folder)
     {
         _contentSearchFolder = folder;
         ContentFolderText.Text = folder;
-        ContentStatusText.Text = Loc.Get("ContentReadyPrompt");
+        SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
         _selectedRoots = [folder];
         await StartIndexingAsync();
     }
 
-    /// <summary>
-    /// Sets the text on controls whose XAML values are just design-time
-    /// placeholders (Watermark, button Content, initial status text).
-    /// These aren't bound, so they need to be set once in code after
-    /// InitializeComponent() using the currently loaded language.
-    /// </summary>
-    private void ApplyStaticLocalizedText()
+    private void UpdateScopeText()
     {
-        SearchBox.Watermark = Loc.Get("SearchWatermark");
-        StatusText.Text = Loc.Get("StatusChooseOption");
-        ChooseFolderButton.Content = Loc.Get("ChooseFolder");
-        ScanAllButton.Content = Loc.Get("ScanAllPc");
-        ReindexButton.Content = Loc.Get("Rescan");
-
-        ContentFolderText.Text = Loc.Get("NotSelected");
-        ContentSearchBox.Watermark = Loc.Get("ContentSearchWatermark");
-        ContentStatusText.Text = Loc.Get("SelectFolderFirst");
-        SupportedFormatsText.Text = Loc.Get("SupportedFormats");
-        ContentChooseFolderButton.Content = Loc.Get("ChooseFolder");
-
-        FileNameSearchTabItem.Header = Loc.Get("FileNameSearchTab");
-        ContentSearchTabItem.Header = Loc.Get("ContentSearchTab");
+        ScopeText.Text = !_scopeChosen
+            ? Loc.Get("NotSelected")
+            : _selectedRoots is null
+                ? Loc.Get("ScopeEntirePc")
+                : string.Join(";  ", _selectedRoots);
     }
 
     // =====================================================================
-    // TAB 1 — file name search
+    // File name search
     // =====================================================================
 
     private async Task ChooseFolderAsync()
@@ -198,9 +447,11 @@ public partial class MainWindow : Window
     {
         _indexCts.Cancel();
         _indexCts = new CancellationTokenSource();
-        StatusText.Text = Loc.Get("Indexing");
+        SetStatus(StatusText, () => Loc.Get("Indexing"));
         ReindexButton.IsEnabled = false;
-        _results.Clear();
+        _scopeChosen = true;
+        UpdateScopeText();
+        ClearNameResults();
 
         await _index.BuildIndexAsync(_selectedRoots, _indexCts.Token);
         await Search(SearchBox.Text ?? "");
@@ -226,9 +477,9 @@ public partial class MainWindow : Window
             await Task.Delay(150, token);
             if (token.IsCancellationRequested) return;
 
-            RunSearch(query);
+            await RunSearchAsync(query, token);
         }
-        catch (TaskCanceledException) { }
+        catch (OperationCanceledException) { }
     }
 
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)
@@ -244,38 +495,106 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RunSearch(string query)
+    private void ClearNameResults()
     {
+        _allMatches = [];
         _results.Clear();
+        UpdateShowMoreButton();
+    }
 
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            StatusText.Text = _index.Count > 0
-                ? Loc.Get("ReadyIndexed", _index.Count)
-                : Loc.Get("StatusChooseOption");
-            return;
-        }
+    private async Task RunSearchAsync(string query, CancellationToken token)
+    {
+        ClearNameResults();
 
         if (_index.IsIndexing)
         {
-            StatusText.Text = Loc.Get("StillIndexing");
+            SetStatus(StatusText, () => Loc.Get("StillIndexing"));
             return;
         }
 
         if (_index.Count == 0)
         {
-            StatusText.Text = Loc.Get("SelectFolderOrScanAll");
+            SetStatus(StatusText, () => Loc.Get(_scopeChosen ? "SelectFolderOrScanAll" : "StatusChooseOption"));
             return;
         }
 
-        var results = _index.Search(query).ToList();
+        // An empty query lists everything in the scanned folders, so the sort
+        // alone answers questions like "what are the biggest files here?".
 
-        foreach (var r in results)
+        var sortMode = Settings.Sort;
+        var (all, firstPage) = await Task.Run(() =>
+        {
+            var matches = _index.Search(query, token);
+            return (matches, ResultOrdering.TakeSorted(matches, PageSize, ResultOrdering.For(sortMode), token));
+        }, token);
+        if (token.IsCancellationRequested) return;
+
+        _allMatches = all;
+        foreach (var r in firstPage)
             _results.Add(new ResultItem(r));
 
-        StatusText.Text = results.Count >= 500
-            ? Loc.Get("ShowingFirst500", query)
-            : Loc.Get("ResultsCount", results.Count, query);
+        UpdateNameStatus(query);
+    }
+
+    private void UpdateNameStatus(string query)
+    {
+        var total = _allMatches.Count;
+        var shown = _results.Count;
+        var browsing = string.IsNullOrWhiteSpace(query);
+        SetStatus(StatusText, () => (browsing, total > shown) switch
+        {
+            (true, true) => Loc.Get("AllItemsShowingTop", total, shown),
+            (true, false) => Loc.Get("AllItemsCount", total),
+            (false, true) => Loc.Get("ResultsShowingTop", total, query, shown),
+            (false, false) => Loc.Get("ResultsCount", total, query),
+        });
+        UpdateShowMoreButton();
+    }
+
+    private void UpdateShowMoreButton()
+    {
+        var remaining = _allMatches.Count - _results.Count;
+        ShowMoreButton.IsVisible = remaining > 0;
+        ShowMoreButton.Content = Loc.Get("ShowMore", Math.Min(PageSize, remaining));
+    }
+
+    /// <summary>Appends the next page; the order is total, so the shown prefix never changes.</summary>
+    private async Task ShowMoreAsync()
+    {
+        var token = _searchCts.Token;
+        var all = _allMatches;
+        var sortMode = Settings.Sort;
+        var target = _results.Count + PageSize;
+
+        var page = await Task.Run(() => ResultOrdering.TakeSorted(all, target, ResultOrdering.For(sortMode), token), token);
+        if (token.IsCancellationRequested || all != _allMatches || sortMode != Settings.Sort) return;
+
+        foreach (var r in page.Skip(_results.Count))
+            _results.Add(new ResultItem(r));
+
+        UpdateNameStatus(_lastQuery);
+    }
+
+    private async Task ResortNameResultsAsync()
+    {
+        if (_allMatches.Count == 0) return;
+
+        var token = _searchCts.Token;
+        var all = _allMatches;
+        var sortMode = Settings.Sort;
+        var count = Math.Max(_results.Count, PageSize);
+
+        try
+        {
+            var page = await Task.Run(() => ResultOrdering.TakeSorted(all, count, ResultOrdering.For(sortMode), token), token);
+            if (token.IsCancellationRequested || all != _allMatches || sortMode != Settings.Sort) return;
+
+            _results.Clear();
+            foreach (var r in page)
+                _results.Add(new ResultItem(r));
+            UpdateNameStatus(_lastQuery);
+        }
+        catch (OperationCanceledException) { }
     }
 
     private void OnAnyResultDoubleTapped(object? sender, TappedEventArgs e)
@@ -318,7 +637,7 @@ public partial class MainWindow : Window
                 if (clipboard is not null)
                 {
                     await clipboard.SetTextAsync(item.Result.FullPath);
-                    StatusText.Text = Loc.Get("PathCopied");
+                    SetStatus(CurrentStatusText, () => Loc.Get("PathCopied"));
                 }
             };
 
@@ -367,15 +686,16 @@ public partial class MainWindow : Window
 
     private void ReportShellResult(ShellActionResult result, string failureMessagePrefix)
     {
-        StatusText.Text = result.IsSuccess
-            ? StatusText.Text // silently keep current status on success
-            : result.Exception is not null
-                ? $"{failureMessagePrefix}: {result.Exception.Message}"
-                : $"{failureMessagePrefix} ({result.Status})";
+        if (result.IsSuccess) return; // silently keep current status on success
+
+        var message = result.Exception is not null
+            ? $"{failureMessagePrefix}: {result.Exception.Message}"
+            : $"{failureMessagePrefix} ({result.Status})";
+        SetStatus(CurrentStatusText, () => message);
     }
 
     // =====================================================================
-    // TAB 2 — content search (searches inside file contents, not just names)
+    // Content search (searches inside file contents, not just names)
     // =====================================================================
 
     private async Task ChooseContentFolderAsync()
@@ -396,7 +716,7 @@ public partial class MainWindow : Window
 
         _contentSearchFolder = path;
         ContentFolderText.Text = path;
-        ContentStatusText.Text = Loc.Get("ContentReadyPrompt");
+        SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
     }
 
     private async void OnContentSearchKeyDown(object? sender, KeyEventArgs e)
@@ -411,7 +731,7 @@ public partial class MainWindow : Window
 
         if (_contentSearchFolder is null)
         {
-            ContentStatusText.Text = Loc.Get("SelectFolderFirstContent");
+            SetStatus(ContentStatusText, () => Loc.Get("SelectFolderFirstContent"));
             return;
         }
 
@@ -420,10 +740,10 @@ public partial class MainWindow : Window
         var token = _contentSearchCts.Token;
 
         _contentResults.Clear();
-        ContentStatusText.Text = Loc.Get("ScanningFiles");
+        SetStatus(ContentStatusText, () => Loc.Get("ScanningFiles"));
 
         // Walk the chosen folder directly — content search doesn't depend on
-        // tab 1's name index, so it works even if that index was never built.
+        // the name index, so it works even if that index was never built.
         var candidates = EnumerateSearchableFiles(_contentSearchFolder);
 
         var matchCount = 0;
@@ -433,26 +753,30 @@ public partial class MainWindow : Window
         {
             Interlocked.Increment(ref skippedCount);
             Dispatcher.UIThread.Post(() =>
-                ContentStatusText.Text = Loc.Get("ScanningProgress", matchCount, skippedCount));
+                SetStatus(ContentStatusText, () => Loc.Get("ScanningProgress", matchCount, skippedCount)));
         }
 
         try
         {
             await foreach (var match in ContentSearcher.SearchAsync(candidates, query, OnSkipped, token))
             {
-                _contentResults.Add(new ResultItem(new SearchResult(match.FullPath), match.Snippet));
+                var item = new ResultItem(SearchResult.FromDisk(match.FullPath), match.Snippet);
+                InsertSorted(_contentResults, item, ResultOrdering.ForItems(Settings.Sort));
                 matchCount++;
-                ContentStatusText.Text = skippedCount == 0
+                SetStatus(ContentStatusText, () => skippedCount == 0
                     ? Loc.Get("ScanningMatches", matchCount)
-                    : Loc.Get("ScanningProgress", matchCount, skippedCount);
+                    : Loc.Get("ScanningProgress", matchCount, skippedCount));
             }
 
             if (!token.IsCancellationRequested)
             {
-                var summary = matchCount == 0 ? Loc.Get("NoMatchesFound") : Loc.Get("MatchesFound", matchCount);
-                ContentStatusText.Text = skippedCount == 0
-                    ? summary
-                    : Loc.Get("MatchesFoundWithSkipped", summary, skippedCount);
+                SetStatus(ContentStatusText, () =>
+                {
+                    var summary = matchCount == 0 ? Loc.Get("NoMatchesFound") : Loc.Get("MatchesFound", matchCount);
+                    return skippedCount == 0
+                        ? summary
+                        : Loc.Get("MatchesFoundWithSkipped", summary, skippedCount);
+                });
             }
         }
         catch (OperationCanceledException) { }
@@ -484,17 +808,4 @@ public partial class MainWindow : Window
                 pending.Push(sub);
         }
     }
-}
-
-// ViewModel wrapper for list items — used by both tabs, Snippet only populated
-// by content search results.
-public class ResultItem(SearchResult result, string? snippet = null)
-{
-    public SearchResult Result { get; } = result;
-    public string FileName => Result.FileName;
-    public string Directory => Result.Directory;
-    public string FullPath => Result.FullPath;
-    public string Icon => Result.IsDirectory ? "📁" : "📄";
-    public string? Snippet { get; } = snippet;
-    public bool HasSnippet => Snippet != null;
 }

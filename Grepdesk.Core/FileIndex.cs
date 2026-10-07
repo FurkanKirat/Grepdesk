@@ -10,8 +10,9 @@ namespace Grepdesk.Core;
 
 public class FileIndex
 {
-    // path → fileName (lowercase for fast search)
-    private readonly ConcurrentDictionary<string, string> _index = new(StringComparer.OrdinalIgnoreCase);
+    // path → lowercase name (for fast search) plus the metadata needed to sort
+    // every match, not just the ones that end up on screen.
+    private readonly ConcurrentDictionary<string, IndexEntry> _index = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FileSystemWatcher> _watchers = [];
     private long _isIndexing = 0;
 
@@ -41,6 +42,9 @@ public class FileIndex
                 .Select(d => d.RootDirectory.FullName)
                 .ToList();
 
+            foreach (var root in rootList)
+                TryAdd(new DirectoryInfo(root));
+
             await Task.Run(() => ParallelIndex(rootList, ct), ct);
 
             if (!ct.IsCancellationRequested)
@@ -68,22 +72,22 @@ public class FileIndex
             {
                 try
                 {
-                    // Add the directory itself
-                    _index[dir] = Path.GetFileName(dir).ToLowerInvariant();
-
-                    // Add files inside
-                    foreach (var file in Directory.EnumerateFiles(dir))
+                    // One enumeration gives both files and subfolders, and the
+                    // OS returns size and timestamps with each entry for free.
+                    foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos())
                     {
-                        _index[file] = Path.GetFileName(file).ToLowerInvariant();
+                        _index[info.FullName] = IndexEntry.From(info);
+
+                        if (info is DirectoryInfo)
+                        {
+                            queue.Enqueue(info.FullName);
+                            continue;
+                        }
 
                         var count = Interlocked.Increment(ref reported);
                         if (count % 5000 == 0)
                             ProgressChanged?.Invoke((int)count);
                     }
-
-                    // Enqueue subdirs
-                    foreach (var sub in Directory.EnumerateDirectories(dir))
-                        queue.Enqueue(sub);
                 }
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
@@ -110,21 +114,26 @@ public class FileIndex
         }
     }
 
-    public IEnumerable<SearchResult> Search(string query, int maxResults = 500)
+    /// <summary>
+    /// Every indexed entry whose name contains the query, or every entry when
+    /// the query is empty (browse mode: "largest files in this folder").
+    /// Not capped: the caller sorts the full set before deciding how much to display.
+    /// </summary>
+    public List<SearchResult> Search(string query, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(query)) yield break;
+        var matchAll = string.IsNullOrWhiteSpace(query);
+        var results = new List<SearchResult>(matchAll ? _index.Count : 0);
 
-        var lower = query.ToLowerInvariant();
-        var count = 0;
-
+        var scanned = 0;
         foreach (var kv in _index)
         {
-            if (kv.Value.Contains(lower))
-            {
-                yield return new SearchResult(kv.Key);
-                if (++count >= maxResults) yield break;
-            }
+            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+
+            var e = kv.Value;
+            if (matchAll || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                results.Add(new SearchResult(kv.Key, e.IsDirectory, e.Size, e.Modified, e.Name));
         }
+        return results;
     }
 
     /// <summary>
@@ -137,7 +146,7 @@ public class FileIndex
         var rootList = roots.ToList();
         foreach (var path in _index.Keys)
         {
-            if (Directory.Exists(path)) continue; // skip directory entries
+            if (_index.TryGetValue(path, out var e) && e.IsDirectory) continue; // skip directory entries
             if (rootList.Any(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase)))
                 yield return path;
         }
@@ -153,16 +162,18 @@ public class FileIndex
                 var w = new FileSystemWatcher(root)
                 {
                     IncludeSubdirectories = true,
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName
+                                 | NotifyFilters.Size | NotifyFilters.LastWrite,
                     EnableRaisingEvents = true
                 };
 
-                w.Created += (_, e) => _index[e.FullPath] = Path.GetFileName(e.FullPath).ToLowerInvariant();
+                w.Created += (_, e) => TryAdd(e.FullPath);
+                w.Changed += (_, e) => { if (_index.ContainsKey(e.FullPath)) TryAdd(e.FullPath); };
                 w.Deleted += (_, e) => _index.TryRemove(e.FullPath, out var _unused1);
                 w.Renamed += (_, e) =>
                 {
                     _index.TryRemove(e.OldFullPath, out var _unused2);
-                    _index[e.FullPath] = Path.GetFileName(e.FullPath).ToLowerInvariant();
+                    TryAdd(e.FullPath);
                 };
 
                 w.Error += (_, e) => { }; // silently ignore watcher errors
@@ -173,6 +184,26 @@ public class FileIndex
         }
     }
 
+    private void TryAdd(string path)
+    {
+        try
+        {
+            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+            TryAdd(info);
+        }
+        catch { /* vanished or inaccessible between the event and now */ }
+    }
+
+    private void TryAdd(FileSystemInfo info)
+    {
+        try
+        {
+            if (info.Exists) _index[info.FullName] = IndexEntry.From(info);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     private void StopWatchers()
     {
         foreach (var w in _watchers) w.Dispose();
@@ -180,9 +211,35 @@ public class FileIndex
     }
 }
 
-public record SearchResult(string FullPath)
+// The name is kept as-is (matched case-insensitively) so search results can
+// share the string instead of allocating a new one per hit.
+internal readonly record struct IndexEntry(string Name, bool IsDirectory, long Size, DateTime Modified)
 {
-    public string FileName => Path.GetFileName(FullPath);
+    public static IndexEntry From(FileSystemInfo info)
+    {
+        var name = info.Name.Length > 0 ? info.Name : info.FullName; // drive roots have no Name
+        return info is FileInfo file
+            ? new IndexEntry(name, false, file.Length, file.LastWriteTime)
+            : new IndexEntry(name, true, 0, info.LastWriteTime);
+    }
+}
+
+/// <param name="Size">File length in bytes; 0 for directories.</param>
+/// <param name="Name">File name if already known (from the index); derived from the path otherwise.</param>
+public record SearchResult(string FullPath, bool IsDirectory, long Size, DateTime Modified, string? Name = null)
+{
+    // Stored, not computed: sorting compares names many times per result.
+    public string FileName { get; } = Name ?? (Path.GetFileName(FullPath) is { Length: > 0 } n ? n : FullPath);
     public string Directory => Path.GetDirectoryName(FullPath) ?? FullPath;
-    public bool IsDirectory => System.IO.Directory.Exists(FullPath);
+
+    /// <summary>Reads the metadata from disk, for paths that did not come from the index.</summary>
+    public static SearchResult FromDisk(string path)
+    {
+        var file = new FileInfo(path);
+        if (file.Exists)
+            return new SearchResult(path, false, file.Length, file.LastWriteTime);
+
+        var dir = new DirectoryInfo(path);
+        return new SearchResult(path, dir.Exists, 0, dir.Exists ? dir.LastWriteTime : default);
+    }
 }

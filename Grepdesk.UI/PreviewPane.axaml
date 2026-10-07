@@ -1,0 +1,93 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Grepdesk.UI.PreviewPane">
+
+    <Border Background="#181825"
+            BorderBrush="#313244"
+            BorderThickness="1"
+            CornerRadius="6"
+            Padding="14">
+        <Panel>
+            <TextBlock x:Name="EmptyText"
+                       Foreground="#6c7086"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
+
+            <DockPanel x:Name="Details" IsVisible="False">
+                <!-- Header: icon, name, location -->
+                <StackPanel DockPanel.Dock="Top" Spacing="8">
+                    <Panel HorizontalAlignment="Left">
+                        <PathIcon x:Name="FolderIcon" Data="{StaticResource IconFolder}" Width="34" Height="34" Foreground="#f9e2af" IsVisible="False"/>
+                        <PathIcon x:Name="DocumentIcon" Data="{StaticResource IconDocument}" Width="30" Height="30" Foreground="#89b4fa" IsVisible="False"/>
+                        <Border x:Name="Badge" CornerRadius="5" BorderThickness="1" Padding="8,5" IsVisible="False">
+                            <TextBlock x:Name="BadgeText" FontSize="12" FontWeight="Bold"/>
+                        </Border>
+                    </Panel>
+                    <SelectableTextBlock x:Name="NameText"
+                                         Foreground="#cdd6f4"
+                                         FontSize="14"
+                                         FontWeight="SemiBold"
+                                         TextWrapping="Wrap"/>
+                    <SelectableTextBlock x:Name="PathText"
+                                         Foreground="#6c7086"
+                                         FontSize="11"
+                                         TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- Metadata -->
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="0,12,0,0">
+                    <Grid.Styles>
+                        <Style Selector="TextBlock">
+                            <Setter Property="FontSize" Value="12"/>
+                            <Setter Property="Margin" Value="0,2"/>
+                        </Style>
+                    </Grid.Styles>
+                    <TextBlock x:Name="TypeLabel" Grid.Row="0" Foreground="#7f849c" Margin="0,2,14,2"/>
+                    <TextBlock x:Name="TypeValue" Grid.Row="0" Grid.Column="1" Foreground="#cdd6f4"/>
+                    <TextBlock x:Name="SizeLabel" Grid.Row="1" Foreground="#7f849c" Margin="0,2,14,2"/>
+                    <TextBlock x:Name="SizeValue" Grid.Row="1" Grid.Column="1" Foreground="#cdd6f4"/>
+                    <TextBlock x:Name="ModifiedLabel" Grid.Row="2" Foreground="#7f849c" Margin="0,2,14,2"/>
+                    <TextBlock x:Name="ModifiedValue" Grid.Row="2" Grid.Column="1" Foreground="#cdd6f4"/>
+                </Grid>
+
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                    <Button x:Name="OpenButton"/>
+                    <Button x:Name="ShowInFolderButton"/>
+                </StackPanel>
+
+                <!-- Body: image, text, or a note when there's nothing to show -->
+                <Border Margin="0,12,0,0"
+                        Background="#11111b"
+                        CornerRadius="6"
+                        ClipToBounds="True">
+                    <Panel>
+                        <Image x:Name="ImagePreview"
+                               Stretch="Uniform"
+                               Margin="6"
+                               IsVisible="False"/>
+                        <ScrollViewer x:Name="TextScroll"
+                                      IsVisible="False"
+                                      HorizontalScrollBarVisibility="Auto">
+                            <SelectableTextBlock x:Name="TextPreview"
+                                                 Foreground="#bac2de"
+                                                 FontSize="11.5"
+                                                 Margin="10,8"
+                                                 FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace"/>
+                        </ScrollViewer>
+                        <TextBlock x:Name="BodyMessage"
+                                   Foreground="#6c7086"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Margin="12"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Panel>
+                </Border>
+            </DockPanel>
+        </Panel>
+    </Border>
+</UserControl>
