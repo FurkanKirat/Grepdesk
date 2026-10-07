@@ -16,6 +16,8 @@ public class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        CrashHandling.InstallDispatcherHandler();
+
         // Load strings for the chosen (or system) language before any window
         // is constructed, so XAML bindings resolve correctly on first render.
         // Falls back to en.json automatically if the language file isn't

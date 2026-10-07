@@ -8,6 +8,7 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        CrashHandling.InstallProcessHandlers();
         var command = AppCommand.Parse(args);
 
         SingleInstanceHost? host = null;

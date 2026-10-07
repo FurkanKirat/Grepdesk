@@ -5,12 +5,12 @@ order within each section.
 
 ## Before release
 
-- [ ] **Clean up Explorer menu entries on uninstall.** `setup.iss` doesn't
+- [x] **Clean up Explorer menu entries on uninstall.** `setup.iss` doesn't
   remove the shell integration keys (`HKCU\Software\Classes\...\Grepdesk*`),
   so after uninstalling, "Open with Grepdesk" / "Paste with Grepdesk" stay in
   the right-click menu pointing at a deleted exe. Add `uninsdeletekey`
   registry entries (or run the app's own `Disable` for every feature).
-- [ ] **Catch and log unexpected errors.** There is no global handler
+- [x] **Catch and log unexpected errors.** There is no global handler
   (`AppDomain.UnhandledException`, `TaskScheduler.UnobservedTaskException`,
   Avalonia's dispatcher), and several event handlers are `async void`, so a
   failure closes the app without a trace. Write a log under
