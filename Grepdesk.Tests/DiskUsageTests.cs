@@ -42,7 +42,7 @@ public class DiskUsageTests
         // The temp folder itself is under AppData\Local\Temp, which really is "System and temporary";
         // classify by the path inside it so the test sees what a user folder would.
         var report = DiskAnalyzer.Analyze(index, tmp.Path, largestPerCategory: 1, CancellationToken.None,
-            p => DiskClassifier.Classify(Path.GetRelativePath(tmp.Path, p)));
+            p => new Classification(DiskClassifier.Classify(Path.GetRelativePath(tmp.Path, p)), 0));
 
         var videos = report.Categories.Single(c => c.Category == DiskCategory.Videos);
         Assert.Equal(8000, videos.Bytes);
@@ -52,6 +52,48 @@ public class DiskUsageTests
 
         // One per category, largest first.
         Assert.Equal(["a.mp4", "c.jpg", "d.xyz"], report.LargestFiles.Select(f => f.File.FileName));
+    }
+
+    [Theory]
+    [InlineData(@"D:\SteamLibrary\steamapps\common\Elden Ring\Game\data0.bdt", @"D:\SteamLibrary\steamapps\common\Elden Ring")]
+    [InlineData(@"C:\Program Files\Adobe\Photoshop\ps.exe", @"C:\Program Files\Adobe")]
+    [InlineData(@"C:\code\site\node_modules\react\index.js", @"C:\code\site\node_modules")]
+    [InlineData(@"C:\code\site\node_modules\a\node_modules\b\x.js", @"C:\code\site\node_modules")] // outermost wins
+    [InlineData(@"C:\Windows\WinSxS\amd64_x\file.dll", @"C:\Windows\WinSxS")]
+    [InlineData(@"C:\pagefile.sys", @"C:\pagefile.sys")]
+    public void Location_rules_name_the_item_a_file_belongs_to(string path, string expectedGroup)
+    {
+        var p = P(path);
+        var result = DiskClassifier.ClassifyDetailed(p);
+        Assert.Equal(P(expectedGroup), p[..result.GroupLength]);
+    }
+
+    [Fact]
+    public void Files_judged_by_extension_belong_to_no_item() =>
+        Assert.Equal(0, DiskClassifier.ClassifyDetailed(P(@"C:\Users\me\Videos\a.mp4")).GroupLength);
+
+    [Fact]
+    public async Task Analysis_adds_up_each_item()
+    {
+        using var tmp = new TempDir();
+        tmp.WriteFile("Games/steamapps/common/Big Game/data/a.pak", new string('g', 4000));
+        tmp.WriteFile("Games/steamapps/common/Big Game/b.exe", new string('g', 1000));
+        tmp.WriteFile("Games/steamapps/common/Small Game/c.pak", new string('g', 300));
+
+        var index = new FileIndex();
+        await index.BuildIndexAsync([tmp.Path]);
+        // Classify inside the temp folder so its own AppData\Local\Temp location doesn't win.
+        var report = DiskAnalyzer.Analyze(index, tmp.Path, largestPerCategory: 10, CancellationToken.None, p =>
+        {
+            var relative = Path.DirectorySeparatorChar + Path.GetRelativePath(tmp.Path, p);
+            var c = DiskClassifier.ClassifyDetailed(relative);
+            return c with { GroupLength = c.GroupLength == 0 ? 0 : c.GroupLength + tmp.Path.Length };
+        });
+
+        var games = report.Groups.Where(g => g.Category == DiskCategory.Games).ToList();
+        Assert.Equal(["Big Game", "Small Game"], games.Select(g => Path.GetFileName(g.Path)));
+        Assert.Equal(5000, games[0].Bytes);
+        Assert.Equal(2, games[0].Files);
     }
 
     [Fact]
