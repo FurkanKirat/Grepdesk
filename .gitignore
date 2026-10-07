@@ -158,3 +158,6 @@ _ReSharper*/
 *_p.c
 
 # End of file
+
+# dotnet publish output (see Grepdesk.UI/Properties/PublishProfiles)
+publish/

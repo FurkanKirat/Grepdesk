@@ -171,6 +171,16 @@ For daily use, publish once and point the Explorer menu at the published exe
 dotnet publish Grepdesk.UI -c Release -r win-x64 --self-contained false -o C:\Apps\Grepdesk
 ```
 
+### Building the installer
+
+```bash
+dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
+```
+
+writes a self-contained build (the .NET runtime included, so users don't need
+it installed) to `publish/win-x64`. Then compile `setup.iss` with
+[Inno Setup](https://jrsoftware.org/isinfo.php) 6; the installer lands in `Output/`.
+
 Timing a single job from a script: add `--benchmark` (e.g. `Grepdesk.UI.exe --extract-to --benchmark a.zip`);
 the elapsed time is appended to `%LOCALAPPDATA%\Grepdesk\benchmark.log`.
 

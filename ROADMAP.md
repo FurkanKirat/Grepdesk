@@ -18,7 +18,7 @@ order within each section.
   here" instead of disappearing. Matters most around delete and move.
 - [x] **Build with stable versions.** The build uses a .NET 10 RC SDK, and PDF
   reading uses a PdfPig alpha (`0.1.16-alpha-…`). Move both to stable releases.
-- [ ] **Self-contained publish (or a runtime check).** The installer copies
+- [x] **Self-contained publish (or a runtime check).** The installer copies
   the `publish` folder as is; on a machine without .NET 10 the app won't
   start. Publish self-contained, or have the installer check for the runtime.
 - [ ] **Code signing.** Unsigned, the exe gets SmartScreen's "unrecognized app"

@@ -1,4 +1,4 @@
-; =======================================================
+﻿; =======================================================
 ; Grepdesk Inno Setup Script
 ; =======================================================
 
@@ -30,8 +30,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startup"; Description: "Windows açıldığında otomatik başlat"; GroupDescription: "Ek Ayarlar:"; Flags: unchecked
 
 [Files]
-; dotnet publish çıktınızın bulunduğu dizini buraya yazın
-Source: "Grepdesk.UI\bin\Release\net10.0\win-x64\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Önce: dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
+; Self-contained: .NET runtime'ı içinde, makinede .NET kurulu olması gerekmez.
+Source: "publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Başlat menüsü kısayolu
