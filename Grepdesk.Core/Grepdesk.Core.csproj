@@ -12,16 +12,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="PdfPig" Version="0.1.16-alpha-20260714-a9ac3" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.12" />
   </ItemGroup>
 
-  <!--
-    .docx / .xlsx are plain zip+XML, so no extra package is required for those.
-    For production-grade .pdf text extraction, add:
-      <PackageReference Include="PdfPig" Version="0.1.9" />
-    and swap the body of PdfExtractor.ExtractTextAsync to use it — the interface
-    (IContentExtractor) does not need to change.
-  -->
+  <!-- .docx / .xlsx are plain zip+XML and need no package; PdfPig reads .pdf. -->
 
 </Project>

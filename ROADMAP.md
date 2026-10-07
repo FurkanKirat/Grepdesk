@@ -16,7 +16,7 @@ order within each section.
   failure closes the app without a trace. Write a log under
   `%LOCALAPPDATA%\Grepdesk\logs` and show "something went wrong, the log is
   here" instead of disappearing. Matters most around delete and move.
-- [ ] **Build with stable versions.** The build uses a .NET 10 RC SDK, and PDF
+- [x] **Build with stable versions.** The build uses a .NET 10 RC SDK, and PDF
   reading uses a PdfPig alpha (`0.1.16-alpha-…`). Move both to stable releases.
 - [ ] **Self-contained publish (or a runtime check).** The installer copies
   the `publish` folder as is; on a machine without .NET 10 the app won't
