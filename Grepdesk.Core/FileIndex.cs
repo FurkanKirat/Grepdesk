@@ -198,14 +198,50 @@ public class FileIndex
     }
 
     /// <summary>Drops a path (and, for a folder, everything under it) after it was deleted from Grepdesk.</summary>
-    public void Remove(string path)
-    {
-        _index.TryRemove(path, out _);
+    public void Remove(string path) => RemoveMany([path], []);
 
-        var prefix = Path.TrimEndingDirectorySeparator(path) + Path.DirectorySeparatorChar;
+    /// <summary>
+    /// Drops many deleted paths in a single pass over the index. The folder
+    /// prefixes are sorted and de-nested, so for each entry one binary search
+    /// finds the only prefix that could contain it: about log2(n) comparisons,
+    /// no allocations, whatever the number of paths removed.
+    /// </summary>
+    /// <param name="removed">Gone entirely: the path and everything under it.</param>
+    /// <param name="emptied">Folders that still exist but whose contents are gone.</param>
+    public void RemoveMany(IEnumerable<string> removed, IEnumerable<string> emptied, CancellationToken ct = default)
+    {
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        var sep = Path.DirectorySeparatorChar;
+
+        var gone = new HashSet<string>(removed.Select(p => Path.TrimEndingDirectorySeparator(p)), comparer);
+        var cleared = emptied.Select(p => Path.TrimEndingDirectorySeparator(p)).ToList();
+        if (gone.Count == 0 && cleared.Count == 0) return;
+
+        // "C:\a\"-style prefixes. Sorted, a nested prefix comes right after its
+        // parent and is dropped, leaving prefixes none of which contains another.
+        var prefixes = new List<string>();
+        foreach (var prefix in gone.Concat(cleared)
+                     .Select(p => p.EndsWith(sep) ? p : p + sep)
+                     .Order(comparer))
+        {
+            if (prefixes.Count == 0 || !prefix.StartsWith(prefixes[^1], StringComparison.OrdinalIgnoreCase))
+                prefixes.Add(prefix);
+        }
+        var sorted = prefixes.ToArray();
+
+        var scanned = 0;
         foreach (var key in _index.Keys)
-            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+
+            if (gone.Contains(key)) { _index.TryRemove(key, out _); continue; }
+
+            // With disjoint prefixes, only the greatest prefix <= key can be an ancestor of it.
+            var i = Array.BinarySearch(sorted, key, comparer);
+            if (i < 0) i = ~i - 1;
+            if (i >= 0 && key.Length > sorted[i].Length && key.StartsWith(sorted[i], StringComparison.OrdinalIgnoreCase))
                 _index.TryRemove(key, out _);
+        }
     }
 
     // Yields folders from the queue until it is empty and no folder is still being listed.
