@@ -1,0 +1,84 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="Grepdesk.UI.Viewer.FileViewerWindow"
+        Title="Grepdesk"
+        Width="920"
+        Height="720"
+        MinWidth="420"
+        MinHeight="280"
+        WindowStartupLocation="CenterOwner"
+        Background="#11111b">
+
+    <Window.Styles>
+        <Style Selector="Button, ToggleButton">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="ToggleButton:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Header: what the file is, and the few things you can do with it -->
+        <Border DockPanel.Dock="Top"
+                Background="#181825"
+                BorderBrush="#313244"
+                BorderThickness="0,0,0,1"
+                Padding="14,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <TextBlock x:Name="NameText"
+                               Foreground="#cdd6f4"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="InfoText"
+                               Foreground="#6c7086"
+                               FontSize="11"
+                               TextTrimming="PathSegmentEllipsis"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <ToggleButton x:Name="RenderedToggle" IsVisible="False"/>
+                    <ToggleButton x:Name="WrapToggle"/>
+                    <Button x:Name="OpenButton"/>
+                    <Button x:Name="ShowInFolderButton"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Panel Background="#11111b">
+            <ae:TextEditor x:Name="Editor"
+                           IsReadOnly="True"
+                           ShowLineNumbers="True"
+                           FontSize="12.5"
+                           Background="#11111b"
+                           Foreground="#bac2de"
+                           LineNumbersForeground="#585b70"
+                           HorizontalScrollBarVisibility="Auto"
+                           VerticalScrollBarVisibility="Auto"
+                           Padding="8,6"
+                           IsVisible="False"/>
+
+            <ScrollViewer x:Name="MarkdownScroll" IsVisible="False">
+                <StackPanel MaxWidth="860" Margin="28,20" Spacing="10">
+                    <ContentControl x:Name="MarkdownHost"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <TextBlock x:Name="MessageText"
+                       Foreground="#6c7086"
+                       FontSize="13"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       MaxWidth="460"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
+        </Panel>
+    </DockPanel>
+</Window>

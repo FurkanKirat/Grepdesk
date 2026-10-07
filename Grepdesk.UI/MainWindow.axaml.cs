@@ -12,6 +12,7 @@ using Grepdesk.Core.ContentSearch;
 using System.Collections.ObjectModel;
 using Grepdesk.Core.Editor;
 using Grepdesk.UI.Helpers;
+using Grepdesk.UI.Viewer;
 
 namespace Grepdesk.UI;
 
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
     private string? _contentQuery;
+    private FileViewerWindow? _viewer;
 
     // ---- shared ----
     private readonly DiskUsage.DriveScans _driveScans = new();
@@ -285,6 +287,7 @@ public partial class MainWindow : Window
 
             NamePreview.ApplyLanguage();
             ContentPreview.ApplyLanguage();
+            _viewer?.ApplyLanguage();
             DiskPage.ApplyLanguage();
             CleanupPage.ApplyLanguage();
             OrganizePage.ApplyLanguage();
@@ -303,8 +306,16 @@ public partial class MainWindow : Window
 
     private void InitPreview()
     {
-        ResultsList.SelectionChanged += (_, _) => NamePreview.Show(ResultsList.SelectedItem as ResultItem);
-        ContentResultsList.SelectionChanged += (_, _) => ContentPreview.Show(ContentResultsList.SelectedItem as ResultItem, _contentQuery);
+        ResultsList.SelectionChanged += (_, _) =>
+        {
+            NamePreview.Show(ResultsList.SelectedItem as ResultItem);
+            FollowInViewer(ResultsList.SelectedItem as ResultItem, null);
+        };
+        ContentResultsList.SelectionChanged += (_, _) =>
+        {
+            ContentPreview.Show(ContentResultsList.SelectedItem as ResultItem, _contentQuery);
+            FollowInViewer(ContentResultsList.SelectedItem as ResultItem, _contentQuery);
+        };
 
         foreach (var pane in new[] { NamePreview, ContentPreview })
         {
@@ -322,6 +333,35 @@ public partial class MainWindow : Window
 
         PageHost.SizeChanged += (_, _) => UpdatePreviewVisibility();
         UpdatePreviewVisibility();
+    }
+
+    /// <summary>Opens (or reuses) the viewer window for a text, code or Markdown file.</summary>
+    private void ViewFile(ResultItem item, string? highlight)
+    {
+        if (_viewer is null)
+        {
+            _viewer = new FileViewerWindow();
+            _viewer.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
+            _viewer.ShowInFolderRequested += path => ReportShellResult(_shell.ShowInFileManager(path), Loc.Get("ShowInFolderFailed"));
+            _viewer.Closed += (_, _) =>
+            {
+                _viewer = null;
+                Activate();
+            };
+            _viewer.Show(this);
+        }
+        else
+        {
+            _viewer.Activate();
+        }
+        _viewer.Load(item.FullPath, highlight);
+    }
+
+    /// <summary>While the viewer is open, picking another result in the list shows that one instead.</summary>
+    private void FollowInViewer(ResultItem? item, string? highlight)
+    {
+        if (_viewer is null || item is null || item.IsDirectory || item.FullPath == _viewer.FilePath) return;
+        if (ViewerFileLoader.CanView(item.FullPath)) _viewer.Load(item.FullPath, highlight);
     }
 
     private void UpdatePreviewVisibility()
@@ -689,6 +729,12 @@ public partial class MainWindow : Window
             };
 
             menuItems.Add(openItem);
+            if (!item.IsDirectory && ViewerFileLoader.CanView(item.FullPath))
+            {
+                var viewItem = new MenuItem { Header = Loc.Get("ContextMenuView"), InputGesture = new KeyGesture(Key.Space) };
+                viewItem.Click += (_, _) => ViewFile(item, list == ContentResultsList ? _contentQuery : null);
+                menuItems.Add(viewItem);
+            }
             menuItems.Add(showItem);
             menuItems.Add(copyItem);
             menuItems.Add(copyFileItem);
@@ -909,6 +955,7 @@ public partial class MainWindow : Window
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
         new("Ctrl+Enter", "ShortcutShowInFolder"),
+        new("Space", "ShortcutView"),
         new("Ctrl+C", "ShortcutCopyPath"),
         new("Ctrl+Shift+C", "ShortcutCopyFile"),
         new("Delete", "ShortcutTrash"),
@@ -1016,6 +1063,10 @@ public partial class MainWindow : Window
             case Key.Enter when ResultsHaveFocus && selected is not null:
                 ReportShellResult(ctrl ? _shell.ShowInFileManager(selected.FullPath) : _shell.OpenPath(selected.FullPath),
                     Loc.Get(ctrl ? "ShowInFolderFailed" : "FileOpenFailed"));
+                break;
+            case Key.Space when e.KeyModifiers == KeyModifiers.None && ResultsHaveFocus && selected is { IsDirectory: false }
+                                && ViewerFileLoader.CanView(selected.FullPath):
+                ViewFile(selected, ContentSearchPage.IsVisible ? _contentQuery : null);
                 break;
             case Key.C when ctrl && e.KeyModifiers.HasFlag(KeyModifiers.Shift) && ResultsHaveFocus && selected is not null:
                 await CopyFileAsync(selected);

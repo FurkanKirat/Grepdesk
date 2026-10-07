@@ -178,14 +178,18 @@ internal sealed class MarkdownPreviewProvider : IPreviewProvider
             }
         }
 
-        var document = MarkdownView.Parse(text);
-        var baseDirectory = Path.GetDirectoryName(item.FullPath) ?? "";
-
         return new PreviewContent
         {
-            Markdown = new MarkdownPreview(document, baseDirectory, LoadImages(document, baseDirectory, ct)),
+            Markdown = Prepare(text, Path.GetDirectoryName(item.FullPath) ?? "", ct),
             Footer = truncated ? LocalizationService.Instance.Get("PreviewTruncated") : null
         };
+    }
+
+    /// <summary>Parses and decodes the local images, off the UI thread. Also used by the viewer window.</summary>
+    public static MarkdownPreview Prepare(string text, string baseDirectory, CancellationToken ct)
+    {
+        var document = MarkdownView.Parse(text);
+        return new MarkdownPreview(document, baseDirectory, LoadImages(document, baseDirectory, ct));
     }
 
     /// <summary>Images next to the file (README screenshots); web images show their alt text instead.</summary>
