@@ -161,3 +161,6 @@ _ReSharper*/
 
 # dotnet publish output (see Grepdesk.UI/Properties/PublishProfiles)
 publish/
+
+# Inno Setup output (installer, portable zip, release notes drafts)
+Output/
