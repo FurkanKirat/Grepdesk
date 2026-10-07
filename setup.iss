@@ -36,7 +36,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "startup"; Description: "Windows açıldığında otomatik başlat"; GroupDescription: "Ek Ayarlar:"; Flags: unchecked
 
 [Files]
 ; Önce: dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
@@ -52,8 +51,9 @@ Name: "{group}\Grepdesk Kaldır"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Grepdesk"; Filename: "{app}\Grepdesk.UI.exe"; Tasks: desktopicon
 
 [Registry]
-; Windows açılışında çalıştırma kaydı
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Grepdesk"; ValueData: """{app}\Grepdesk.UI.exe"""; Flags: uninsdeletevalue; Tasks: startup
+; Eski kurulumların "Windows açıldığında başlat" kaydını temizler. Bu seçenek
+; kaldırıldı: tray/arka plan modu olmadan açılışta sadece boş bir pencere açıyordu.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Grepdesk"; Flags: deletevalue uninsdeletevalue
 
 ; Explorer sağ tık menüsü kayıtları: uygulama Ayarlar'dan yazar, kurulum yazmaz
 ; (dontcreatekey). Kaldırırken silinir, yoksa menüde silinmiş exe'yi gösteren

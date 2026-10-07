@@ -32,7 +32,7 @@ order within each section.
 
 ## First updates
 
-- [ ] **"Start with Windows" needs a reason to exist.** There is no tray or
+- [x] **"Start with Windows" needs a reason to exist.** (Removed for now.) There is no tray or
   background mode, so starting at login just opens a window with nothing
   scanned. Remove the option, or ship it with a tray icon and a global
   hotkey that brings up search.
@@ -58,6 +58,9 @@ order within each section.
   by default) for name search.
 - [ ] **Bulk actions in search results** (copy paths, zip, trash a
   selection). Organize already offers the safer, group-level form.
+- [ ] **Tray icon and global hotkey**: keep the index in the background and
+  bring up search from anywhere. With that, "Start with Windows" makes sense
+  again (an installer task writing the `Run` key).
 - [ ] **Light theme / follow the system theme.**
 
 ## Code health
