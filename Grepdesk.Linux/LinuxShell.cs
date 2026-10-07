@@ -78,6 +78,25 @@ public class LinuxShell : IPlatformShell
         }
     }
 
+    public ShellActionResult MoveToTrash(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("gio") { UseShellExecute = false };
+            psi.ArgumentList.Add("trash");
+            psi.ArgumentList.Add(path);
+            using var process = Process.Start(psi)!;
+            process.WaitForExit();
+            return process.ExitCode == 0
+                ? ShellActionResult.Success(null)
+                : ShellActionResult.Failure(ShellActionStatus.OperationFailed);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.ProcessStartFailed, ex);
+        }
+    }
+
     public string? FindExecutableOnPath(string exeName)
     {
         var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";

@@ -37,15 +37,23 @@ public class FileIndex
 
         try
         {
-            var rootList = roots?.ToList() ?? DriveInfo.GetDrives()
+            // Normalized ("C:\a\" -> "C:\a") so a root matches its children's
+            // parent path when folder sizes are rolled up.
+            var rootList = (roots?.ToList() ?? DriveInfo.GetDrives()
                 .Where(d => d.IsReady && !SkippedDriveTypes.Contains(d.DriveType.ToString()))
                 .Select(d => d.RootDirectory.FullName)
+                .ToList())
+                .Select(r => Path.TrimEndingDirectorySeparator(Path.GetFullPath(r)))
                 .ToList();
 
             foreach (var root in rootList)
                 TryAdd(new DirectoryInfo(root));
 
-            await Task.Run(() => ParallelIndex(rootList, ct), ct);
+            await Task.Run(() =>
+            {
+                ParallelIndex(rootList, ct);
+                ComputeFolderSizes(ct);
+            }, ct);
 
             if (!ct.IsCancellationRequested)
             {
@@ -92,6 +100,53 @@ public class FileIndex
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
             });
+    }
+
+    /// <summary>
+    /// Gives every folder the total size of the files beneath it. Each file
+    /// is added to its parent, then folders are visited deepest first (a
+    /// child path is always longer than its parent's), so each folder's total
+    /// is complete before it is added to the folder above.
+    /// Totals are as of the scan; the watchers keep names current, not sizes.
+    /// </summary>
+    private void ComputeFolderSizes(CancellationToken ct)
+    {
+        var totals = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (path, entry) in _index)
+        {
+            if (entry.IsDirectory || entry.Size == 0) continue;
+            if (Path.GetDirectoryName(path) is { } parent)
+                totals[parent] = totals.GetValueOrDefault(parent) + entry.Size;
+        }
+
+        var folders = _index.Where(kv => kv.Value.IsDirectory)
+            .Select(kv => kv.Key)
+            .OrderByDescending(p => p.Length)
+            .ToList();
+
+        foreach (var folder in folders)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var total = totals.GetValueOrDefault(folder);
+            if (_index.TryGetValue(folder, out var entry))
+                _index[folder] = entry with { Size = total };
+
+            if (total > 0 && Path.GetDirectoryName(folder) is { } parent && _index.ContainsKey(parent))
+                totals[parent] = totals.GetValueOrDefault(parent) + total;
+        }
+    }
+
+    /// <summary>Drops a path (and, for a folder, everything under it) after it was deleted from Grepdesk.</summary>
+    public void Remove(string path)
+    {
+        _index.TryRemove(path, out _);
+
+        var prefix = Path.TrimEndingDirectorySeparator(path) + Path.DirectorySeparatorChar;
+        foreach (var key in _index.Keys)
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                _index.TryRemove(key, out _);
     }
 
     // Yields items from queue until it's drained
@@ -198,7 +253,13 @@ public class FileIndex
     {
         try
         {
-            if (info.Exists) _index[info.FullName] = IndexEntry.From(info);
+            if (!info.Exists) return;
+
+            var entry = IndexEntry.From(info);
+            // A folder's own timestamp changes when its contents do; keep the rolled-up size.
+            if (entry.IsDirectory && _index.TryGetValue(info.FullName, out var old))
+                entry = entry with { Size = old.Size };
+            _index[info.FullName] = entry;
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -224,7 +285,7 @@ internal readonly record struct IndexEntry(string Name, bool IsDirectory, long S
     }
 }
 
-/// <param name="Size">File length in bytes; 0 for directories.</param>
+/// <param name="Size">File length in bytes; for directories, the total of everything beneath it.</param>
 /// <param name="Name">File name if already known (from the index); derived from the path otherwise.</param>
 public record SearchResult(string FullPath, bool IsDirectory, long Size, DateTime Modified, string? Name = null)
 {

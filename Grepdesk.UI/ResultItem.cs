@@ -9,71 +9,106 @@ namespace Grepdesk.UI;
 // Order matches the sort combo box entries and the "Sort{name}" localization keys.
 public enum SortMode { NameAsc, NameDesc, SizeDesc, SizeAsc, DateDesc, DateAsc }
 
+// Order matches the type filter chips and the "Category{name}" localization keys.
+public enum FileCategory { All, Folder, Document, Image, Code, Archive, Video, Audio, Other }
+
 // ViewModel wrapper for list items — used by both pages, Snippet only populated
 // by content search results.
-public class ResultItem(SearchResult result, string? snippet = null)
+public class ResultItem
 {
-    public SearchResult Result { get; } = result;
+    /// <param name="nameHighlight">Part of the file name to mark (the name search query).</param>
+    /// <param name="snippetHighlight">Part of the snippet to mark (the content search query).</param>
+    public ResultItem(SearchResult result, string? snippet = null, string? nameHighlight = null, string? snippetHighlight = null)
+    {
+        Result = result;
+        Snippet = snippet;
+        Kind = FileKind.For(result);
+        (NameBefore, NameMatch, NameAfter) = Split(result.FileName, nameHighlight);
+        (SnippetBefore, SnippetMatch, SnippetAfter) = Split(snippet ?? "", snippetHighlight);
+    }
+
+    public SearchResult Result { get; }
     public string FileName => Result.FileName;
     public string Directory => Result.Directory;
     public string FullPath => Result.FullPath;
     public bool IsDirectory => Result.IsDirectory;
 
-    // Folder sizes would need a full recursive walk, so they stay blank.
-    public string SizeText => IsDirectory ? "" : Format.Size(Result.Size);
+    public string SizeText => IsDirectory && Result.Size == 0 ? "" : Format.Size(Result.Size);
     public string ModifiedText => Result.Modified == default ? "" : Result.Modified.ToString("g");
 
-    public string? Snippet { get; } = snippet;
-    public bool HasSnippet => Snippet != null;
+    // Name and snippet are shown as before / match / after runs, so the
+    // matched part can be drawn highlighted from a plain data template.
+    public string NameBefore { get; }
+    public string NameMatch { get; }
+    public string NameAfter { get; }
 
-    public FileKind Kind { get; } = FileKind.For(result);
+    public string? Snippet { get; }
+    public bool HasSnippet => Snippet != null;
+    public string SnippetBefore { get; }
+    public string SnippetMatch { get; }
+    public string SnippetAfter { get; }
+
+    public FileKind Kind { get; }
     public bool ShowFolderIcon => IsDirectory;
     public bool ShowBadge => !IsDirectory && Kind.Label.Length > 0;
     public bool ShowDocumentIcon => !IsDirectory && Kind.Label.Length == 0;
+
+    private static (string, string, string) Split(string text, string? highlight)
+    {
+        var index = string.IsNullOrEmpty(highlight) ? -1 : text.IndexOf(highlight, StringComparison.OrdinalIgnoreCase);
+        return index < 0
+            ? (text, "", "")
+            : (text[..index], text.Substring(index, highlight!.Length), text[(index + highlight.Length)..]);
+    }
 }
 
 /// <summary>
 /// How a file type is drawn: a short extension label ("PDF", "XLSX") on a
-/// badge tinted by category, so documents, code, media, archives etc. are
-/// told apart at a glance without relying on emoji fonts.
+/// badge tinted by type, so documents, code, media, archives etc. are told
+/// apart at a glance without relying on emoji fonts.
 /// </summary>
-public sealed record FileKind(string Label, IBrush Foreground, IBrush Background)
+public sealed record FileKind(string Label, FileCategory Category, IBrush Foreground, IBrush Background)
 {
     private static readonly Dictionary<string, FileKind> Cache = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly (string Color, string[] Extensions)[] Categories =
+    private static readonly (string Color, FileCategory Category, string[] Extensions)[] Types =
     [
-        ("#f38ba8", [".pdf"]),
-        ("#89b4fa", [".doc", ".docx", ".odt", ".rtf"]),
-        ("#a6e3a1", [".xls", ".xlsx", ".xlsm", ".csv", ".ods"]),
-        ("#fab387", [".ppt", ".pptx", ".odp", ".key"]),
-        ("#cba6f7", [".cs", ".js", ".ts", ".tsx", ".jsx", ".py", ".java", ".kt", ".c", ".h", ".cpp", ".hpp",
-                     ".go", ".rs", ".rb", ".php", ".swift", ".sql", ".sh", ".ps1", ".html", ".htm", ".css",
-                     ".scss", ".xml", ".json", ".yaml", ".yml", ".toml", ".axaml", ".xaml", ".csproj", ".sln",
-                     ".vue", ".dart", ".lua"]),
-        ("#f5c2e7", [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tif", ".tiff", ".heic", ".psd"]),
-        ("#eba0ac", [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"]),
-        ("#94e2d5", [".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"]),
-        ("#f9e2af", [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".iso"]),
-        ("#74c7ec", [".exe", ".msi", ".dll", ".bat", ".cmd", ".appx", ".msix"]),
-        ("#bac2de", [".txt", ".md", ".log", ".ini", ".cfg", ".conf", ".env"]),
+        ("#f38ba8", FileCategory.Document, [".pdf"]),
+        ("#89b4fa", FileCategory.Document, [".doc", ".docx", ".odt", ".rtf"]),
+        ("#a6e3a1", FileCategory.Document, [".xls", ".xlsx", ".xlsm", ".csv", ".ods"]),
+        ("#fab387", FileCategory.Document, [".ppt", ".pptx", ".odp", ".key"]),
+        ("#bac2de", FileCategory.Document, [".txt", ".md", ".log"]),
+        ("#cba6f7", FileCategory.Code, [".cs", ".js", ".ts", ".tsx", ".jsx", ".py", ".java", ".kt", ".c", ".h", ".cpp", ".hpp",
+                                        ".go", ".rs", ".rb", ".php", ".swift", ".sql", ".sh", ".ps1", ".html", ".htm", ".css",
+                                        ".scss", ".xml", ".json", ".yaml", ".yml", ".toml", ".axaml", ".xaml", ".csproj", ".sln",
+                                        ".vue", ".dart", ".lua", ".ini", ".cfg", ".conf", ".env"]),
+        ("#f5c2e7", FileCategory.Image, [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tif", ".tiff", ".heic", ".psd"]),
+        ("#eba0ac", FileCategory.Video, [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"]),
+        ("#94e2d5", FileCategory.Audio, [".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"]),
+        ("#f9e2af", FileCategory.Archive, [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".iso"]),
+        ("#74c7ec", FileCategory.Other, [".exe", ".msi", ".dll", ".bat", ".cmd", ".appx", ".msix"]),
     ];
 
-    private static readonly Dictionary<string, Color> ColorByExtension = BuildColorMap();
-    private static readonly Color Other = Color.Parse("#7f849c");
+    private static readonly Dictionary<string, (Color Color, FileCategory Category)> ByExtension = BuildMap();
+    private static readonly Color OtherColor = Color.Parse("#7f849c");
 
-    private static Dictionary<string, Color> BuildColorMap()
+    private static Dictionary<string, (Color, FileCategory)> BuildMap()
     {
-        var map = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (color, extensions) in Categories)
+        var map = new Dictionary<string, (Color, FileCategory)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (color, category, extensions) in Types)
             foreach (var ext in extensions)
-                map[ext] = Color.Parse(color);
+                map[ext] = (Color.Parse(color), category);
         return map;
     }
 
+    public static FileCategory CategoryOf(SearchResult result) =>
+        result.IsDirectory ? FileCategory.Folder
+        : ByExtension.TryGetValue(Path.GetExtension(result.FileName), out var t) ? t.Category
+        : FileCategory.Other;
+
     public static FileKind For(SearchResult result)
     {
-        var ext = result.IsDirectory ? "" : Path.GetExtension(result.FullPath);
+        var ext = result.IsDirectory ? "" : Path.GetExtension(result.FileName);
 
         // Results are built on a worker thread; brushes are cached per extension.
         lock (Cache)
@@ -83,8 +118,8 @@ public sealed record FileKind(string Label, IBrush Foreground, IBrush Background
             var label = ext.Length > 1 ? ext[1..].ToUpperInvariant() : "";
             if (label.Length > 4) label = label[..4];
 
-            var color = ColorByExtension.GetValueOrDefault(ext, Other);
-            kind = new FileKind(label,
+            var (color, category) = ByExtension.GetValueOrDefault(ext, (OtherColor, FileCategory.Other));
+            kind = new FileKind(label, result.IsDirectory ? FileCategory.Folder : category,
                 new ImmutableSolidColorBrush(color),
                 new ImmutableSolidColorBrush(color, 0.16));
             Cache[ext] = kind;
@@ -93,21 +128,41 @@ public sealed record FileKind(string Label, IBrush Foreground, IBrush Background
     }
 }
 
+/// <summary>Type / size / date filters of the name search page. Default = everything.</summary>
+public sealed record ResultFilter(FileCategory Category = FileCategory.All, long MinSize = 0, TimeSpan? ModifiedWithin = null)
+{
+    // Entries match the size filter combo box.
+    public static readonly long[] SizeSteps = [0, 1L << 20, 10L << 20, 100L << 20, 1L << 30];
+
+    // Entries match the date filter combo box (null = any time).
+    public static readonly TimeSpan?[] DateSteps = [null, TimeSpan.FromDays(1), TimeSpan.FromDays(7), TimeSpan.FromDays(30), TimeSpan.FromDays(365)];
+
+    public bool IsEmpty => Category == FileCategory.All && MinSize == 0 && ModifiedWithin is null;
+
+    public Func<SearchResult, bool> ToPredicate()
+    {
+        var category = Category;
+        var minSize = MinSize;
+        var since = ModifiedWithin is { } window ? DateTime.Now - window : DateTime.MinValue;
+
+        return r => r.Size >= minSize
+                    && r.Modified >= since
+                    && (category == FileCategory.All || FileKind.CategoryOf(r) == category);
+    }
+}
+
 public static class ResultOrdering
 {
     private static readonly CompareInfo Culture = CultureInfo.CurrentCulture.CompareInfo;
 
+    // Folders now carry the total size of their contents, so size sorting
+    // mixes them with files: a 20 GB folder belongs above a 2 GB video.
     public static Comparison<SearchResult> For(SortMode mode) => mode switch
     {
         SortMode.NameAsc => ByName,
         SortMode.NameDesc => (a, b) => ByName(b, a),
-        // Folders have no size; keep them after the files either way.
-        SortMode.SizeDesc => (a, b) => a.IsDirectory != b.IsDirectory
-            ? a.IsDirectory.CompareTo(b.IsDirectory)
-            : Then(b.Size.CompareTo(a.Size), a, b),
-        SortMode.SizeAsc => (a, b) => a.IsDirectory != b.IsDirectory
-            ? a.IsDirectory.CompareTo(b.IsDirectory)
-            : Then(a.Size.CompareTo(b.Size), a, b),
+        SortMode.SizeDesc => (a, b) => Then(b.Size.CompareTo(a.Size), a, b),
+        SortMode.SizeAsc => (a, b) => Then(a.Size.CompareTo(b.Size), a, b),
         SortMode.DateDesc => (a, b) => Then(b.Modified.CompareTo(a.Modified), a, b),
         SortMode.DateAsc => (a, b) => Then(a.Modified.CompareTo(b.Modified), a, b),
         _ => throw new ArgumentOutOfRangeException(nameof(mode))

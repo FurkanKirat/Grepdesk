@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Grepdesk.Core;
 using Grepdesk.Core.Editor;
@@ -97,6 +98,44 @@ public class WindowsShell : IPlatformShell
             return ShellActionResult.Failure(ShellActionStatus.ProcessStartFailed, ex);
         }
     }
+
+    public ShellActionResult MoveToTrash(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return ShellActionResult.Failure(ShellActionStatus.PathNotFound);
+
+        var op = new ShFileOpStruct
+        {
+            wFunc = FO_DELETE,
+            pFrom = path + "\0\0", // double-null-terminated list
+            fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+        };
+
+        var code = SHFileOperation(ref op);
+        return code == 0 && !op.fAnyOperationsAborted
+            ? ShellActionResult.Success(null)
+            : ShellActionResult.Failure(ShellActionStatus.OperationFailed,
+                new IOException($"SHFileOperation failed (0x{code:X})"));
+    }
+
+    private const uint FO_DELETE = 0x0003;
+    private const ushort FOF_SILENT = 0x0004, FOF_NOCONFIRMATION = 0x0010, FOF_ALLOWUNDO = 0x0040, FOF_NOERRORUI = 0x0400;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ShFileOpStruct
+    {
+        public IntPtr hwnd;
+        public uint wFunc;
+        public string pFrom;
+        public string? pTo;
+        public ushort fFlags;
+        [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
+        public IntPtr hNameMappings;
+        public string? lpszProgressTitle;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHFileOperation(ref ShFileOpStruct lpFileOp);
 
     public string? FindExecutableOnPath(string exeName)
     {

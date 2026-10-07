@@ -1,7 +1,12 @@
+using System.Diagnostics;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
 using System.Collections.ObjectModel;
@@ -35,16 +40,22 @@ public partial class MainWindow : Window
     private string _lastQuery = "";
     private List<string>? _selectedRoots; // null = whole PC
     private bool _scopeChosen;
-    private List<SearchResult> _allMatches = []; // every match for the last query, unsorted
+    private List<SearchResult> _allMatches = []; // every match for the last query (after filters), unsorted
+    private ResultFilter _filter = new();
 
     // ---- content search ----
     private readonly ObservableCollection<ResultItem> _contentResults = [];
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
+    private string? _contentQuery;
 
     // ---- shared ----
     private readonly Dictionary<TextBlock, Func<string>> _statusTexts = [];
     private bool _updatingControls;
+
+    // ---- drag and drop ----
+    private Point? _dragStart;
+    private bool _draggingOut; // our own drag: don't treat it as a drop onto the page
 
     public MainWindow() : this(null) { }
 
@@ -92,6 +103,9 @@ public partial class MainWindow : Window
 
         InitPreview();
         InitSorting();
+        InitFilters();
+        InitKeyboard();
+        InitDragAndDrop();
         InitLanguageSetting();
         InitExplorerMenuSettings();
         ApplyLanguage();
@@ -209,6 +223,24 @@ public partial class MainWindow : Window
                 box.SelectedIndex = (int)Settings.Sort;
             }
 
+            // Filters (indices kept; labels follow the language)
+            TypeFilterList.ItemsSource = Enum.GetValues<FileCategory>().Select(c => Loc.Get("Category" + c)).ToList();
+            TypeFilterList.SelectedIndex = (int)_filter.Category;
+            SizeFilterLabel.Text = Loc.Get("FilterSize");
+            DateFilterLabel.Text = Loc.Get("FilterDate");
+            var sizeIndex = Math.Max(0, SizeFilterBox.SelectedIndex);
+            SizeFilterBox.ItemsSource = ResultFilter.SizeSteps
+                .Select(b => b == 0 ? Loc.Get("FilterAny") : "≥ " + Jobs.Format.Size(b)).ToList();
+            SizeFilterBox.SelectedIndex = sizeIndex;
+            var dateIndex = Math.Max(0, DateFilterBox.SelectedIndex);
+            DateFilterBox.ItemsSource = new[] { "FilterAny", "FilterToday", "FilterWeek", "FilterMonth", "FilterYear" }
+                .Select(k => Loc.Get(k)).ToList();
+            DateFilterBox.SelectedIndex = dateIndex;
+
+            // Settings: shortcuts
+            ShortcutsHeader.Text = Loc.Get("ShortcutsHeader");
+            FillShortcutsTable();
+
             // Settings: language
             LanguageHeader.Text = Loc.Get("LanguageHeader");
             LanguageDescription.Text = Loc.Get("LanguageDescription");
@@ -260,7 +292,7 @@ public partial class MainWindow : Window
     private void InitPreview()
     {
         ResultsList.SelectionChanged += (_, _) => NamePreview.Show(ResultsList.SelectedItem as ResultItem);
-        ContentResultsList.SelectionChanged += (_, _) => ContentPreview.Show(ContentResultsList.SelectedItem as ResultItem);
+        ContentResultsList.SelectionChanged += (_, _) => ContentPreview.Show(ContentResultsList.SelectedItem as ResultItem, _contentQuery);
 
         foreach (var pane in new[] { NamePreview, ContentPreview })
         {
@@ -482,17 +514,11 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) { }
     }
 
+    // ↓ into the results is handled with the other shortcuts (OnPreviewKeyDown).
     private void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Down && _results.Count > 0)
-        {
-            ResultsList.Focus();
-            ResultsList.SelectedIndex = 0;
-        }
-        else if (e.Key == Key.Escape)
-        {
+        if (e.Key == Key.Escape)
             SearchBox.Text = "";
-        }
     }
 
     private void ClearNameResults()
@@ -522,32 +548,38 @@ public partial class MainWindow : Window
         // alone answers questions like "what are the biggest files here?".
 
         var sortMode = Settings.Sort;
+        var filter = _filter;
         var (all, firstPage) = await Task.Run(() =>
         {
             var matches = _index.Search(query, token);
+            if (!filter.IsEmpty)
+                matches = matches.Where(filter.ToPredicate()).ToList();
             return (matches, ResultOrdering.TakeSorted(matches, PageSize, ResultOrdering.For(sortMode), token));
         }, token);
         if (token.IsCancellationRequested) return;
 
         _allMatches = all;
         foreach (var r in firstPage)
-            _results.Add(new ResultItem(r));
+            _results.Add(NameItem(r));
 
         UpdateNameStatus(query);
     }
+
+    private ResultItem NameItem(SearchResult r) => new(r, nameHighlight: _lastQuery.Trim());
 
     private void UpdateNameStatus(string query)
     {
         var total = _allMatches.Count;
         var shown = _results.Count;
         var browsing = string.IsNullOrWhiteSpace(query);
+        var filtered = !_filter.IsEmpty;
         SetStatus(StatusText, () => (browsing, total > shown) switch
         {
             (true, true) => Loc.Get("AllItemsShowingTop", total, shown),
             (true, false) => Loc.Get("AllItemsCount", total),
             (false, true) => Loc.Get("ResultsShowingTop", total, query, shown),
             (false, false) => Loc.Get("ResultsCount", total, query),
-        });
+        } + (filtered ? Loc.Get("FilteredSuffix") : ""));
         UpdateShowMoreButton();
     }
 
@@ -570,7 +602,7 @@ public partial class MainWindow : Window
         if (token.IsCancellationRequested || all != _allMatches || sortMode != Settings.Sort) return;
 
         foreach (var r in page.Skip(_results.Count))
-            _results.Add(new ResultItem(r));
+            _results.Add(NameItem(r));
 
         UpdateNameStatus(_lastQuery);
     }
@@ -591,7 +623,7 @@ public partial class MainWindow : Window
 
             _results.Clear();
             foreach (var r in page)
-                _results.Add(new ResultItem(r));
+                _results.Add(NameItem(r));
             UpdateNameStatus(_lastQuery);
         }
         catch (OperationCanceledException) { }
@@ -616,30 +648,25 @@ public partial class MainWindow : Window
 
             var menuItems = new List<Control>();
 
-            var openItem = new MenuItem { Header = Loc.Get("ContextMenuOpen") };
+            var openItem = new MenuItem { Header = Loc.Get("ContextMenuOpen"), InputGesture = new KeyGesture(Key.Enter) };
             openItem.Click += (_, _) =>
             {
                 var result = _shell.OpenPath(item.Result.FullPath);
                 ReportShellResult(result, Loc.Get("FileOpenFailed"));
             };
 
-            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
+            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder"), InputGesture = new KeyGesture(Key.Enter, KeyModifiers.Control) };
             showItem.Click += (_, _) =>
             {
                 var result = _shell.ShowInFileManager(item.Result.FullPath);
                 ReportShellResult(result, Loc.Get("ShowInFolderFailed"));
             };
 
-            var copyItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath") };
-            copyItem.Click += async (_, _) =>
-            {
-                var clipboard = TopLevel.GetTopLevel(list)?.Clipboard;
-                if (clipboard is not null)
-                {
-                    await clipboard.SetTextAsync(item.Result.FullPath);
-                    SetStatus(CurrentStatusText, () => Loc.Get("PathCopied"));
-                }
-            };
+            var copyItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control) };
+            copyItem.Click += async (_, _) => await CopyPathAsync(item);
+
+            var copyFileItem = new MenuItem { Header = Loc.Get("ContextMenuCopyFile"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift) };
+            copyFileItem.Click += async (_, _) => await CopyFileAsync(item);
 
             var terminalItem = new MenuItem { Header = Loc.Get("ContextMenuOpenInTerminal") };
             terminalItem.Click += (_, _) =>
@@ -652,9 +679,23 @@ public partial class MainWindow : Window
             menuItems.Add(openItem);
             menuItems.Add(showItem);
             menuItems.Add(copyItem);
+            menuItems.Add(copyFileItem);
 
             menuItems.Add(new Separator());
             menuItems.Add(terminalItem);
+
+            // Zip jobs reuse the Explorer-menu code path: a job process with its own progress window.
+            menuItems.Add(new Separator());
+            if (!item.IsDirectory && string.Equals(Path.GetExtension(item.FullPath), ".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                menuItems.Add(JobMenuItem("ContextMenuExtractHere", "--extract-here", item.FullPath));
+                menuItems.Add(JobMenuItem("ContextMenuExtractTo", "--extract-to", item.FullPath));
+            }
+            menuItems.Add(JobMenuItem("ContextMenuCompress", "--compress", item.FullPath));
+
+            var trashItem = new MenuItem { Header = Loc.Get("ContextMenuMoveToTrash"), InputGesture = new KeyGesture(Key.Delete) };
+            trashItem.Click += async (_, _) => await MoveToTrashAsync(item);
+            menuItems.Add(trashItem);
 
             if (_editorDetector.AvailableEditors.Count > 0)
             {
@@ -692,6 +733,313 @@ public partial class MainWindow : Window
             ? $"{failureMessagePrefix}: {result.Exception.Message}"
             : $"{failureMessagePrefix} ({result.Status})";
         SetStatus(CurrentStatusText, () => message);
+    }
+
+    private MenuItem JobMenuItem(string labelKey, string flag, string path)
+    {
+        var menuItem = new MenuItem { Header = Loc.Get(labelKey) };
+        menuItem.Click += (_, _) => StartJob(flag, path);
+        return menuItem;
+    }
+
+    private void StartJob(string flag, string path)
+    {
+        if (Environment.ProcessPath is not { } exe) return;
+        try
+        {
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+            psi.ArgumentList.Add(flag);
+            psi.ArgumentList.Add(path);
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(CurrentStatusText, () => $"{Loc.Get("JobStartFailed")}: {ex.Message}");
+        }
+    }
+
+    private async Task CopyPathAsync(ResultItem item)
+    {
+        if (Clipboard is null) return;
+        await Clipboard.SetTextAsync(item.FullPath);
+        SetStatus(CurrentStatusText, () => Loc.Get("PathCopied"));
+    }
+
+    private async Task<IStorageItem?> GetStorageItemAsync(ResultItem item) => item.IsDirectory
+        ? await StorageProvider.TryGetFolderFromPathAsync(item.FullPath)
+        : await StorageProvider.TryGetFileFromPathAsync(item.FullPath);
+
+    /// <summary>Puts the file itself on the clipboard, ready to paste in Explorer.</summary>
+    private async Task CopyFileAsync(ResultItem item)
+    {
+        if (Clipboard is null || await GetStorageItemAsync(item) is not { } storageItem) return;
+        await Clipboard.SetFileAsync(storageItem);
+        var name = item.FileName;
+        SetStatus(CurrentStatusText, () => Loc.Get("FileCopied", name));
+    }
+
+    private async Task MoveToTrashAsync(ResultItem item)
+    {
+        var confirmed = await ConfirmDialog.ShowAsync(this,
+            Loc.Get("TrashConfirmTitle"),
+            Loc.Get(item.IsDirectory ? "TrashConfirmFolder" : "TrashConfirmFile", item.FileName),
+            item.FullPath,
+            Loc.Get("TrashConfirmButton"),
+            Loc.Get("JobCancel"));
+        if (!confirmed) return;
+
+        var result = _shell.MoveToTrash(item.FullPath);
+        if (!result.IsSuccess)
+        {
+            ReportShellResult(result, Loc.Get("TrashFailed"));
+            return;
+        }
+
+        // Drop it everywhere right away instead of waiting for the file watcher.
+        _index.Remove(item.FullPath);
+        _allMatches.RemoveAll(r => string.Equals(r.FullPath, item.FullPath, StringComparison.OrdinalIgnoreCase));
+        _results.Remove(item);
+        foreach (var match in _contentResults.Where(r => r.FullPath == item.FullPath).ToList())
+            _contentResults.Remove(match);
+
+        var name = item.FileName;
+        SetStatus(CurrentStatusText, () => Loc.Get("MovedToTrash", name));
+        UpdateShowMoreButton();
+    }
+
+    // =====================================================================
+    // Filters
+    // =====================================================================
+
+    private void InitFilters()
+    {
+        TypeFilterList.SelectionChanged += async (_, _) => await OnFilterChangedAsync();
+        SizeFilterBox.SelectionChanged += async (_, _) => await OnFilterChangedAsync();
+        DateFilterBox.SelectionChanged += async (_, _) => await OnFilterChangedAsync();
+    }
+
+    private async Task OnFilterChangedAsync()
+    {
+        if (_updatingControls) return;
+
+        var filter = new ResultFilter(
+            (FileCategory)Math.Max(0, TypeFilterList.SelectedIndex),
+            ResultFilter.SizeSteps[Math.Max(0, SizeFilterBox.SelectedIndex)],
+            ResultFilter.DateSteps[Math.Max(0, DateFilterBox.SelectedIndex)]);
+        if (filter == _filter) return;
+
+        _filter = filter;
+        if (_index.Count > 0 && !_index.IsIndexing)
+            await Search(_lastQuery);
+    }
+
+    // =====================================================================
+    // Keyboard
+    // =====================================================================
+
+    private sealed record Shortcut(string Keys, string DescriptionKey);
+
+    // Shown in Settings; the handling itself is in OnPreviewKeyDown.
+    private static readonly Shortcut[] Shortcuts =
+    [
+        new("Ctrl+F", "ShortcutFocusSearch"),
+        new("Ctrl+1 / Ctrl+2", "ShortcutPages"),
+        new("Ctrl+,", "ShortcutSettings"),
+        new("↓ / ↑", "ShortcutMoveToResults"),
+        new("Enter", "ShortcutOpen"),
+        new("Ctrl+Enter", "ShortcutShowInFolder"),
+        new("Ctrl+C", "ShortcutCopyPath"),
+        new("Ctrl+Shift+C", "ShortcutCopyFile"),
+        new("Delete", "ShortcutTrash"),
+        new("Esc", "ShortcutEscape"),
+        new("F5", "ShortcutRescan"),
+    ];
+
+    private void FillShortcutsTable()
+    {
+        ShortcutsGrid.Children.Clear();
+        ShortcutsGrid.RowDefinitions.Clear();
+
+        for (var i = 0; i < Shortcuts.Length; i++)
+        {
+            ShortcutsGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+
+            var keys = new Border
+            {
+                Background = Avalonia.Media.Brush.Parse("#313244"),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(7, 2),
+                Margin = new Thickness(0, 3, 16, 3),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                Child = new TextBlock { Text = Shortcuts[i].Keys, FontSize = 11, Foreground = Avalonia.Media.Brush.Parse("#cdd6f4") }
+            };
+            var description = new TextBlock
+            {
+                Text = Loc.Get(Shortcuts[i].DescriptionKey),
+                FontSize = 12,
+                Foreground = Avalonia.Media.Brush.Parse("#a6adc8"),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            };
+            Grid.SetRow(keys, i);
+            Grid.SetRow(description, i);
+            Grid.SetColumn(description, 1);
+            ShortcutsGrid.Children.Add(keys);
+            ShortcutsGrid.Children.Add(description);
+        }
+    }
+
+    private void InitKeyboard()
+    {
+        // Tunnel: runs before the focused control, so Enter/Delete on a result
+        // aren't swallowed by the list, and Ctrl+F works from anywhere.
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+    }
+
+    private ListBox? ActiveList =>
+        NameSearchPage.IsVisible ? ResultsList : ContentSearchPage.IsVisible ? ContentResultsList : null;
+
+    private TextBox? ActiveSearchBox =>
+        NameSearchPage.IsVisible ? SearchBox : ContentSearchPage.IsVisible ? ContentSearchBox : null;
+
+    private bool ResultsHaveFocus =>
+        ActiveList is { } list && FocusManager?.GetFocusedElement() is Visual focused
+        && (focused == list || list.IsVisualAncestorOf(focused));
+
+    private async void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var list = ActiveList;
+        var selected = list?.SelectedItem as ResultItem;
+
+        switch (e.Key)
+        {
+            case Key.F when ctrl:
+                if (ActiveSearchBox is null) FeatureNav.SelectedIndex = 0;
+                ActiveSearchBox?.Focus();
+                ActiveSearchBox?.SelectAll();
+                break;
+            case Key.D1 when ctrl:
+                FeatureNav.SelectedIndex = 0;
+                break;
+            case Key.D2 when ctrl:
+                FeatureNav.SelectedIndex = 1;
+                break;
+            case Key.OemComma when ctrl:
+                SettingsNav.SelectedIndex = 0;
+                break;
+            case Key.F5 when NameSearchPage.IsVisible && ReindexButton.IsEnabled:
+                await StartIndexingAsync();
+                break;
+            case Key.Down when ctrl == false && ActiveSearchBox is { IsFocused: true } && list is { ItemCount: > 0 }:
+                list.Focus();
+                list.SelectedIndex = Math.Max(0, list.SelectedIndex);
+                break;
+            case Key.Up when ResultsHaveFocus && list!.SelectedIndex <= 0:
+                ActiveSearchBox?.Focus();
+                break;
+            case Key.Escape when ResultsHaveFocus:
+                ActiveSearchBox?.Focus();
+                break;
+            case Key.Enter when ResultsHaveFocus && selected is not null:
+                ReportShellResult(ctrl ? _shell.ShowInFileManager(selected.FullPath) : _shell.OpenPath(selected.FullPath),
+                    Loc.Get(ctrl ? "ShowInFolderFailed" : "FileOpenFailed"));
+                break;
+            case Key.C when ctrl && e.KeyModifiers.HasFlag(KeyModifiers.Shift) && ResultsHaveFocus && selected is not null:
+                await CopyFileAsync(selected);
+                break;
+            case Key.C when ctrl && ResultsHaveFocus && selected is not null:
+                await CopyPathAsync(selected);
+                break;
+            case Key.Delete when ResultsHaveFocus && selected is not null:
+                await MoveToTrashAsync(selected);
+                break;
+            default:
+                return;
+        }
+        e.Handled = true;
+    }
+
+    // =====================================================================
+    // Drag and drop
+    // =====================================================================
+
+    private void InitDragAndDrop()
+    {
+        // Out: drag a result into Explorer, an editor, a mail... (copied, never moved).
+        foreach (var list in new[] { ResultsList, ContentResultsList })
+        {
+            list.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                _dragStart = e.GetCurrentPoint(list).Properties.IsLeftButtonPressed ? e.GetPosition(list) : null;
+            }, RoutingStrategies.Tunnel);
+            list.AddHandler(PointerReleasedEvent, (_, _) => _dragStart = null, RoutingStrategies.Tunnel);
+            list.PointerMoved += async (_, e) => await TryStartDragAsync(list, e);
+        }
+
+        // In: drop a folder on a search page to search there.
+        foreach (var page in new Control[] { NameSearchPage, ContentSearchPage })
+        {
+            page.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+            {
+                e.DragEffects = !_draggingOut && e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+            });
+            page.AddHandler(DragDrop.DropEvent, async (_, e) => await OnDropAsync(page, e));
+        }
+    }
+
+    private async Task TryStartDragAsync(ListBox list, PointerEventArgs e)
+    {
+        if (_dragStart is not { } start || _draggingOut) return;
+        if (!e.GetCurrentPoint(list).Properties.IsLeftButtonPressed) { _dragStart = null; return; }
+
+        var delta = e.GetPosition(list) - start;
+        if (Math.Abs(delta.X) < 6 && Math.Abs(delta.Y) < 6) return;
+        _dragStart = null;
+
+        if ((e.Source as Control)?.DataContext is not ResultItem item) return;
+
+        if (await GetStorageItemAsync(item) is not { } storageItem) return;
+
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.CreateFile(storageItem));
+
+        _draggingOut = true;
+        try
+        {
+            await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Copy | DragDropEffects.Link);
+        }
+        finally
+        {
+            _draggingOut = false;
+        }
+    }
+
+    private async Task OnDropAsync(Control page, DragEventArgs e)
+    {
+        if (_draggingOut || e.DataTransfer.TryGetFiles() is not { } items) return;
+
+        // A dropped file means "search where this file is".
+        var folders = items
+            .Select(i => i.TryGetLocalPath())
+            .OfType<string>()
+            .Select(p => Directory.Exists(p) ? p : Path.GetDirectoryName(p))
+            .OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (folders.Count == 0) return;
+
+        if (page == ContentSearchPage)
+        {
+            _contentSearchFolder = folders[0];
+            ContentFolderText.Text = folders[0];
+            SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
+            ContentSearchBox.Focus();
+        }
+        else
+        {
+            _selectedRoots = folders;
+            await StartIndexingAsync();
+        }
     }
 
     // =====================================================================
@@ -740,6 +1088,7 @@ public partial class MainWindow : Window
         var token = _contentSearchCts.Token;
 
         _contentResults.Clear();
+        _contentQuery = query;
         SetStatus(ContentStatusText, () => Loc.Get("ScanningFiles"));
 
         // Walk the chosen folder directly — content search doesn't depend on
@@ -760,7 +1109,7 @@ public partial class MainWindow : Window
         {
             await foreach (var match in ContentSearcher.SearchAsync(candidates, query, OnSkipped, token))
             {
-                var item = new ResultItem(SearchResult.FromDisk(match.FullPath), match.Snippet);
+                var item = new ResultItem(SearchResult.FromDisk(match.FullPath), match.Snippet, snippetHighlight: query);
                 InsertSorted(_contentResults, item, ResultOrdering.ForItems(Settings.Sort));
                 matchCount++;
                 SetStatus(ContentStatusText, () => skippedCount == 0

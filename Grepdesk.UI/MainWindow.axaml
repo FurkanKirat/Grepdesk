@@ -83,6 +83,41 @@
             <Setter Property="Background" Value="#313244"/>
         </Style>
 
+        <!-- Type filter chips -->
+        <Style Selector="ListBox.chips">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem">
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Margin" Value="0,0,6,4"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#252536"/>
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:selected">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="BorderBrush" Value="#89b4fa"/>
+        </Style>
+
+        <Style Selector="Run.match">
+            <Setter Property="Foreground" Value="#f9e2af"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+
         <!-- Sidebar navigation -->
         <Style Selector="ListBox.nav">
             <Setter Property="Background" Value="Transparent"/>
@@ -140,22 +175,24 @@
                     </Border>
                 </Panel>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding FileName}"
-                               Foreground="#cdd6f4"
+                    <TextBlock Foreground="#cdd6f4"
                                FontSize="13"
                                FontWeight="Medium"
-                               TextTrimming="CharacterEllipsis"/>
+                               TextTrimming="CharacterEllipsis">
+                        <Run Text="{Binding NameBefore}"/><Run Classes="match" Text="{Binding NameMatch}"/><Run Text="{Binding NameAfter}"/>
+                    </TextBlock>
                     <TextBlock Text="{Binding Directory}"
                                Foreground="#6c7086"
                                FontSize="11"
                                TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding Snippet}"
-                               Foreground="#89b4fa"
+                    <TextBlock Foreground="#89b4fa"
                                FontSize="11"
                                FontStyle="Italic"
                                TextWrapping="Wrap"
                                IsVisible="{Binding HasSnippet}"
-                               Margin="0,2,0,0"/>
+                               Margin="0,2,0,0">
+                        <Run Text="{Binding SnippetBefore}"/><Run Classes="match" Text="{Binding SnippetMatch}"/><Run Text="{Binding SnippetAfter}"/>
+                    </TextBlock>
                 </StackPanel>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="12,0,4,0" MinWidth="90">
                     <TextBlock Text="{Binding SizeText}"
@@ -215,7 +252,7 @@
         <Panel x:Name="PageHost" Grid.Column="1" Margin="20,16,20,14">
 
             <!-- ================ PAGE : FILE NAME SEARCH ================ -->
-            <DockPanel x:Name="NameSearchPage">
+            <DockPanel x:Name="NameSearchPage" DragDrop.AllowDrop="True" Background="Transparent">
                 <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
                     <TextBlock x:Name="NameSearchTitle" Classes="pageTitle" Text="File Name Search"/>
                     <TextBlock x:Name="NameSearchSubtitle" Classes="pageSubtitle"/>
@@ -237,8 +274,18 @@
                     </DockPanel>
                 </Border>
 
-                <TextBox x:Name="SearchBox" Classes="search" DockPanel.Dock="Top" Margin="0,0,0,10"
+                <TextBox x:Name="SearchBox" Classes="search" DockPanel.Dock="Top" Margin="0,0,0,8"
                          Watermark="Search files and folders..."/>
+
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top" Margin="12,0,0,0">
+                        <TextBlock x:Name="SizeFilterLabel" Classes="label"/>
+                        <ComboBox x:Name="SizeFilterBox" MinWidth="110" FontSize="12"/>
+                        <TextBlock x:Name="DateFilterLabel" Classes="label" Margin="6,0,0,0"/>
+                        <ComboBox x:Name="DateFilterBox" MinWidth="130" FontSize="12"/>
+                    </StackPanel>
+                    <ListBox x:Name="TypeFilterList" Classes="chips"/>
+                </DockPanel>
 
                 <DockPanel DockPanel.Dock="Top" Margin="2,0,0,8">
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
@@ -263,7 +310,7 @@
             </DockPanel>
 
             <!-- ================ PAGE : CONTENT SEARCH ================ -->
-            <DockPanel x:Name="ContentSearchPage" IsVisible="False">
+            <DockPanel x:Name="ContentSearchPage" IsVisible="False" DragDrop.AllowDrop="True" Background="Transparent">
                 <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
                     <TextBlock x:Name="ContentSearchTitle" Classes="pageTitle" Text="Content Search"/>
                     <TextBlock x:Name="ContentSearchSubtitle" Classes="pageSubtitle"/>
@@ -332,6 +379,14 @@
                                 <CheckBox x:Name="ShowPreviewCheckBox"/>
                                 <TextBlock x:Name="ShowPreviewHint" Classes="hint" Margin="28,-4,0,0"/>
                             </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Keyboard shortcuts (rows filled in code from the same table the key handler uses) -->
+                    <Border Classes="card" Padding="16,14">
+                        <StackPanel Spacing="10">
+                            <TextBlock x:Name="ShortcutsHeader" Classes="sectionTitle"/>
+                            <Grid x:Name="ShortcutsGrid" ColumnDefinitions="Auto,*"/>
                         </StackPanel>
                     </Border>
 

@@ -1,34 +1,29 @@
-using System.Text;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Grepdesk.Core;
-using Grepdesk.Core.ContentSearch;
 using Grepdesk.UI.Jobs;
+using Grepdesk.UI.Preview;
 
 namespace Grepdesk.UI;
 
 /// <summary>
-/// Side panel showing the selected result: metadata plus a look inside —
-/// a thumbnail for images, the first lines for text and code, extracted
-/// text for documents, and the first entries for folders.
+/// Side panel showing the selected result: metadata plus a look inside.
+/// What "inside" means per file type is up to the <see cref="IPreviewProvider"/>s;
+/// this control only lays out what they return.
 /// </summary>
 public partial class PreviewPane : UserControl
 {
     private static LocalizationService Loc => LocalizationService.Instance;
 
-    private static readonly HashSet<string> ImageExtensions =
-        new([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"], StringComparer.OrdinalIgnoreCase);
-
-    private const int TextPreviewBytes = 32 * 1024;
-    private const int MaxExtractedChars = 6000;
-    private const long MaxDocumentBytes = 20 * 1024 * 1024;
-    private const long MaxImageBytes = 50 * 1024 * 1024;
-    private const int FolderListLimit = 200;
-    private const int FolderCountLimit = 10_000;
+    private static readonly FontFamily Monospace = new("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace");
+    private static readonly IBrush HighlightBackground = new SolidColorBrush(Color.Parse("#f9e2af"), 0.25);
+    private static readonly IBrush HighlightForeground = new SolidColorBrush(Color.Parse("#f9e2af"));
+    private const int MaxHighlights = 300;
 
     private CancellationTokenSource _cts = new();
     private ResultItem? _item;
+    private string? _highlight;
     private Bitmap? _bitmap;
 
     /// <summary>Raised with the full path when the user clicks Open / Show in folder.</summary>
@@ -38,32 +33,31 @@ public partial class PreviewPane : UserControl
     public PreviewPane()
     {
         InitializeComponent();
-
         OpenButton.Click += (_, _) => { if (_item is not null) OpenRequested?.Invoke(_item.FullPath); };
         ShowInFolderButton.Click += (_, _) => { if (_item is not null) ShowInFolderRequested?.Invoke(_item.FullPath); };
-
         ApplyLanguage();
     }
 
     public void ApplyLanguage()
     {
         EmptyText.Text = Loc.Get("PreviewEmpty");
-        TypeLabel.Text = Loc.Get("PreviewType");
-        ModifiedLabel.Text = Loc.Get("PreviewModified");
         OpenButton.Content = Loc.Get("ContextMenuOpen");
         ShowInFolderButton.Content = Loc.Get("ContextMenuShowInFolder");
-        Show(_item);
+        Show(_item, _highlight);
     }
 
-    public async void Show(ResultItem? item)
+    /// <param name="highlight">Text to mark in the preview (the content search query), or null.</param>
+    public async void Show(ResultItem? item, string? highlight = null)
     {
         _cts.Cancel();
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         _item = item;
+        _highlight = highlight;
 
         SetBitmap(null);
         TextScroll.IsVisible = false;
+        TextPreview.Inlines?.Clear();
         TextPreview.Text = "";
 
         EmptyText.IsVisible = item is null;
@@ -81,20 +75,26 @@ public partial class PreviewPane : UserControl
         BadgeText.Foreground = Badge.BorderBrush = item.Kind.Foreground;
         Badge.Background = item.Kind.Background;
 
-        TypeValue.Text = r.IsDirectory
-            ? Loc.Get("PreviewFolder")
-            : item.Kind.Label.Length > 0 ? Loc.Get("PreviewFileType", item.Kind.Label) : Loc.Get("PreviewFile");
-        SizeLabel.Text = Loc.Get(r.IsDirectory ? "PreviewContains" : "PreviewSize");
-        SizeValue.Text = r.IsDirectory ? "…" : $"{Format.Size(r.Size)} ({r.Size:N0} B)";
-        ModifiedValue.Text = item.ModifiedText;
+        var meta = new List<(string, string)>
+        {
+            (Loc.Get("PreviewType"), r.IsDirectory
+                ? Loc.Get("PreviewFolder")
+                : item.Kind.Label.Length > 0 ? Loc.Get("PreviewFileType", item.Kind.Label) : Loc.Get("PreviewFile")),
+            (Loc.Get("PreviewSize"), $"{Format.Size(r.Size)} ({r.Size:N0} B)"),
+            (Loc.Get("PreviewModified"), item.ModifiedText),
+        };
+        SetMeta(meta);
 
         BodyMessage.IsVisible = true;
         BodyMessage.Text = Loc.Get("PreviewLoading");
 
+        var provider = PreviewProviders.For(r);
         PreviewContent content;
         try
         {
-            content = await Task.Run(() => LoadAsync(r, token), token);
+            content = provider is null
+                ? new PreviewContent()
+                : await Task.Run(() => provider.LoadAsync(r, token), token);
         }
         catch (OperationCanceledException)
         {
@@ -102,7 +102,7 @@ public partial class PreviewPane : UserControl
         }
         catch
         {
-            content = new PreviewContent(Message: Loc.Get("PreviewFailed"));
+            content = PreviewContent.FromMessage(Loc.Get("PreviewFailed"));
         }
 
         if (token.IsCancellationRequested)
@@ -111,10 +111,8 @@ public partial class PreviewPane : UserControl
             return;
         }
 
-        if (content.FolderCount is { } count)
-            SizeValue.Text = count >= FolderCountLimit
-                ? Loc.Get("PreviewItemsMore", FolderCountLimit)
-                : Loc.Get("PreviewItems", count);
+        if (content.Details.Count > 0)
+            SetMeta(meta.Concat(content.Details).ToList());
 
         if (content.Image is not null)
         {
@@ -123,9 +121,9 @@ public partial class PreviewPane : UserControl
         }
         else if (content.Text is not null)
         {
-            TextPreview.Text = content.Footer is not null
-                ? content.Text + "\n\n" + content.Footer
-                : content.Text;
+            TextPreview.FontFamily = content.Monospace ? Monospace : FontFamily.Default;
+            TextPreview.FontSize = content.Monospace ? 11.5 : 12;
+            SetText(content.Footer is null ? content.Text : content.Text + "\n\n" + content.Footer, highlight);
             TextScroll.IsVisible = true;
             TextScroll.Offset = default;
             BodyMessage.IsVisible = false;
@@ -136,90 +134,57 @@ public partial class PreviewPane : UserControl
         }
     }
 
+    private void SetMeta(IReadOnlyList<(string Label, string Value)> rows)
+    {
+        MetaGrid.Children.Clear();
+        MetaGrid.RowDefinitions.Clear();
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            MetaGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+
+            var label = new TextBlock { Text = rows[i].Label, Foreground = Brush.Parse("#7f849c"), FontSize = 12, Margin = new(0, 2, 14, 2) };
+            var value = new TextBlock { Text = rows[i].Value, Foreground = Brush.Parse("#cdd6f4"), FontSize = 12, Margin = new(0, 2), TextWrapping = TextWrapping.Wrap };
+            Grid.SetRow(label, i);
+            Grid.SetRow(value, i);
+            Grid.SetColumn(value, 1);
+            MetaGrid.Children.Add(label);
+            MetaGrid.Children.Add(value);
+        }
+    }
+
+    /// <summary>Shows text with every occurrence of <paramref name="highlight"/> marked.</summary>
+    private void SetText(string text, string? highlight)
+    {
+        if (string.IsNullOrEmpty(highlight) || text.IndexOf(highlight, StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            TextPreview.Text = text;
+            return;
+        }
+
+        var inlines = new InlineCollection();
+        int start = 0, count = 0, index;
+        while (count < MaxHighlights && (index = text.IndexOf(highlight, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            if (index > start) inlines.Add(new Run(text[start..index]));
+            inlines.Add(new Run(text.Substring(index, highlight.Length))
+            {
+                Background = HighlightBackground,
+                Foreground = HighlightForeground,
+                FontWeight = FontWeight.Bold
+            });
+            start = index + highlight.Length;
+            count++;
+        }
+        if (start < text.Length) inlines.Add(new Run(text[start..]));
+        TextPreview.Inlines = inlines;
+    }
+
     private void SetBitmap(Bitmap? bitmap)
     {
         ImagePreview.Source = bitmap;
         ImagePreview.IsVisible = bitmap is not null;
         _bitmap?.Dispose();
         _bitmap = bitmap;
-    }
-
-    private sealed record PreviewContent(
-        Bitmap? Image = null, string? Text = null, string? Footer = null,
-        string? Message = null, int? FolderCount = null);
-
-    private static async Task<PreviewContent> LoadAsync(SearchResult r, CancellationToken ct)
-    {
-        if (r.IsDirectory)
-            return ListFolder(r.FullPath, ct);
-
-        var ext = Path.GetExtension(r.FullPath);
-
-        if (ImageExtensions.Contains(ext))
-        {
-            if (r.Size > MaxImageBytes) return new(Message: Loc.Get("PreviewTooLarge"));
-            await using var stream = File.OpenRead(r.FullPath);
-            // Large photos are decoded at preview size, not full resolution.
-            var bitmap = r.Size > 2 * 1024 * 1024
-                ? Bitmap.DecodeToWidth(stream, 800, BitmapInterpolationMode.MediumQuality)
-                : new Bitmap(stream);
-            return new(Image: bitmap);
-        }
-
-        // Office documents and PDFs: reuse the content-search extractors.
-        if (ExtractorRegistry.TryGetExtractor(ext, out var extractor) && extractor is not PlainTextExtractor)
-        {
-            if (r.Size > MaxDocumentBytes) return new(Message: Loc.Get("PreviewTooLarge"));
-            var text = await extractor.ExtractTextAsync(r.FullPath, ct);
-            if (string.IsNullOrWhiteSpace(text)) return new(Message: Loc.Get("PreviewFailed"));
-            return text.Length > MaxExtractedChars
-                ? new(Text: text[..MaxExtractedChars], Footer: Loc.Get("PreviewTruncated"))
-                : new(Text: text);
-        }
-
-        return ReadTextHead(r.FullPath, r.Size);
-    }
-
-    /// <summary>First bytes of the file as text, or "no preview" when it looks binary.</summary>
-    private static PreviewContent ReadTextHead(string path, long size)
-    {
-        var buffer = new byte[(int)Math.Min(size, TextPreviewBytes)];
-        using (var stream = File.OpenRead(path))
-            buffer = buffer[..stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false)];
-
-        string text;
-        if (buffer.Length >= 2 && buffer[0] == 0xFF && buffer[1] == 0xFE)
-            text = Encoding.Unicode.GetString(buffer, 2, (buffer.Length - 2) & ~1);
-        else if (buffer.Length >= 2 && buffer[0] == 0xFE && buffer[1] == 0xFF)
-            text = Encoding.BigEndianUnicode.GetString(buffer, 2, (buffer.Length - 2) & ~1);
-        else if (Array.IndexOf(buffer, (byte)0) >= 0)
-            return new();  // binary: executables, media, databases...
-        else
-            text = new UTF8Encoding(false).GetString(buffer).TrimStart('﻿');
-
-        return new(Text: text, Footer: size > buffer.Length ? Loc.Get("PreviewTruncated") : null);
-    }
-
-    private static PreviewContent ListFolder(string path, CancellationToken ct)
-    {
-        var dirs = new List<string>();
-        var files = new List<string>();
-        var count = 0;
-
-        foreach (var info in new DirectoryInfo(path).EnumerateFileSystemInfos())
-        {
-            ct.ThrowIfCancellationRequested();
-            if (++count >= FolderCountLimit) break;
-            if (dirs.Count + files.Count >= FolderListLimit) continue;
-
-            if (info is DirectoryInfo) dirs.Add(info.Name + Path.DirectorySeparatorChar);
-            else files.Add(info.Name);
-        }
-
-        if (count == 0) return new(Message: Loc.Get("PreviewFolderEmpty"), FolderCount: 0);
-
-        dirs.Sort(StringComparer.CurrentCultureIgnoreCase);
-        files.Sort(StringComparer.CurrentCultureIgnoreCase);
-        return new(Text: string.Join('\n', dirs.Concat(files)), Footer: count > FolderListLimit ? Loc.Get("PreviewFolderMore") : null, FolderCount: count);
     }
 }

@@ -69,6 +69,26 @@ public class MacShell : IPlatformShell
         }
     }
 
+    public ShellActionResult MoveToTrash(string path)
+    {
+        try
+        {
+            var escaped = path.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            var psi = new ProcessStartInfo("osascript") { UseShellExecute = false };
+            psi.ArgumentList.Add("-e");
+            psi.ArgumentList.Add($"tell application \"Finder\" to delete POSIX file \"{escaped}\"");
+            using var process = Process.Start(psi)!;
+            process.WaitForExit();
+            return process.ExitCode == 0
+                ? ShellActionResult.Success(null)
+                : ShellActionResult.Failure(ShellActionStatus.OperationFailed);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.ProcessStartFailed, ex);
+        }
+    }
+
     public string? FindExecutableOnPath(string exeName)
     {
         var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
