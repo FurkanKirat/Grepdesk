@@ -1,8 +1,63 @@
 # Grepdesk
 
-A fast, lightweight desktop tool built with Avalonia UI for the file jobs
-Windows Explorer is slow at: finding files (by name or by content), zipping
-and unzipping, and copying or moving large folders.
+[![Latest release](https://img.shields.io/github/v/release/FurkanKirat/Grepdesk)](https://github.com/FurkanKirat/Grepdesk/releases/latest)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**The file jobs Windows Explorer is slow at, in one fast app:** find files by
+name or by what's inside them, see what fills your disk and get the space
+back, tidy up Downloads, and zip, unzip, copy or move big folders, right from
+Explorer's right-click menu.
+
+<!-- SCREENSHOT: a 10–15 s GIF here (type in the search box, results appear, Space opens the viewer),
+     saved as docs/images/demo.gif, then:
+![Grepdesk](docs/images/demo.gif)
+-->
+
+**[Download for Windows](https://github.com/FurkanKirat/Grepdesk/releases/latest)** ·
+[Features](#features) · [Benchmarks](#benchmarks) · [Build from source](#build-from-source)
+
+## Download
+
+Get `Grepdesk-vX.Y.Z-win-x64-Setup.exe` from the
+[latest release](https://github.com/FurkanKirat/Grepdesk/releases/latest), or
+the portable zip if you'd rather not install anything. Windows 10 or 11, 64-bit;
+.NET is included, nothing else to install. English and Turkish.
+
+The app isn't code-signed yet, so on first launch Windows SmartScreen may say
+it "protected your PC": click **More info → Run anyway**. Every release is
+built from this repository, and you can [build it yourself](#build-from-source).
+
+## How fast
+
+Times from the [benchmarks](#benchmarks) below (lower is better):
+
+| | Grepdesk | Explorer | 7-Zip / robocopy |
+| --- | ---: | ---: | ---: |
+| Zip 10,000 source files (148 MB) | **0.56 s** | 15.59 s | 1.65 s |
+| Unzip them | **4.04 s** | 130.61 s | 13.25 s |
+| Unzip 1 GB of photos and videos | **0.38 s** | 12.24 s | 1.03 s |
+| Copy 10,000 files on the same SSD | **2.88 s** | 75.93 s | 4.35 s (robocopy) |
+
+Zip jobs run on every core at once, and already-compressed files are stored
+instead of compressed again. Copies start right away instead of "calculating"
+first, with many files in flight on SSDs and one at a time on hard disks.
+
+## Why Grepdesk
+
+There are excellent single-purpose tools for each of these jobs:
+[Everything](https://www.voidtools.com/) for name search,
+[WizTree](https://diskanalyzer.com/) for disk usage, [7-Zip](https://www.7-zip.org/)
+for archives, [TeraCopy](https://www.codesector.com/teracopy) for copying. If you
+already live in them, keep them: they are more mature than Grepdesk in their
+own lane.
+
+Grepdesk puts those jobs in one open-source app that looks and behaves the same
+throughout, and connects them: search *inside* files as well as by name, then
+open, preview, zip or send a result to your editor or terminal from the same
+list; see what fills a drive and clean it up on the next page; paste a big
+copy from Explorer and get a fast, pausable job with sensible conflict handling.
+Free, no ads, no telemetry; the only network request is the optional update check.
 
 ## Features
 
@@ -14,7 +69,6 @@ and unzipping, and copying or moving large folders.
 - Sort by name, size or date across **all** matches, not just the first page
 - Filter by type (folders, documents, images, code, archives, video, audio), minimum size and last modified
 - Preview panel: images, rendered Markdown, the start of text and code files, the text of Office documents and PDFs; on Windows also video frames, album art and the first slide of presentations, with duration, resolution and similar details
-- Optional update check (off by default): tells you when a new release is out on GitHub
 - Viewer window for text, code and Markdown files (Space): the whole file, read-only, with line numbers and Ctrl+F
 
 ### 📄 Content Search
@@ -98,6 +152,7 @@ Grepdesk merges them into a single job.
 
 ### ⚡ Quick Actions (right-click any result)
 - **Open** (`Enter`) — launch with the default associated app
+- **View** (`Space`) — text, code and Markdown files in a read-only viewer window
 - **Show in File Manager** (`Ctrl+Enter`) — reveal and select the file in Explorer
 - **Copy Path** (`Ctrl+C`) / **Copy file** (`Ctrl+Shift+C`) — the path as text, or the file itself to paste in Explorer
 - **Compress to zip**, and **Extract here / to folder** on `.zip` files
@@ -109,83 +164,63 @@ Grepdesk merges them into a single job.
   with the selected item (e.g. Notepad++ only shows up for files, not folders)
 
 All keyboard shortcuts are listed on the **Settings** page, along with the
-language (English / Türkçe, or follow the system) and the preview panel toggle.
-
-## Why
-
-Most file search tools stop at file names. Grepdesk adds a second mode for
-searching *inside* files, plus the small quality-of-life actions (terminal,
-editor, explorer) that turn "found it" into "now I can actually use it" —
-without leaving the app.
-
-## Tech Stack
-
-- **.NET** / C#
-- **Avalonia UI** — cross-platform UI framework
-- Platform-specific shell integration behind `IPlatformShell`,
-  `IShellIntegration`, `IFileClipboard`, `IDriveKindProvider` and `IFileCopier`
-  (Windows and Linux implemented; macOS partly, see below)
-
-## Architecture Notes
-
-- `FileIndex` — in-memory file name index, built once per scan
-- `ContentSearcher` + `ExtractorRegistry` — pluggable content extraction per
-  file extension
-- `IPlatformShell` — abstracts OS-specific actions (open file, show in file
-  manager, open terminal, open in editor) behind a single interface, so the
-  UI layer never touches `Process.Start` directly
-- `ZipExtractor`, `ZipCompressor`, `ZipWriter` — parallel zip engines; the
-  writer implements the container format itself so compressed entries from
-  many workers can be appended as they finish
-- `TransferEngine` — copy/move with a walker feeding workers through a
-  bounded channel; the byte copy is `CopyFile2` on Windows (`IFileCopier`)
-- `SingleInstanceHost` + `JobDispatcher` — mutex + named pipe so the
-  per-file processes Explorer starts end up as one job window
-- `EditorDetector` — detects installed editors on `PATH` at startup and
-  caches the result
-- `EditorTargetResolver` — resolves whether an editor expects a file or a
-  directory, and filters incompatible combinations before they ever reach
-  the shell layer
-- Every shell action returns a `ShellActionResult` (success/failure +
-  exception), so the UI can report *why* something failed instead of
-  silently swallowing errors
-
-## Status
-
-Actively developed as a personal tool / learning project. Windows is the
-primary target, Linux is supported, macOS lacks Finder integration.
-
-## Getting Started
-
-```bash
-git clone https://github.com/FurkanKirat/Grepdesk.git
-cd Grepdesk
-dotnet build
-dotnet run --project Grepdesk.UI
-dotnet test
-```
-
-For daily use, publish once and point the Explorer menu at the published exe
-(ReadyToRun roughly halves the startup time of each job window):
-
-```bash
-dotnet publish Grepdesk.UI -c Release -r win-x64 --self-contained false -o C:\Apps\Grepdesk
-```
-
-### Building the installer
-
-```bash
-dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
-```
-
-writes a self-contained build (the .NET runtime included, so users don't need
-it installed) to `publish/win-x64`. Then compile `setup.iss` with
-[Inno Setup](https://jrsoftware.org/isinfo.php) 6; the installer lands in `Output/`.
-
-Timing a single job from a script: add `--benchmark` (e.g. `Grepdesk.UI.exe --extract-to --benchmark a.zip`);
-the elapsed time is appended to `%LOCALAPPDATA%\Grepdesk\benchmark.log`.
+language (English / Türkçe, or follow the system), the preview panel toggle,
+and an optional update check (off by default) that tells you when a new
+release is out on GitHub.
 
 ## Benchmarks
+
+Seconds, lower is better; the fastest in each row is in bold.
+
+**Compress**
+
+| Data | Grepdesk | 7-Zip | .NET, 1 thread | Explorer |
+| --- | ---: | ---: | ---: | ---: |
+| 10,000 source files, 148 MB | **0.56 s** | 1.65 s | 6.52 s | 15.59 s |
+| 306 photos, videos and notes, 986 MB | **0.66 s** | 2.91 s | 36.27 s | 36.02 s |
+| 2 files (a log and a disk image), 1 GB | **1.87 s** | 87.58 s | 42.54 s | 32.16 s |
+
+**Extract**
+
+| Data | Grepdesk | 7-Zip | .NET, 1 thread | Explorer |
+| --- | ---: | ---: | ---: | ---: |
+| 10,000 source files, 148 MB | **4.04 s** | 13.25 s | 9.43 s | 130.61 s |
+| 306 photos, videos and notes, 986 MB | **0.38 s** | 1.03 s | 1.63 s | 12.24 s |
+| 2 files (a log and a disk image), 1 GB | **1.38 s** | 2.45 s | 1.40 s | 8.56 s |
+
+**Copy, same drive**
+
+| Data | Grepdesk | robocopy /MT:8 | .NET, 1 thread | Explorer |
+| --- | ---: | ---: | ---: | ---: |
+| 10,000 source files, 148 MB | **2.88 s** | 4.35 s | 10.08 s | 75.93 s |
+| 306 photos, videos and notes, 986 MB | **0.30 s** | 0.34 s | 0.72 s | 2.31 s |
+| 2 files (a log and a disk image), 1 GB | 1.04 s | **0.26 s** | 0.33 s | 0.47 s |
+
+**Copy to another drive**
+
+| Data | Grepdesk | robocopy /MT:8 | .NET, 1 thread | Explorer |
+| --- | ---: | ---: | ---: | ---: |
+| 10,000 source files, 148 MB | 10.24 s | **1.35 s** | 10.15 s | 62.86 s |
+| 306 photos, videos and notes, 986 MB | 0.42 s | **0.25 s** | 0.61 s | 2.26 s |
+| 2 files (a log and a disk image), 1 GB | 0.30 s | **0.21 s** | 0.32 s | 0.65 s |
+
+Where it isn't the fastest yet:
+
+- **Many small files to another drive**: robocopy is about 7× faster. Grepdesk
+  copies those at the speed of a single thread, which is being looked into.
+- **Big files on the same drive**: files over 256 MB are copied around the
+  file cache, so a large copy doesn't push everything else out of memory.
+  With a warm cache, as in these runs, that costs time against tools that use it.
+- **Media compression**: photos and videos are already compressed, so Grepdesk
+  stores them as they are; 7-Zip and Explorer try to compress them again. That
+  is a real saving, but also why that row's gap is so wide.
+
+Measured on Windows 11, Intel Core i7-13650HX (20 threads), NVMe SSDs
+(Samsung 980 PRO → WD SN740 for the other-drive rows), .NET 10.0.12, with a
+warm file cache. The datasets are generated, so the runs can be reproduced
+(see below).
+
+### How it's measured
 
 `Grepdesk.Benchmarks` times Grepdesk's engines against Windows Explorer's own
 zip and copy engines (driven through COM), 7-Zip, robocopy and single-threaded
@@ -211,7 +246,64 @@ single-threaded .NET and than Explorer) are skipped unless enabled:
 $env:GREPDESK_PERF = "1"; dotnet test -c Release --filter Category=Performance
 ```
 
+## Build from source
+
+```bash
+git clone https://github.com/FurkanKirat/Grepdesk.git
+cd Grepdesk
+dotnet build
+dotnet run --project Grepdesk.UI
+dotnet test
+```
+
+### Building the installer
+
+```bash
+dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
+```
+
+writes a self-contained build (the .NET runtime included, so users don't need
+it installed) to `publish/win-x64`. Then compile `setup.iss` with
+[Inno Setup](https://jrsoftware.org/isinfo.php) 6; the installer lands in `Output/`.
+
+Timing a single job from a script: add `--benchmark` (e.g. `Grepdesk.UI.exe --extract-to --benchmark a.zip`);
+the elapsed time is appended to `%LOCALAPPDATA%\Grepdesk\benchmark.log`.
+
+## Under the hood
+
+- **.NET** / C#
+- **Avalonia UI** — cross-platform UI framework
+- Platform-specific shell integration behind `IPlatformShell`,
+  `IShellIntegration`, `IFileClipboard`, `IDriveKindProvider` and `IFileCopier`
+  (Windows and Linux implemented; macOS partly, see below)
+
+- `FileIndex` — in-memory file name index, built once per scan
+- `ContentSearcher` + `ExtractorRegistry` — pluggable content extraction per
+  file extension
+- `IPlatformShell` — abstracts OS-specific actions (open file, show in file
+  manager, open terminal, open in editor) behind a single interface, so the
+  UI layer never touches `Process.Start` directly
+- `ZipExtractor`, `ZipCompressor`, `ZipWriter` — parallel zip engines; the
+  writer implements the container format itself so compressed entries from
+  many workers can be appended as they finish
+- `TransferEngine` — copy/move with a walker feeding workers through a
+  bounded channel; the byte copy is `CopyFile2` on Windows (`IFileCopier`)
+- `SingleInstanceHost` + `JobDispatcher` — mutex + named pipe so the
+  per-file processes Explorer starts end up as one job window
+- `EditorDetector` — detects installed editors on `PATH` at startup and
+  caches the result
+- `EditorTargetResolver` — resolves whether an editor expects a file or a
+  directory, and filters incompatible combinations before they ever reach
+  the shell layer
+- Every shell action returns a `ShellActionResult` (success/failure +
+  exception), so the UI can report *why* something failed instead of
+  silently swallowing errors
+
 ## Linux and macOS
+
+**Grepdesk is tested on Windows 10 and 11.** The Linux and macOS builds compile
+and the test suite passes on Linux, but the app itself hasn't been tried there
+yet; reports are welcome.
 
 The engines (zip, copy/move, conflicts) are plain .NET and run everywhere.
 Platform pieces:
@@ -231,24 +323,5 @@ docker run --rm -v "${PWD}:/src:ro" mcr.microsoft.com/dotnet/sdk:10.0 bash -c `
 ```
 
 ## License
-MIT License
 
-Copyright (c) 2026 Furkan Kırat
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+[MIT](LICENSE). Copyright (c) 2026 Furkan Kırat.
