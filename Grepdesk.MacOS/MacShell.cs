@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Grepdesk.Core;
 using Grepdesk.Core.Editor;
 
@@ -86,6 +87,37 @@ public class MacShell : IPlatformShell
         catch (Exception ex)
         {
             return ShellActionResult.Failure(ShellActionStatus.ProcessStartFailed, ex);
+        }
+    }
+
+    private static string TrashFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash");
+
+    public long? GetTrashSize()
+    {
+        try
+        {
+            var dir = new DirectoryInfo(TrashFolder);
+            return dir.Exists ? dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    public ShellActionResult EmptyTrash()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("osascript") { UseShellExecute = false };
+            psi.ArgumentList.Add("-e");
+            psi.ArgumentList.Add("tell application \"Finder\" to empty trash");
+            using var process = Process.Start(psi)!;
+            process.WaitForExit();
+            if (process.ExitCode != 0) return ShellActionResult.Failure(ShellActionStatus.OperationFailed);
+            return ShellActionResult.Success(null);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.OperationFailed, ex);
         }
     }
 

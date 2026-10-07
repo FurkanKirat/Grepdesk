@@ -118,6 +118,38 @@ public class WindowsShell : IPlatformShell
                 new IOException($"SHFileOperation failed (0x{code:X})"));
     }
 
+    public long? GetTrashSize()
+    {
+        var info = new ShQueryRbInfo { cbSize = Marshal.SizeOf<ShQueryRbInfo>() };
+        return SHQueryRecycleBin(null, ref info) == 0 ? info.i64Size : null;
+    }
+
+    public ShellActionResult EmptyTrash()
+    {
+        const uint SHERB_NOCONFIRMATION = 0x1, SHERB_NOPROGRESSUI = 0x2, SHERB_NOSOUND = 0x4;
+        const int E_UNEXPECTED = unchecked((int)0x8000FFFF); // returned when the bin is already empty
+
+        var hr = SHEmptyRecycleBin(IntPtr.Zero, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+        return hr is 0 or E_UNEXPECTED
+            ? ShellActionResult.Success(null)
+            : ShellActionResult.Failure(ShellActionStatus.OperationFailed, new IOException($"SHEmptyRecycleBin failed (0x{hr:X})"));
+    }
+
+    // shellapi.h packs its structs to 8 bytes on 64-bit Windows (natural layout here).
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ShQueryRbInfo
+    {
+        public int cbSize;
+        public long i64Size;
+        public long i64NumItems;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHQueryRecycleBin(string? pszRootPath, ref ShQueryRbInfo pSHQueryRBInfo);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHEmptyRecycleBin(IntPtr hwnd, string? pszRootPath, uint dwFlags);
+
     private const uint FO_DELETE = 0x0003;
     private const ushort FOF_SILENT = 0x0004, FOF_NOCONFIRMATION = 0x0010, FOF_ALLOWUNDO = 0x0040, FOF_NOERRORUI = 0x0400;
 
