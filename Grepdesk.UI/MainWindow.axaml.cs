@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         InitDiskPage();
         InitLanguageSetting();
         InitExplorerMenuSettings();
+        InitAbout();
         ApplyLanguage();
 
         if (startFolder is not null)
@@ -252,6 +253,11 @@ public partial class MainWindow : Window
             ShortcutsHeader.Text = Loc.Get("ShortcutsHeader");
             FillShortcutsTable();
 
+            // Settings: about
+            AboutHeader.Text = Loc.Get("AboutHeader");
+            AboutVersionText.Text = Loc.Get("AboutVersion", AppInfo.Display);
+            AboutLogsButton.Content = Loc.Get("ErrorOpenLogs");
+
             // Settings: language
             LanguageHeader.Text = Loc.Get("LanguageHeader");
             LanguageDescription.Text = Loc.Get("LanguageDescription");
@@ -302,6 +308,16 @@ public partial class MainWindow : Window
             box.Content = Loc.Get(key);
             hint.Text = Loc.Get(key + "Hint");
         }
+    }
+
+    private void InitAbout()
+    {
+        AboutGitHubButton.Click += (_, _) => ReportShellResult(_shell.OpenPath(AppInfo.RepositoryUrl), Loc.Get("FileOpenFailed"));
+        AboutLogsButton.Click += (_, _) =>
+        {
+            Directory.CreateDirectory(ErrorLog.Directory); // empty until something goes wrong
+            ReportShellResult(_shell.OpenPath(ErrorLog.Directory), Loc.Get("FileOpenFailed"));
+        };
     }
 
     private void InitPreview()

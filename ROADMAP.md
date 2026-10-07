@@ -24,10 +24,10 @@ order within each section.
 - [ ] **Code signing.** Unsigned, the exe gets SmartScreen's "unrecognized app"
   warning, and a tool that deletes files and runs from the Explorer menu is
   prone to antivirus heuristics. Needs a certificate.
-- [ ] **One version number.** No `<Version>` in the projects; `setup.iss`
+- [x] **One version number.** No `<Version>` in the projects; `setup.iss`
   hard-codes `1.0.0`. Set it once (e.g. `Directory.Build.props`), use it in
   the installer, and show it in an About section in Settings.
-- [ ] **Installer placeholders.** `AppPublisherURL=https://github.com/`,
+- [x] **Installer placeholders.** `AppPublisherURL=https://github.com/`,
   `AppPublisher=Grepdesk`.
 
 ## First updates

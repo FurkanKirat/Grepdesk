@@ -1,0 +1,14 @@
+<!--
+  Shared by every project. The version is set here only: the exe's file and
+  product version, Settings → About, the error log and the installer (which
+  reads it back from the published exe) all come from it.
+-->
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <Product>Grepdesk</Product>
+    <Authors>Furkan Kırat</Authors>
+    <Company>Furkan Kırat</Company>
+    <Copyright>Copyright (c) 2026 Furkan Kırat</Copyright>
+  </PropertyGroup>
+</Project>

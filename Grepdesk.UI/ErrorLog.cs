@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -32,7 +31,7 @@ internal static class ErrorLog
 
                 var entry = new StringBuilder()
                     .AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {source}")
-                    .AppendLine($"Grepdesk {Version} · {RuntimeInformation.OSDescription} · .NET {Environment.Version}")
+                    .AppendLine($"Grepdesk {AppInfo.Display} · {RuntimeInformation.OSDescription} · .NET {Environment.Version}")
                     .AppendLine($"Command line: {Environment.CommandLine}")
                     .AppendLine(exception.ToString())
                     .AppendLine();
@@ -56,9 +55,4 @@ internal static class ErrorLog
         foreach (var file in old)
             file.Delete();
     }
-
-    private static string Version =>
-        Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? Assembly.GetEntryAssembly()?.GetName().Version?.ToString()
-        ?? "?";
 }

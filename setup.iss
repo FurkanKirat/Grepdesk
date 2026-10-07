@@ -2,16 +2,25 @@
 ; Grepdesk Inno Setup Script
 ; =======================================================
 
+; Sürüm Directory.Build.props'tan gelir: publish edilen exe'den okunur
+; ("1.0.0.0" -> "1.0.0"). Önce publish edilmeli, yoksa derleme hata verir.
+#define AppExe "publish\win-x64\Grepdesk.UI.exe"
+#define AppVersion RemoveFileExt(GetVersionNumbersString(AppExe))
+
 [Setup]
 AppId={{8B1A2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D}
 AppName=Grepdesk
-AppVersion=1.0.0
-AppPublisher=Grepdesk
-AppPublisherURL=https://github.com/
+AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
+AppPublisher=Furkan Kırat
+AppPublisherURL=https://github.com/FurkanKirat/Grepdesk
+AppSupportURL=https://github.com/FurkanKirat/Grepdesk/issues
+AppUpdatesURL=https://github.com/FurkanKirat/Grepdesk/releases
+UninstallDisplayIcon={app}\Grepdesk.UI.exe
 DefaultDirName={autopf}\Grepdesk
 DefaultGroupName=Grepdesk
 OutputDir=Output
-OutputBaseFilename=GrepdeskSetup
+OutputBaseFilename=GrepdeskSetup-{#AppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

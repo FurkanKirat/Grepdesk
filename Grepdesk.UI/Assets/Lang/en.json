@@ -158,6 +158,8 @@
   "FilterYear": "Last year",
   "FilteredSuffix": " · filtered",
   "ShortcutsHeader": "Keyboard shortcuts",
+  "AboutHeader": "About",
+  "AboutVersion": "Grepdesk {0} · MIT License",
   "ShortcutFocusSearch": "Jump to the search box",
   "ShortcutPages": "Switch between pages",
   "ShortcutSettings": "Open settings",

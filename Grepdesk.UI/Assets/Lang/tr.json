@@ -158,6 +158,8 @@
   "FilterYear": "Son 1 yıl",
   "FilteredSuffix": " · filtreli",
   "ShortcutsHeader": "Klavye kısayolları",
+  "AboutHeader": "Hakkında",
+  "AboutVersion": "Grepdesk {0} · MIT Lisansı",
   "ShortcutFocusSearch": "Arama kutusuna git",
   "ShortcutPages": "Sayfalar arasında geç",
   "ShortcutSettings": "Ayarları aç",
