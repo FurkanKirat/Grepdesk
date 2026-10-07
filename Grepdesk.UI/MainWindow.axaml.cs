@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private string? _contentQuery;
 
     // ---- shared ----
+    private readonly DiskUsage.DriveScans _driveScans = new();
     private readonly Dictionary<TextBlock, Func<string>> _statusTexts = [];
     private bool _updatingControls;
 
@@ -125,7 +126,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void InitNavigation()
     {
-        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage];
+        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage, CleanupPage];
 
         FeatureNav.SelectionChanged += (_, _) =>
         {
@@ -149,6 +150,7 @@ public partial class MainWindow : Window
         NameSearchPage.IsVisible = page == NameSearchPage;
         ContentSearchPage.IsVisible = page == ContentSearchPage;
         DiskPage.IsVisible = page == DiskPage;
+        CleanupPage.IsVisible = page == CleanupPage;
         SettingsPage.IsVisible = page == SettingsPage;
 
         if (page == NameSearchPage) SearchBox.Focus();
@@ -197,6 +199,7 @@ public partial class MainWindow : Window
             NavNameSearchText.Text = NameSearchTitle.Text = Loc.Get("FileNameSearchTab");
             NavContentSearchText.Text = ContentSearchTitle.Text = Loc.Get("ContentSearchTab");
             NavDiskText.Text = Loc.Get("DiskTab");
+            NavCleanupText.Text = Loc.Get("CleanupTab");
             NavSettingsText.Text = SettingsTitle.Text = Loc.Get("SettingsTab");
             NameSearchSubtitle.Text = Loc.Get("NameSearchSubtitle");
             ContentSearchSubtitle.Text = Loc.Get("ContentSearchSubtitle");
@@ -281,6 +284,7 @@ public partial class MainWindow : Window
             NamePreview.ApplyLanguage();
             ContentPreview.ApplyLanguage();
             DiskPage.ApplyLanguage();
+            CleanupPage.ApplyLanguage();
         }
         finally
         {
@@ -821,17 +825,27 @@ public partial class MainWindow : Window
     {
         // A whole-PC (or whole-drive) scan from the name search page already has
         // everything the disk page needs; reuse it instead of scanning again.
-        DiskPage.FindExistingIndex = root =>
+        _driveScans.FindExisting = root =>
             !_index.IsIndexing && _index.Count > 0
             && _index.Roots.Any(r => string.Equals(r, root, StringComparison.OrdinalIgnoreCase))
                 ? _index
                 : null;
+        DiskPage.Scans = _driveScans;
+        CleanupPage.Scans = _driveScans;
+        CleanupPage.Shell = _shell;
+        CleanupPage.Removed += paths =>
+        {
+            var gone = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in paths) DiskPage.Remove(path);
+            _allMatches.RemoveAll(r => gone.Contains(r.FullPath));
+            foreach (var item in _results.Where(r => gone.Contains(r.FullPath)).ToList()) _results.Remove(item);
+            UpdateShowMoreButton();
+        };
 
         foreach (var list in DiskPage.ResultLists)
             list.PointerReleased += OnAnyResultRightClick;
 
-        // Folder list: double-click drills down (handled by the page); files list: open.
-        DiskPage.ResultLists[1].DoubleTapped += OnAnyResultDoubleTapped;
+        // Double-click is handled by the page: folders drill down, files raise OpenRequested.
         DiskPage.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
     }
 
@@ -871,7 +885,7 @@ public partial class MainWindow : Window
     private static readonly Shortcut[] Shortcuts =
     [
         new("Ctrl+F", "ShortcutFocusSearch"),
-        new("Ctrl+1 / Ctrl+2 / Ctrl+3", "ShortcutPages"),
+        new("Ctrl+1 … Ctrl+4", "ShortcutPages"),
         new("Ctrl+,", "ShortcutSettings"),
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
@@ -957,6 +971,9 @@ public partial class MainWindow : Window
                 break;
             case Key.D3 when ctrl:
                 FeatureNav.SelectedIndex = 2;
+                break;
+            case Key.D4 when ctrl:
+                FeatureNav.SelectedIndex = 3;
                 break;
             case Key.OemComma when ctrl:
                 SettingsNav.SelectedIndex = 0;

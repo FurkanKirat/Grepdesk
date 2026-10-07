@@ -28,11 +28,30 @@ and unzipping, and copying or moving large folders.
   documents, music
 - Where a file lives decides its kind first (a video inside a game folder counts
   as the game), then its extension
-- Drill into the largest folders from the drive root, and list the largest files
-  overall or per kind
+- Games, apps and developer folders are listed as whole items (each game with
+  all its files added up, like Windows' Installed apps page); videos, pictures,
+  documents and music as their largest files
+- Drill into the largest folders from the drive root
 - Space the scan can't read (other users, System Volume Information, restore
   points) and online-only cloud files are reported separately instead of hidden
 - Reuses an existing whole-PC scan from the name search page
+
+### 🧹 Free Up Space
+Every way to get space back on one page, each with what it is, whether it can
+be undone, and the items to pick from. Nothing is deleted until you select it
+and confirm.
+- **Recycle Bin** — deleted files keep using space until it is emptied
+- **Caches** — browser, Electron app and GPU shader caches (deleted for good;
+  apps rebuild them). Web apps' offline storage is listed but not pre-selected
+- **Developer caches** — npm, pip, NuGet, Yarn, Gradle caches and `node_modules`
+  folders untouched for 90 days
+- **Temporary files** older than a day
+- **Duplicate files** — compared by size, then a 64 KB head/tail sample, then a
+  full XxHash128, so most files are never read in full; the oldest copy is kept
+- **Old downloads** and **large, old files** — listed, never pre-selected, moved
+  to the Recycle Bin
+- **Hibernation file** and **Windows' own cleanup** (Disk Cleanup, Storage
+  settings, restore points) for what needs administrator rights
 
 ### 🗜️ Fast Zip
 - **Extract here / Extract to folder** on any `.zip` from Explorer's right-click menu

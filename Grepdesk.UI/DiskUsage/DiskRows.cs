@@ -47,6 +47,49 @@ public sealed class DriveRow
 
     // Meter is 160 px wide; the used part is its share of that.
     public double UsedWidth => Math.Clamp(UsedFraction, 0, 1) * 160;
+
+    /// <summary>Local fixed and removable drives, with current free space.</summary>
+    public static List<DriveRow> LoadAll()
+    {
+        var loc = LocalizationService.Instance;
+        var rows = new List<DriveRow>();
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+
+                var used = drive.TotalSize - drive.AvailableFreeSpace;
+                var fraction = drive.TotalSize > 0 ? (double)used / drive.TotalSize : 0;
+                var name = drive.Name.TrimEnd(Path.DirectorySeparatorChar);
+                var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? loc.Get("DiskLocalDisk") : drive.VolumeLabel;
+
+                rows.Add(new DriveRow
+                {
+                    Root = Path.TrimEndingDirectorySeparator(drive.RootDirectory.FullName),
+                    Title = OperatingSystem.IsWindows() ? $"{label} ({name})" : drive.Name,
+                    Detail = loc.Get("DiskDriveDetail", Format.Size(drive.AvailableFreeSpace), Format.Size(drive.TotalSize)),
+                    UsedFraction = fraction,
+                    // Fullness is a status: reserved status colors, and the text says it too.
+                    MeterBrush = Avalonia.Media.Brush.Parse(fraction >= 0.95 ? "#f38ba8" : fraction >= 0.85 ? "#f9e2af" : "#89b4fa"),
+                });
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return rows;
+    }
+
+    /// <summary>The row for <paramref name="root"/>, else the system drive, else the first one.</summary>
+    public static DriveRow? Pick(IReadOnlyList<DriveRow> rows, string? root)
+    {
+        DriveRow? Find(string? r) => r is null ? null : rows.FirstOrDefault(row =>
+            string.Equals(row.Root, Path.TrimEndingDirectorySeparator(r), StringComparison.OrdinalIgnoreCase));
+        return Find(root) ?? Find(Path.GetPathRoot(Environment.SystemDirectory)) ?? rows.FirstOrDefault();
+    }
+
+    public override string ToString() => Title; // shown by the combo box on the Free up space page
 }
 
 /// <summary>One row of the category table (legend + numbers).</summary>

@@ -29,7 +29,7 @@ public partial class DiskUsageView : UserControl
     private readonly ObservableCollection<DiskRow> _folderRows = [];
     private readonly ObservableCollection<DiskRow> _largestRows = [];
 
-    private FileIndex? _ownIndex;
+    private DriveScans? _scans;
     private FileIndex? _index;     // the index the current report was built from
     private DiskReport? _report;
     private string? _folder;
@@ -38,8 +38,22 @@ public partial class DiskUsageView : UserControl
     private int _scanProgress;
     private bool _updating;
 
-    /// <summary>Returns an already-built index that covers the given drive root, if any.</summary>
-    public Func<string, FileIndex?>? FindExistingIndex { get; set; }
+    /// <summary>The drive scan shared with the other pages; set once by the window.</summary>
+    public DriveScans? Scans
+    {
+        get => _scans;
+        set
+        {
+            _scans = value;
+            if (value is null) return;
+            value.Progress += count =>
+            {
+                if (!CancelButton.IsVisible) return; // someone else's scan
+                _scanProgress = count;
+                StatusText.Text = Loc.Get("DiskScanning", count);
+            };
+        }
+    }
 
     /// <summary>Raised to open a file (double-click on a file in the folder list).</summary>
     public event Action<string>? OpenRequested;
@@ -55,7 +69,8 @@ public partial class DiskUsageView : UserControl
         CancelButton.Click += (_, _) => _cts.Cancel();
         UpButton.Click += async (_, _) => await GoUpAsync();
 
-        FolderList.DoubleTapped += async (_, _) => await OpenFolderRowAsync();
+        FolderList.DoubleTapped += async (_, _) => await OpenRowAsync(FolderList);
+        LargestList.DoubleTapped += async (_, _) => await OpenRowAsync(LargestList);
         FolderList.KeyDown += async (_, e) =>
         {
             if (e.Key == Key.Back) { e.Handled = true; await GoUpAsync(); }
@@ -106,7 +121,7 @@ public partial class DiskUsageView : UserControl
             RenderReport();
             UpdateFolderHeader();
         }
-        if (_index?.IsIndexing == true)
+        if (CancelButton.IsVisible && _scans?.IsScanning == true)
             StatusText.Text = Loc.Get("DiskScanning", _scanProgress);
     }
 
@@ -124,38 +139,12 @@ public partial class DiskUsageView : UserControl
 
     private void LoadDrives()
     {
-        var selected = SelectedRoot ?? Path.GetPathRoot(Environment.SystemDirectory);
-        var rows = new List<DriveRow>();
-
-        foreach (var drive in DriveInfo.GetDrives())
-        {
-            try
-            {
-                if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
-
-                var used = drive.TotalSize - drive.AvailableFreeSpace;
-                var fraction = drive.TotalSize > 0 ? (double)used / drive.TotalSize : 0;
-                var name = drive.Name.TrimEnd(Path.DirectorySeparatorChar);
-                var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? Loc.Get("DiskLocalDisk") : drive.VolumeLabel;
-
-                rows.Add(new DriveRow
-                {
-                    Root = Path.TrimEndingDirectorySeparator(drive.RootDirectory.FullName),
-                    Title = OperatingSystem.IsWindows() ? $"{label} ({name})" : drive.Name,
-                    Detail = Loc.Get("DiskDriveDetail", Format.Size(drive.AvailableFreeSpace), Format.Size(drive.TotalSize)),
-                    UsedFraction = fraction,
-                    // Fullness is a status: reserved status colors, and the text says it too.
-                    MeterBrush = Brush.Parse(fraction >= 0.95 ? "#f38ba8" : fraction >= 0.85 ? "#f9e2af" : "#89b4fa"),
-                });
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+        var selected = SelectedRoot;
+        var rows = DriveRow.LoadAll();
 
         _updating = true;
         DriveList.ItemsSource = rows;
-        DriveList.SelectedItem = rows.FirstOrDefault(r => string.Equals(r.Root, Path.TrimEndingDirectorySeparator(selected ?? ""), StringComparison.OrdinalIgnoreCase))
-                                 ?? rows.FirstOrDefault();
+        DriveList.SelectedItem = DriveRow.Pick(rows, selected);
         _updating = false;
     }
 
@@ -174,7 +163,7 @@ public partial class DiskUsageView : UserControl
 
     private async Task AnalyzeAsync()
     {
-        if (SelectedRoot is not { } root) return;
+        if (SelectedRoot is not { } root || _scans is not { } scans) return;
 
         _cts.Cancel();
         _cts = new CancellationTokenSource();
@@ -188,16 +177,13 @@ public partial class DiskUsageView : UserControl
             // Reuse the main window's scan when it already covers this drive and
             // this is a first analysis; "Reanalyze" always scans fresh.
             var reanalyze = _report is not null && string.Equals(_report.Root, root, StringComparison.OrdinalIgnoreCase);
-            var index = reanalyze ? null : FindExistingIndex?.Invoke(root);
+            var index = reanalyze ? null : scans.TryGet(root);
 
             if (index is null)
             {
-                index = _ownIndex ??= CreateOwnIndex();
-                _index = index;
                 _scanProgress = 0;
                 StatusText.Text = Loc.Get("DiskScanning", 0);
-                await index.BuildIndexAsync([root], token);
-                if (token.IsCancellationRequested) throw new OperationCanceledException(token);
+                index = await scans.ScanAsync(root, token);
             }
 
             StatusText.Text = Loc.Get("DiskAnalyzing");
@@ -220,17 +206,6 @@ public partial class DiskUsageView : UserControl
             CancelButton.IsVisible = false;
             UpdateAnalyzeButton();
         }
-    }
-
-    private FileIndex CreateOwnIndex()
-    {
-        var index = new FileIndex();
-        index.ProgressChanged += count => Dispatcher.UIThread.Post(() =>
-        {
-            _scanProgress = count;
-            StatusText.Text = Loc.Get("DiskScanning", count);
-        });
-        return index;
     }
 
     // =====================================================================
@@ -356,6 +331,26 @@ public partial class DiskUsageView : UserControl
     {
         if (_report is not { } report) return;
 
+        // Games, apps, developer folders...: list whole items (a game with all
+        // its files added up), the way Windows' Installed apps page does.
+        var groups = _categoryFilter is { } selected
+            ? report.Groups.Where(g => g.Category == selected).OrderByDescending(g => g.Bytes).ToList()
+            : [];
+        if (groups.Count > 0 && _categoryFilter is { } filter)
+        {
+            var largest = Math.Max(1, groups[0].Bytes);
+            _largestRows.Clear();
+            foreach (var g in groups)
+                _largestRows.Add(new DiskRow(new SearchResult(g.Path, true, g.Bytes, g.LastModified), (double)g.Bytes / largest, g.Category));
+
+            FilesTitle.Text = Loc.Get("DiskGroupsTitle" + filter) is var key && key != "DiskGroupsTitle" + filter
+                ? key
+                : Loc.Get("DiskGroupsTitle", CategoryName(filter));
+            FilesSubtitle.Text = Loc.Get("DiskGroupsSubtitle", groups.Count, groups.Sum(g => g.Files));
+            return;
+        }
+
+        FilesTitle.Text = Loc.Get("DiskFilesTitle");
         var files = report.LargestFiles
             .Where(f => _categoryFilter is null || f.Category == _categoryFilter)
             .Take(LargestPerCategory)
@@ -375,9 +370,11 @@ public partial class DiskUsageView : UserControl
     // Folder drill-down
     // =====================================================================
 
-    private async Task OpenFolderRowAsync()
+    // Folders (including a game or app from the right-hand list) open in the
+    // folder column; files open in their default app.
+    private async Task OpenRowAsync(ListBox list)
     {
-        if (FolderList.SelectedItem is not DiskRow row) return;
+        if (list.SelectedItem is not DiskRow row) return;
         if (row.IsDirectory) await ShowFolderAsync(row.FullPath);
         else OpenRequested?.Invoke(row.FullPath);
     }
@@ -392,7 +389,14 @@ public partial class DiskUsageView : UserControl
 
     private async Task ShowFolderAsync(string folder)
     {
-        if (_index is not { } index) return;
+        if (_index is not { } index || _report is null) return;
+
+        // The shared scan may since have moved to another drive (Free up space page).
+        if (index.IsIndexing || !index.Roots.Any(r => string.Equals(r, _report.Root, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusText.Text = Loc.Get("DiskScanChanged");
+            return;
+        }
 
         var previous = _folder;
         _folder = folder;

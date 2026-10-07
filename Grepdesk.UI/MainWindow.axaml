@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:Grepdesk.UI"
         xmlns:disk="using:Grepdesk.UI.DiskUsage"
+        xmlns:cleanup="using:Grepdesk.UI.Cleanup"
         x:Class="Grepdesk.UI.MainWindow"
         Title="Grepdesk"
         Icon="avares://Grepdesk.UI/Assets/icon.ico"
@@ -251,6 +252,12 @@
                             <TextBlock x:Name="NavDiskText" Classes="navText" Text="Disk Usage"/>
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconTrash}"/>
+                            <TextBlock x:Name="NavCleanupText" Classes="navText" Text="Free Up Space"/>
+                        </StackPanel>
+                    </ListBoxItem>
                 </ListBox>
             </DockPanel>
         </Border>
@@ -360,6 +367,9 @@
 
             <!-- ===================== PAGE : DISK USAGE ===================== -->
             <disk:DiskUsageView x:Name="DiskPage" IsVisible="False"/>
+
+            <!-- ===================== PAGE : FREE UP SPACE ===================== -->
+            <cleanup:CleanupView x:Name="CleanupPage" IsVisible="False"/>
 
             <!-- ===================== PAGE : SETTINGS ===================== -->
             <ScrollViewer x:Name="SettingsPage" IsVisible="False">
