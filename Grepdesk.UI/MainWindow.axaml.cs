@@ -126,7 +126,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void InitNavigation()
     {
-        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage, CleanupPage];
+        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage, CleanupPage, OrganizePage];
 
         FeatureNav.SelectionChanged += (_, _) =>
         {
@@ -151,6 +151,7 @@ public partial class MainWindow : Window
         ContentSearchPage.IsVisible = page == ContentSearchPage;
         DiskPage.IsVisible = page == DiskPage;
         CleanupPage.IsVisible = page == CleanupPage;
+        OrganizePage.IsVisible = page == OrganizePage;
         SettingsPage.IsVisible = page == SettingsPage;
 
         if (page == NameSearchPage) SearchBox.Focus();
@@ -200,6 +201,7 @@ public partial class MainWindow : Window
             NavContentSearchText.Text = ContentSearchTitle.Text = Loc.Get("ContentSearchTab");
             NavDiskText.Text = Loc.Get("DiskTab");
             NavCleanupText.Text = Loc.Get("CleanupTab");
+            NavOrganizeText.Text = Loc.Get("OrganizeTab");
             NavSettingsText.Text = SettingsTitle.Text = Loc.Get("SettingsTab");
             NameSearchSubtitle.Text = Loc.Get("NameSearchSubtitle");
             ContentSearchSubtitle.Text = Loc.Get("ContentSearchSubtitle");
@@ -285,6 +287,7 @@ public partial class MainWindow : Window
             ContentPreview.ApplyLanguage();
             DiskPage.ApplyLanguage();
             CleanupPage.ApplyLanguage();
+            OrganizePage.ApplyLanguage();
         }
         finally
         {
@@ -702,6 +705,13 @@ public partial class MainWindow : Window
             }
             menuItems.Add(JobMenuItem("ContextMenuCompress", "--compress", item.FullPath));
 
+            if (item.IsDirectory)
+            {
+                var organizeItem = new MenuItem { Header = Loc.Get("ContextMenuOrganize") };
+                organizeItem.Click += async (_, _) => await OpenOrganizeAsync(item.FullPath);
+                menuItems.Add(organizeItem);
+            }
+
             var trashItem = new MenuItem { Header = Loc.Get("ContextMenuMoveToTrash"), InputGesture = new KeyGesture(Key.Delete) };
             trashItem.Click += async (_, _) => await MoveToTrashAsync(item);
             menuItems.Add(trashItem);
@@ -833,6 +843,8 @@ public partial class MainWindow : Window
         DiskPage.Scans = _driveScans;
         CleanupPage.Scans = _driveScans;
         CleanupPage.Shell = _shell;
+        OrganizePage.Shell = _shell;
+        CleanupPage.OrganizeRequested += async folder => await OpenOrganizeAsync(folder);
         CleanupPage.Removed += paths =>
         {
             var gone = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -847,6 +859,13 @@ public partial class MainWindow : Window
 
         // Double-click is handled by the page: folders drill down, files raise OpenRequested.
         DiskPage.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
+    }
+
+    /// <summary>Switches to the Organize page showing <paramref name="folder"/>.</summary>
+    private async Task OpenOrganizeAsync(string folder)
+    {
+        FeatureNav.SelectedIndex = 4;
+        await OrganizePage.OpenFolderAsync(folder);
     }
 
     // =====================================================================
@@ -885,7 +904,7 @@ public partial class MainWindow : Window
     private static readonly Shortcut[] Shortcuts =
     [
         new("Ctrl+F", "ShortcutFocusSearch"),
-        new("Ctrl+1 … Ctrl+4", "ShortcutPages"),
+        new("Ctrl+1 … Ctrl+5", "ShortcutPages"),
         new("Ctrl+,", "ShortcutSettings"),
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
@@ -974,6 +993,9 @@ public partial class MainWindow : Window
                 break;
             case Key.D4 when ctrl:
                 FeatureNav.SelectedIndex = 3;
+                break;
+            case Key.D5 when ctrl:
+                FeatureNav.SelectedIndex = 4;
                 break;
             case Key.OemComma when ctrl:
                 SettingsNav.SelectedIndex = 0;

@@ -53,6 +53,22 @@ and confirm.
 - **Hibernation file** and **Windows' own cleanup** (Disk Cleanup, Storage
   settings, restore points) for what needs administrator rights
 
+### 🗂️ Organize
+Make sense of a messy folder (Downloads, typically) without reading a single
+file's contents:
+- **Smart** — first series (names that differ only by a number, date, id or
+  copy marker: `dracula_idle_1.png … dracula_idle_37.png`, `ChatGPT Image 24 May
+  2025…`), then families sharing their first words (`Lecture 1 - Intro.pdf`,
+  `Lecture 2 - Sorting.pdf`), then whatever is left by type
+- **Source** — the site each download came from (read from the
+  Zone.Identifier stream browsers attach on Windows)
+- **Type**, and download **sessions** (files that arrived within 30 minutes)
+- **Leftovers** — archives whose extracted folder sits next to them, and
+  `name (1).ext` re-downloads of the same size
+- Move a group into a subfolder (never overwrites, one-click undo) or to the
+  Recycle Bin. Open it from the sidebar, a folder's right-click menu, or the
+  Old downloads card on Free Up Space
+
 ### 🗜️ Fast Zip
 - **Extract here / Extract to folder** on any `.zip` from Explorer's right-click menu
 - **Compress with Grepdesk** on any files or folders

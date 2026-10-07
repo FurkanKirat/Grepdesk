@@ -3,6 +3,7 @@
         xmlns:ui="using:Grepdesk.UI"
         xmlns:disk="using:Grepdesk.UI.DiskUsage"
         xmlns:cleanup="using:Grepdesk.UI.Cleanup"
+        xmlns:organize="using:Grepdesk.UI.Organize"
         x:Class="Grepdesk.UI.MainWindow"
         Title="Grepdesk"
         Icon="avares://Grepdesk.UI/Assets/icon.ico"
@@ -118,6 +119,48 @@
         <Style Selector="Run.match">
             <Setter Property="Foreground" Value="#f9e2af"/>
             <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+
+        <!-- Card lists, notices and row buttons shared by the Free up space and Organize pages -->
+        <Style Selector="ListBox.suggestions">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem">
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#313244"/>
+            <Setter Property="Background" Value="#181825"/>
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#202030"/>
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#252538"/>
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem:selected">
+            <Setter Property="BorderBrush" Value="#89b4fa"/>
+        </Style>
+
+        <Style Selector="Border.notice">
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="Button.rowAction">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#7f849c"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+        <Style Selector="Button.rowAction:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="Button.danger">
+            <Setter Property="Background" Value="#f38ba8"/>
+            <Setter Property="Foreground" Value="#11111b"/>
         </Style>
 
         <!-- Sidebar navigation -->
@@ -258,6 +301,12 @@
                             <TextBlock x:Name="NavCleanupText" Classes="navText" Text="Free Up Space"/>
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconOrganize}"/>
+                            <TextBlock x:Name="NavOrganizeText" Classes="navText" Text="Organize"/>
+                        </StackPanel>
+                    </ListBoxItem>
                 </ListBox>
             </DockPanel>
         </Border>
@@ -370,6 +419,9 @@
 
             <!-- ===================== PAGE : FREE UP SPACE ===================== -->
             <cleanup:CleanupView x:Name="CleanupPage" IsVisible="False"/>
+
+            <!-- ===================== PAGE : ORGANIZE ===================== -->
+            <organize:OrganizeView x:Name="OrganizePage" IsVisible="False"/>
 
             <!-- ===================== PAGE : SETTINGS ===================== -->
             <ScrollViewer x:Name="SettingsPage" IsVisible="False">

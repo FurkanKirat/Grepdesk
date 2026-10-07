@@ -40,6 +40,9 @@ public partial class CleanupView : UserControl
 
     public IPlatformShell? Shell { get; set; }
 
+    /// <summary>Asks the window to open a folder on the Organize page (old downloads).</summary>
+    public event Action<string>? OrganizeRequested;
+
     /// <summary>Raised after files were deleted, so other views can drop them.</summary>
     public event Action<IReadOnlyList<string>>? Removed;
 
@@ -309,6 +312,8 @@ public partial class CleanupView : UserControl
                 ("CleanupToolRestorePoints", () => Launch("SystemPropertiesProtection.exe")),
             ],
             CleanupKind.Hibernation => [("CleanupToolHibernateOff", (Action)(async () => await TurnOffHibernationAsync()))],
+            // A pile of old downloads is easier to judge in groups (series, site, session).
+            CleanupKind.OldDownloads => [("CleanupToolOrganize", (Action)(() => OrganizeRequested?.Invoke(KnownFolders.Downloads())))],
             _ => Array.Empty<(string, Action)>(),
         };
 
