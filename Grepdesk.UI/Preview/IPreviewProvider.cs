@@ -1,5 +1,6 @@
 using Avalonia.Media.Imaging;
 using Grepdesk.Core;
+using Markdig.Syntax;
 
 namespace Grepdesk.UI.Preview;
 
@@ -16,8 +17,8 @@ public interface IPreviewProvider
 }
 
 /// <summary>
-/// What the panel shows: an image, or text (optionally monospaced, with a
-/// footer such as "only the first pages are shown"), or just a message.
+/// What the panel shows: an image, text (optionally monospaced, with a footer
+/// such as "only the first pages are shown"), rendered Markdown, or just a message.
 /// </summary>
 public sealed record PreviewContent
 {
@@ -26,12 +27,20 @@ public sealed record PreviewContent
     public bool Monospace { get; init; }
     public string? Footer { get; init; }
     public string? Message { get; init; }
+    public MarkdownPreview? Markdown { get; init; }
 
     /// <summary>Extra metadata rows, e.g. ("Pages", "12") or ("Dimensions", "1920 × 1080").</summary>
     public IReadOnlyList<(string Label, string Value)> Details { get; init; } = [];
 
     public static PreviewContent FromMessage(string message) => new() { Message = message };
 }
+
+/// <summary>
+/// A parsed Markdown file. Controls can only be built on the UI thread, so the
+/// provider parses and decodes the local images, and the panel lays them out.
+/// </summary>
+/// <param name="Images">Decoded local images, keyed by the URL as written in the file.</param>
+public sealed record MarkdownPreview(MarkdownDocument Document, string BaseDirectory, IReadOnlyDictionary<string, Bitmap> Images);
 
 public static class PreviewProviders
 {
@@ -42,6 +51,8 @@ public static class PreviewProviders
         new ImagePreviewProvider(),
         new PdfPreviewProvider(),
         new DocumentPreviewProvider(),
+        new MarkdownPreviewProvider(),
+        new ShellPreviewProvider(),
         new TextPreviewProvider(),
     ];
 

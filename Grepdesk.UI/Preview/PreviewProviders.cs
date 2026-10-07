@@ -1,8 +1,15 @@
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
+using Avalonia;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
 using Grepdesk.Core.Preview;
+using Grepdesk.UI.Helpers;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 
 namespace Grepdesk.UI.Preview;
 
@@ -134,6 +141,155 @@ internal sealed class DocumentPreviewProvider : IPreviewProvider
         return text.Length > MaxChars
             ? new PreviewContent { Text = text[..MaxChars], Footer = Loc.Get("PreviewTruncated") }
             : new PreviewContent { Text = text };
+    }
+}
+
+/// <summary>Markdown is shown rendered: headings, lists, tables, code, links and local images.</summary>
+internal sealed class MarkdownPreviewProvider : IPreviewProvider
+{
+    private const int MaxChars = 128 * 1024;
+    private const int MaxImages = 12;
+    private const long MaxImageBytes = 20 * 1024 * 1024;
+    private const int ImageWidth = 600;
+
+    private static readonly HashSet<string> Extensions =
+        new([".md", ".markdown", ".mdown", ".mkd"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> ImageExtensions =
+        new([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"], StringComparer.OrdinalIgnoreCase);
+
+    public bool CanPreview(SearchResult item) => Extensions.Contains(Path.GetExtension(item.FullPath));
+
+    public async Task<PreviewContent> LoadAsync(SearchResult item, CancellationToken ct)
+    {
+        string text;
+        var truncated = false;
+        using (var reader = new StreamReader(item.FullPath, detectEncodingFromByteOrderMarks: true))
+        {
+            var buffer = new char[MaxChars];
+            var read = await reader.ReadBlockAsync(buffer, ct);
+            text = new string(buffer, 0, read);
+            if (reader.Peek() >= 0)
+            {
+                // Cut at a line end, so a half-read table or list item isn't rendered.
+                var lastLine = text.LastIndexOf('\n');
+                if (lastLine > 0) text = text[..lastLine];
+                truncated = true;
+            }
+        }
+
+        var document = MarkdownView.Parse(text);
+        var baseDirectory = Path.GetDirectoryName(item.FullPath) ?? "";
+
+        return new PreviewContent
+        {
+            Markdown = new MarkdownPreview(document, baseDirectory, LoadImages(document, baseDirectory, ct)),
+            Footer = truncated ? LocalizationService.Instance.Get("PreviewTruncated") : null
+        };
+    }
+
+    /// <summary>Images next to the file (README screenshots); web images show their alt text instead.</summary>
+    private static Dictionary<string, Bitmap> LoadImages(MarkdownDocument document, string baseDirectory, CancellationToken ct)
+    {
+        var images = new Dictionary<string, Bitmap>();
+        foreach (var link in document.Descendants<LinkInline>())
+        {
+            if (images.Count >= MaxImages) break;
+            ct.ThrowIfCancellationRequested();
+
+            if (!link.IsImage || link.Url is not { Length: > 0 } url || images.ContainsKey(url)) continue;
+            var path = MarkdownView.ResolveLocalPath(url, baseDirectory);
+            if (path is null || !ImageExtensions.Contains(Path.GetExtension(path))) continue;
+
+            try
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists || info.Length > MaxImageBytes) continue;
+                using var stream = info.OpenRead();
+                images[url] = Bitmap.DecodeToWidth(stream, ImageWidth, BitmapInterpolationMode.MediumQuality);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+            {
+                // Unreadable or not really an image: the alt text is shown.
+            }
+        }
+        return images;
+    }
+}
+
+/// <summary>
+/// Video, audio, presentations and image formats we can't decode ourselves:
+/// the file manager's thumbnail (a video frame, album art, the first slide)
+/// plus what it knows about the file (duration, resolution, artist...).
+/// </summary>
+internal sealed class ShellPreviewProvider : IPreviewProvider
+{
+    private const int ThumbnailSize = 512;
+
+    private static readonly IShellPreview? Shell = PlatformShellFactory.CreateShellPreview();
+
+    private static readonly HashSet<string> Extensions = new(
+    [
+        // video
+        ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv", ".mpg", ".mpeg", ".m2ts", ".mts", ".3gp",
+        // audio
+        ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".aiff",
+        // presentations
+        ".pptx", ".ppt", ".ppsx", ".pps", ".odp",
+        // images Avalonia can't decode, when a codec is installed
+        ".heic", ".heif", ".avif", ".jxl", ".tif", ".tiff", ".ico", ".psd", ".svg",
+        ".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2",
+    ], StringComparer.OrdinalIgnoreCase);
+
+    private static LocalizationService Loc => LocalizationService.Instance;
+
+    public bool CanPreview(SearchResult item) => Shell is not null && Extensions.Contains(Path.GetExtension(item.FullPath));
+
+    public Task<PreviewContent> LoadAsync(SearchResult item, CancellationToken ct)
+    {
+        var info = Shell!.GetMediaInfo(item.FullPath);
+        ct.ThrowIfCancellationRequested();
+        var thumbnail = Shell.GetThumbnail(item.FullPath, ThumbnailSize);
+        ct.ThrowIfCancellationRequested();
+
+        var details = Details(info);
+        return Task.FromResult(thumbnail is null
+            ? new PreviewContent { Message = Loc.Get("PreviewUnavailable"), Details = details }
+            : new PreviewContent { Image = ToBitmap(thumbnail), Details = details });
+    }
+
+    private static List<(string, string)> Details(ShellMediaInfo info)
+    {
+        var rows = new List<(string, string)>();
+        if (info.Title is not null) rows.Add((Loc.Get("PreviewTitle"), info.Title));
+        if (info.Artist is not null) rows.Add((Loc.Get("PreviewArtist"), info.Artist));
+        if (info.Album is not null) rows.Add((Loc.Get("PreviewAlbum"), info.Album));
+        if (info.Duration is { } d)
+            rows.Add((Loc.Get("PreviewDuration"), d.TotalHours >= 1 ? d.ToString(@"h\:mm\:ss") : d.ToString(@"m\:ss")));
+        if (info is { Width: { } w, Height: { } h }) rows.Add((Loc.Get("PreviewDimensions"), $"{w} × {h}"));
+        if (info.FrameRate is { } fps)
+            rows.Add((Loc.Get("PreviewFrameRate"), $"{fps.ToString("0.##", CultureInfo.CurrentCulture)} fps"));
+        if (info.Bitrate is { } bps)
+            rows.Add((Loc.Get("PreviewBitrate"), bps >= 1_000_000
+                ? $"{(bps / 1_000_000.0).ToString("0.#", CultureInfo.CurrentCulture)} Mbps"
+                : $"{bps / 1000} kbps"));
+        if (info.Slides is { } slides) rows.Add((Loc.Get("PreviewSlides"), slides.ToString("N0")));
+        return rows;
+    }
+
+    private static Bitmap ToBitmap(ShellThumbnail thumbnail)
+    {
+        var handle = GCHandle.Alloc(thumbnail.Pixels, GCHandleType.Pinned);
+        try
+        {
+            return new Bitmap(PixelFormat.Bgra8888, thumbnail.HasAlpha ? AlphaFormat.Premul : AlphaFormat.Opaque,
+                handle.AddrOfPinnedObject(), new PixelSize(thumbnail.Width, thumbnail.Height), new Vector(96, 96),
+                thumbnail.Width * 4);
+        }
+        finally
+        {
+            handle.Free();
+        }
     }
 }
 

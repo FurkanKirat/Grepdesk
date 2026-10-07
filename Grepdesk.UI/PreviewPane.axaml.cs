@@ -16,7 +16,7 @@ public partial class PreviewPane : UserControl
 {
     private static LocalizationService Loc => LocalizationService.Instance;
 
-    private static readonly FontFamily Monospace = new("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace");
+    internal static readonly FontFamily Monospace = new("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace");
     private static readonly IBrush HighlightBackground = new SolidColorBrush(Color.Parse("#f9e2af"), 0.25);
     private static readonly IBrush HighlightForeground = new SolidColorBrush(Color.Parse("#f9e2af"));
     private const int MaxHighlights = 300;
@@ -25,6 +25,7 @@ public partial class PreviewPane : UserControl
     private ResultItem? _item;
     private string? _highlight;
     private Bitmap? _bitmap;
+    private IReadOnlyCollection<Bitmap> _markdownImages = [];
 
     /// <summary>Raised with the full path when the user clicks Open / Show in folder.</summary>
     public event Action<string>? OpenRequested;
@@ -56,6 +57,7 @@ public partial class PreviewPane : UserControl
         _highlight = highlight;
 
         SetBitmap(null);
+        SetMarkdown(null, null);
         TextScroll.IsVisible = false;
         TextPreview.Inlines?.Clear();
         TextPreview.Text = "";
@@ -108,6 +110,7 @@ public partial class PreviewPane : UserControl
         if (token.IsCancellationRequested)
         {
             content.Image?.Dispose();
+            foreach (var image in content.Markdown?.Images.Values ?? []) image.Dispose();
             return;
         }
 
@@ -117,6 +120,13 @@ public partial class PreviewPane : UserControl
         if (content.Image is not null)
         {
             SetBitmap(content.Image);
+            BodyMessage.IsVisible = false;
+        }
+        else if (content.Markdown is not null)
+        {
+            SetMarkdown(content.Markdown, highlight);
+            MarkdownFooter.Text = content.Footer;
+            MarkdownFooter.IsVisible = content.Footer is not null;
             BodyMessage.IsVisible = false;
         }
         else if (content.Text is not null)
@@ -178,6 +188,20 @@ public partial class PreviewPane : UserControl
         }
         if (start < text.Length) inlines.Add(new Run(text[start..]));
         TextPreview.Inlines = inlines;
+    }
+
+    private void SetMarkdown(MarkdownPreview? markdown, string? highlight)
+    {
+        MarkdownHost.Content = markdown is null
+            ? null
+            : MarkdownView.Build(markdown, highlight,
+                open: target => OpenRequested?.Invoke(target),
+                reveal: target => ShowInFolderRequested?.Invoke(target));
+        MarkdownScroll.IsVisible = markdown is not null;
+        MarkdownScroll.Offset = default;
+
+        foreach (var image in _markdownImages) image.Dispose();
+        _markdownImages = markdown?.Images.Values.ToList() ?? [];
     }
 
     private void SetBitmap(Bitmap? bitmap)

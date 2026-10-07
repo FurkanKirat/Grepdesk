@@ -1,5 +1,6 @@
 ﻿using System;
 using Grepdesk.Core;
+using Grepdesk.Core.Preview;
 using Grepdesk.Core.Transfer;
 using Grepdesk.Linux;
 using Grepdesk.MacOS;
@@ -54,4 +55,8 @@ public static class PlatformShellFactory
             return new LinuxFileClipboard();
         return null;
     }
+
+    /// <summary>The file manager's thumbnails and media metadata; null where not supported.</summary>
+    public static IShellPreview? CreateShellPreview() =>
+        OperatingSystem.IsWindows() ? new WindowsShellPreview() : null;
 }

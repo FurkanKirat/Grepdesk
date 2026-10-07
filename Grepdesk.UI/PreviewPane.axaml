@@ -45,7 +45,7 @@
                     <Button x:Name="ShowInFolderButton"/>
                 </StackPanel>
 
-                <!-- Body: image, text, or a note when there's nothing to show -->
+                <!-- Body: image, text, rendered Markdown, or a note when there's nothing to show -->
                 <Border Margin="0,12,0,0"
                         Background="#11111b"
                         CornerRadius="6"
@@ -62,6 +62,12 @@
                                                  FontSize="12"
                                                  Margin="10,8"
                                                  TextWrapping="Wrap"/>
+                        </ScrollViewer>
+                        <ScrollViewer x:Name="MarkdownScroll" IsVisible="False">
+                            <StackPanel Margin="12,10" Spacing="10">
+                                <ContentControl x:Name="MarkdownHost"/>
+                                <TextBlock x:Name="MarkdownFooter" Foreground="#6c7086" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
                         </ScrollViewer>
                         <TextBlock x:Name="BodyMessage"
                                    Foreground="#6c7086"

@@ -13,7 +13,7 @@ and unzipping, and copying or moving large folders.
 - Size and date for every result, folder sizes included (total of everything inside)
 - Sort by name, size or date across **all** matches, not just the first page
 - Filter by type (folders, documents, images, code, archives, video, audio), minimum size and last modified
-- Preview panel: images, the start of text and code files, the text of Office documents and PDFs
+- Preview panel: images, rendered Markdown, the start of text and code files, the text of Office documents and PDFs; on Windows also video frames, album art and the first slide of presentations, with duration, resolution and similar details
 
 ### 📄 Content Search
 - Search inside file contents — not just names

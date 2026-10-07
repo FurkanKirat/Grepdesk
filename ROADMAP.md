@@ -54,6 +54,9 @@ order within each section.
 - [ ] **Archive preview and extraction beyond zip**: list `.rar`, `.7z`,
   `.tar` contents in the preview panel (SharpCompress, MIT; reading only,
   RAR can't be created), then extract them with the existing job window.
+- [ ] **Large preview window** (Quick Look style): Space opens the selected
+  result in a bigger window using the same preview providers at a larger
+  decode size, ↑/↓ moves through results, Esc closes.
 - [ ] **Excluded folders** in Settings (`node_modules`, `.git`, `bin`, `obj`
   by default) for name search.
 - [ ] **Bulk actions in search results** (copy paths, zip, trash a
