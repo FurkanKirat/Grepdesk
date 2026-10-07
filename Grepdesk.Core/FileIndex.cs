@@ -19,6 +19,11 @@ public class FileIndex
     public bool IsIndexing => Interlocked.Read(ref _isIndexing) == 1;
     public int Count => _index.Count;
 
+    /// <summary>The folders (or drive roots) the last scan started from, normalized.</summary>
+    public IReadOnlyList<string> Roots { get; private set; } = [];
+
+    internal IEnumerable<KeyValuePair<string, IndexEntry>> Entries => _index;
+
     public event Action<int>? ProgressChanged;   // indexed count
     public event Action? IndexingComplete;
 
@@ -46,6 +51,7 @@ public class FileIndex
                 .Select(r => Path.TrimEndingDirectorySeparator(Path.GetFullPath(r)))
                 .ToList();
 
+            Roots = rootList;
             foreach (var root in rootList)
                 TryAdd(new DirectoryInfo(root));
 
@@ -73,8 +79,18 @@ public class FileIndex
         var threads = Math.Max(2, Environment.ProcessorCount - 1);
         long reported = 0;
 
+        // Folders queued or still being listed. The scan is over only when this
+        // reaches zero: an empty queue alone just means every worker is busy
+        // listing a big folder whose subfolders haven't been queued yet.
+        long pending = roots.Count;
+
+        // NoBuffering: each worker takes one folder at a time, so no folder sits
+        // in a worker's private buffer while the queue looks finished.
+        var source = Partitioner.Create(PartitionQueue(queue, () => Interlocked.Read(ref pending) == 0, ct),
+            EnumerablePartitionerOptions.NoBuffering);
+
         Parallel.ForEach(
-            PartitionQueue(queue, ct),
+            source,
             new ParallelOptions { MaxDegreeOfParallelism = threads, CancellationToken = ct },
             dir =>
             {
@@ -88,6 +104,13 @@ public class FileIndex
 
                         if (info is DirectoryInfo)
                         {
+                            // Junctions and symlinks point at folders that are indexed
+                            // anyway (or loop back up the tree): list the link, don't
+                            // walk it, so nothing is found or counted twice.
+                            if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) && info.LinkTarget is not null)
+                                continue;
+
+                            Interlocked.Increment(ref pending);
                             queue.Enqueue(info.FullName);
                             continue;
                         }
@@ -99,6 +122,10 @@ public class FileIndex
                 }
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
+                finally
+                {
+                    Interlocked.Decrement(ref pending);
+                }
             });
     }
 
@@ -115,7 +142,8 @@ public class FileIndex
 
         foreach (var (path, entry) in _index)
         {
-            if (entry.IsDirectory || entry.Size == 0) continue;
+            // Online-only cloud files take no disk space, so they do not count toward folder totals.
+            if (entry.IsDirectory || entry.Size == 0 || entry.IsCloudOnly) continue;
             if (Path.GetDirectoryName(path) is { } parent)
                 totals[parent] = totals.GetValueOrDefault(parent) + entry.Size;
         }
@@ -138,6 +166,37 @@ public class FileIndex
         }
     }
 
+    /// <summary>Direct children (files and folders) of an indexed folder.</summary>
+    public List<SearchResult> ChildrenOf(string folder, CancellationToken ct = default)
+    {
+        var parent = Path.TrimEndingDirectorySeparator(folder);
+        var prefixLength = parent.EndsWith(Path.DirectorySeparatorChar) ? parent.Length : parent.Length + 1; // "C:\" vs "C:\a"
+        var children = new List<SearchResult>();
+        var scanned = 0;
+
+        foreach (var (path, e) in _index)
+        {
+            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+
+            if (path.Length > prefixLength
+                && path.StartsWith(parent, StringComparison.OrdinalIgnoreCase)
+                && path[prefixLength - 1] == Path.DirectorySeparatorChar
+                && path.IndexOf(Path.DirectorySeparatorChar, prefixLength) < 0)
+            {
+                children.Add(new SearchResult(path, e.IsDirectory, e.Size, e.Modified));
+            }
+        }
+        return children;
+    }
+
+    // The name is the end of the key; matching on that span avoids keeping a
+    // second string per entry (millions of them on a whole-disk scan).
+    private static ReadOnlySpan<char> NameOf(string path)
+    {
+        var name = Path.GetFileName(path.AsSpan());
+        return name.IsEmpty ? path.AsSpan() : name; // drive roots ("C:\") have no file name
+    }
+
     /// <summary>Drops a path (and, for a folder, everything under it) after it was deleted from Grepdesk.</summary>
     public void Remove(string path)
     {
@@ -149,23 +208,17 @@ public class FileIndex
                 _index.TryRemove(key, out _);
     }
 
-    // Yields items from queue until it's drained
-    private static IEnumerable<string> PartitionQueue(ConcurrentQueue<string> queue, CancellationToken ct)
+    // Yields folders from the queue until it is empty and no folder is still being listed.
+    private static IEnumerable<string> PartitionQueue(ConcurrentQueue<string> queue, Func<bool> finished, CancellationToken ct)
     {
-        // Spin until queue is truly empty (subdirs keep getting added)
-        var emptyStreak = 0;
-        while (emptyStreak < 3 && !ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
             if (queue.TryDequeue(out var item))
-            {
-                emptyStreak = 0;
                 yield return item;
-            }
+            else if (finished())
+                yield break;
             else
-            {
-                emptyStreak++;
-                Thread.Sleep(10);
-            }
+                Thread.Sleep(1);
         }
     }
 
@@ -185,8 +238,8 @@ public class FileIndex
             if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
 
             var e = kv.Value;
-            if (matchAll || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
-                results.Add(new SearchResult(kv.Key, e.IsDirectory, e.Size, e.Modified, e.Name));
+            if (matchAll || NameOf(kv.Key).Contains(query, StringComparison.OrdinalIgnoreCase))
+                results.Add(new SearchResult(kv.Key, e.IsDirectory, e.Size, e.Modified));
         }
         return results;
     }
@@ -272,16 +325,22 @@ public class FileIndex
     }
 }
 
-// The name is kept as-is (matched case-insensitively) so search results can
-// share the string instead of allocating a new one per hit.
-internal readonly record struct IndexEntry(string Name, bool IsDirectory, long Size, DateTime Modified)
+// Kept small on purpose: a whole-disk scan holds millions of these. The name
+// isn't stored, it is the tail of the dictionary key (the full path).
+internal readonly record struct IndexEntry(bool IsDirectory, long Size, DateTime Modified, bool IsCloudOnly = false)
 {
+    // Not in the FileAttributes enum: set on OneDrive/iCloud placeholders whose
+    // contents live only online. Their Length is the logical size, but they
+    // take no space on the disk until opened.
+    private const FileAttributes RecallOnDataAccess = (FileAttributes)0x00400000;
+
     public static IndexEntry From(FileSystemInfo info)
     {
-        var name = info.Name.Length > 0 ? info.Name : info.FullName; // drive roots have no Name
-        return info is FileInfo file
-            ? new IndexEntry(name, false, file.Length, file.LastWriteTime)
-            : new IndexEntry(name, true, 0, info.LastWriteTime);
+        if (info is not FileInfo file)
+            return new IndexEntry(true, 0, info.LastWriteTime);
+
+        var cloudOnly = (file.Attributes & (RecallOnDataAccess | FileAttributes.Offline)) != 0;
+        return new IndexEntry(false, file.Length, file.LastWriteTime, cloudOnly);
     }
 }
 

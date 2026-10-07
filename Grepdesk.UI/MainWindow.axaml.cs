@@ -106,6 +106,7 @@ public partial class MainWindow : Window
         InitFilters();
         InitKeyboard();
         InitDragAndDrop();
+        InitDiskPage();
         InitLanguageSetting();
         InitExplorerMenuSettings();
         ApplyLanguage();
@@ -124,7 +125,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void InitNavigation()
     {
-        Control[] featurePages = [NameSearchPage, ContentSearchPage];
+        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage];
 
         FeatureNav.SelectionChanged += (_, _) =>
         {
@@ -147,6 +148,7 @@ public partial class MainWindow : Window
     {
         NameSearchPage.IsVisible = page == NameSearchPage;
         ContentSearchPage.IsVisible = page == ContentSearchPage;
+        DiskPage.IsVisible = page == DiskPage;
         SettingsPage.IsVisible = page == SettingsPage;
 
         if (page == NameSearchPage) SearchBox.Focus();
@@ -163,7 +165,8 @@ public partial class MainWindow : Window
         target.Text = text();
     }
 
-    private TextBlock CurrentStatusText => ContentSearchPage.IsVisible ? ContentStatusText : StatusText;
+    private TextBlock CurrentStatusText =>
+        ContentSearchPage.IsVisible ? ContentStatusText : DiskPage.IsVisible ? DiskPage.StatusLine : StatusText;
 
     private void InitLanguageSetting()
     {
@@ -193,6 +196,7 @@ public partial class MainWindow : Window
         {
             NavNameSearchText.Text = NameSearchTitle.Text = Loc.Get("FileNameSearchTab");
             NavContentSearchText.Text = ContentSearchTitle.Text = Loc.Get("ContentSearchTab");
+            NavDiskText.Text = Loc.Get("DiskTab");
             NavSettingsText.Text = SettingsTitle.Text = Loc.Get("SettingsTab");
             NameSearchSubtitle.Text = Loc.Get("NameSearchSubtitle");
             ContentSearchSubtitle.Text = Loc.Get("ContentSearchSubtitle");
@@ -276,6 +280,7 @@ public partial class MainWindow : Window
 
             NamePreview.ApplyLanguage();
             ContentPreview.ApplyLanguage();
+            DiskPage.ApplyLanguage();
         }
         finally
         {
@@ -801,10 +806,33 @@ public partial class MainWindow : Window
         _results.Remove(item);
         foreach (var match in _contentResults.Where(r => r.FullPath == item.FullPath).ToList())
             _contentResults.Remove(match);
+        DiskPage.Remove(item.FullPath);
 
         var name = item.FileName;
         SetStatus(CurrentStatusText, () => Loc.Get("MovedToTrash", name));
         UpdateShowMoreButton();
+    }
+
+    // =====================================================================
+    // Disk usage
+    // =====================================================================
+
+    private void InitDiskPage()
+    {
+        // A whole-PC (or whole-drive) scan from the name search page already has
+        // everything the disk page needs; reuse it instead of scanning again.
+        DiskPage.FindExistingIndex = root =>
+            !_index.IsIndexing && _index.Count > 0
+            && _index.Roots.Any(r => string.Equals(r, root, StringComparison.OrdinalIgnoreCase))
+                ? _index
+                : null;
+
+        foreach (var list in DiskPage.ResultLists)
+            list.PointerReleased += OnAnyResultRightClick;
+
+        // Folder list: double-click drills down (handled by the page); files list: open.
+        DiskPage.ResultLists[1].DoubleTapped += OnAnyResultDoubleTapped;
+        DiskPage.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
     }
 
     // =====================================================================
@@ -843,7 +871,7 @@ public partial class MainWindow : Window
     private static readonly Shortcut[] Shortcuts =
     [
         new("Ctrl+F", "ShortcutFocusSearch"),
-        new("Ctrl+1 / Ctrl+2", "ShortcutPages"),
+        new("Ctrl+1 / Ctrl+2 / Ctrl+3", "ShortcutPages"),
         new("Ctrl+,", "ShortcutSettings"),
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
@@ -896,7 +924,10 @@ public partial class MainWindow : Window
     }
 
     private ListBox? ActiveList =>
-        NameSearchPage.IsVisible ? ResultsList : ContentSearchPage.IsVisible ? ContentResultsList : null;
+        NameSearchPage.IsVisible ? ResultsList
+        : ContentSearchPage.IsVisible ? ContentResultsList
+        : DiskPage.IsVisible ? DiskPage.ActiveList
+        : null;
 
     private TextBox? ActiveSearchBox =>
         NameSearchPage.IsVisible ? SearchBox : ContentSearchPage.IsVisible ? ContentSearchBox : null;
@@ -923,6 +954,9 @@ public partial class MainWindow : Window
                 break;
             case Key.D2 when ctrl:
                 FeatureNav.SelectedIndex = 1;
+                break;
+            case Key.D3 when ctrl:
+                FeatureNav.SelectedIndex = 2;
                 break;
             case Key.OemComma when ctrl:
                 SettingsNav.SelectedIndex = 0;

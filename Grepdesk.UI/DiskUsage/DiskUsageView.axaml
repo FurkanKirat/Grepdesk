@@ -1,0 +1,200 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="using:Grepdesk.UI.DiskUsage"
+             x:Class="Grepdesk.UI.DiskUsage.DiskUsageView">
+
+    <UserControl.Styles>
+        <!-- Drive cards -->
+        <Style Selector="ListBox.drives">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ListBox.drives ListBoxItem">
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="Margin" Value="0,0,8,8"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#313244"/>
+            <Setter Property="Background" Value="#181825"/>
+        </Style>
+        <Style Selector="ListBox.drives ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#202030"/>
+        </Style>
+        <Style Selector="ListBox.drives ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#252538"/>
+        </Style>
+        <Style Selector="ListBox.drives ListBoxItem:selected">
+            <Setter Property="BorderBrush" Value="#89b4fa"/>
+        </Style>
+
+        <!-- Category table rows -->
+        <Style Selector="ListBox.legend">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.legend ListBoxItem">
+            <!-- Right padding keeps the sizes clear of the overlay scrollbar -->
+            <Setter Property="Padding" Value="8,5,16,5"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+        <Style Selector="ListBox.legend ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+        <Style Selector="ListBox.legend ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#232334"/>
+        </Style>
+
+        <Style Selector="TextBlock.columnTitle">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Styles>
+
+    <UserControl.Resources>
+        <!-- File / folder row with a size bar (shared by the folder and the largest-files lists) -->
+        <DataTemplate x:Key="DiskRowTemplate" x:DataType="d:DiskRow">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="2,2" ToolTip.Tip="{Binding FullPath}">
+                <Panel Grid.Column="0" Width="36" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <PathIcon Data="{StaticResource IconFolder}" Width="17" Height="17"
+                              Foreground="#f9e2af" IsVisible="{Binding ShowFolderIcon}"/>
+                    <PathIcon Data="{StaticResource IconDocument}" Width="16" Height="16"
+                              Foreground="#7f849c" IsVisible="{Binding ShowDocumentIcon}"/>
+                    <Border IsVisible="{Binding ShowBadge}"
+                            Background="{Binding Kind.Background}"
+                            BorderBrush="{Binding Kind.Foreground}"
+                            BorderThickness="1" CornerRadius="4" Height="19">
+                        <TextBlock Text="{Binding Kind.Label}" Foreground="{Binding Kind.Foreground}"
+                                   FontSize="9" FontWeight="Bold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </Panel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding FileName}" Foreground="#cdd6f4" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Directory}" Foreground="#6c7086" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <!-- Size bar: 90 px track, 4 px rounded end -->
+                <Border Grid.Column="2" Width="90" Height="8" Margin="10,0" VerticalAlignment="Center"
+                        Background="#26263a" CornerRadius="0,4,4,0">
+                    <Border HorizontalAlignment="Left" Width="{Binding BarWidth}"
+                            Background="{Binding BarBrush}" CornerRadius="0,4,4,0"/>
+                </Border>
+                <TextBlock Grid.Column="3" Text="{Binding BigSizeText}" Foreground="#cdd6f4" FontSize="12"
+                           MinWidth="66" TextAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,12">
+            <TextBlock x:Name="TitleText" Classes="pageTitle"/>
+            <TextBlock x:Name="SubtitleText" Classes="pageSubtitle"/>
+        </StackPanel>
+
+        <!-- Drives + analyze -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top" Margin="12,0,0,0">
+                <Button x:Name="AnalyzeButton"/>
+                <Button x:Name="CancelButton" IsVisible="False"/>
+            </StackPanel>
+            <ListBox x:Name="DriveList" Classes="drives">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="d:DriveRow">
+                        <StackPanel Spacing="5" Width="160">
+                            <TextBlock Text="{Binding Title}" Foreground="#cdd6f4" FontSize="13" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <Border Height="6" CornerRadius="3" Background="#313244" ClipToBounds="True">
+                                <Border HorizontalAlignment="Left" Width="{Binding UsedWidth}" CornerRadius="3"
+                                        Background="{Binding MeterBrush}"/>
+                            </Border>
+                            <TextBlock Text="{Binding Detail}" Foreground="#a6adc8" FontSize="11"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+
+        <TextBlock x:Name="StatusText" DockPanel.Dock="Top" Classes="label" Margin="2,0,0,10" TextWrapping="Wrap"/>
+
+        <Panel>
+            <!-- Before the first analysis -->
+            <Border x:Name="EmptyState" Classes="card" Padding="24">
+                <TextBlock x:Name="EmptyText" Foreground="#7f849c" FontSize="13" TextWrapping="Wrap"
+                           TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460"/>
+            </Border>
+
+            <DockPanel x:Name="ReportPanel" IsVisible="False">
+                <!-- Headline + stacked bar -->
+                <Border DockPanel.Dock="Top" Classes="card" Padding="16,12" Margin="0,0,0,10">
+                    <StackPanel Spacing="10">
+                        <DockPanel>
+                            <TextBlock x:Name="FreeHeadline" DockPanel.Dock="Right" Foreground="#a6adc8" FontSize="13"
+                                       VerticalAlignment="Bottom"/>
+                            <TextBlock x:Name="UsedHeadline" Foreground="#cdd6f4" FontSize="22" FontWeight="SemiBold"/>
+                        </DockPanel>
+                        <!-- Proportional segments: star columns sized by bytes, 2 px gaps between -->
+                        <Grid x:Name="UsageBar" Height="22"/>
+                        <TextBlock x:Name="NotesText" Classes="hint"/>
+                    </StackPanel>
+                </Border>
+
+                <Grid ColumnDefinitions="300,*,*">
+                    <!-- Categories -->
+                    <Border Grid.Column="0" Classes="card" Padding="10,10" Margin="0,0,10,0">
+                        <DockPanel>
+                            <TextBlock x:Name="CategoriesTitle" DockPanel.Dock="Top" Classes="columnTitle" Margin="6,0,0,8"/>
+                            <TextBlock x:Name="CategoriesHint" DockPanel.Dock="Bottom" Classes="hint" Margin="6,8,0,0"/>
+                            <ListBox x:Name="CategoryList" Classes="legend">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="d:CategoryRow">
+                                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                            <Border Grid.Column="0" Width="10" Height="10" CornerRadius="2" Margin="0,0,10,0"
+                                                    Background="{Binding Swatch}" IsVisible="{Binding HasSwatch}"
+                                                    VerticalAlignment="Center"/>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Name}" Foreground="#cdd6f4" FontSize="12.5"/>
+                                                <TextBlock Text="{Binding FilesText}" Foreground="#6c7086" FontSize="10.5"
+                                                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FilesText}"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding PercentText}" Foreground="#7f849c" FontSize="11"
+                                                       VerticalAlignment="Center" Margin="8,0" MinWidth="34" TextAlignment="Right"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Foreground="#cdd6f4" FontSize="12"
+                                                       VerticalAlignment="Center" MinWidth="62" TextAlignment="Right"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Folder drill-down -->
+                    <Border Grid.Column="1" Classes="card" Padding="10,10" Margin="0,0,10,0">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="6,0,0,6">
+                                <Button x:Name="UpButton" DockPanel.Dock="Left" Padding="8,2" Margin="0,0,8,0" FontSize="12" Content="↑"/>
+                                <TextBlock x:Name="FoldersTitle" Classes="columnTitle"/>
+                            </DockPanel>
+                            <TextBlock x:Name="FolderPathText" DockPanel.Dock="Top" Classes="hint" Margin="6,0,0,6"
+                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                            <ListBox x:Name="FolderList" Classes="results" ItemTemplate="{StaticResource DiskRowTemplate}"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Largest files -->
+                    <Border Grid.Column="2" Classes="card" Padding="10,10">
+                        <DockPanel>
+                            <TextBlock x:Name="FilesTitle" DockPanel.Dock="Top" Classes="columnTitle" Margin="6,0,0,6"/>
+                            <TextBlock x:Name="FilesSubtitle" DockPanel.Dock="Top" Classes="hint" Margin="6,0,0,6"/>
+                            <ListBox x:Name="LargestList" Classes="results" ItemTemplate="{StaticResource DiskRowTemplate}"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </DockPanel>
+        </Panel>
+    </DockPanel>
+</UserControl>

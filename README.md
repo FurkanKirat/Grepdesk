@@ -7,9 +7,13 @@ and unzipping, and copying or moving large folders.
 ## Features
 
 ### 🔍 File Name Search
-- Index a specific folder (or several) or your whole PC
-- Instant, debounced search as you type
-- Keyboard navigation (`↓` to jump into results, `Esc` to clear)
+- Index a specific folder (or several) or your whole PC — or drop a folder on the window
+- Instant, debounced search as you type; the matched part of each name is highlighted
+- Leave the box empty to browse everything that was scanned
+- Size and date for every result, folder sizes included (total of everything inside)
+- Sort by name, size or date across **all** matches, not just the first page
+- Filter by type (folders, documents, images, code, archives, video, audio), minimum size and last modified
+- Preview panel: images, the start of text and code files, the text of Office documents and PDFs
 
 ### 📄 Content Search
 - Search inside file contents — not just names
@@ -17,6 +21,18 @@ and unzipping, and copying or moving large folders.
   `.py`, `.js`, `.json`, `.xml`, `.html`, `.csv`, `.yaml`, and more)
 - Shows a matching snippet alongside each result
 - Skips unreadable files (locked, corrupt, unsupported) without stopping the scan
+
+### 📊 Disk Usage
+- Pick a drive and see what fills it: games, developer tools (incl. local AI
+  models and package caches), apps, system and caches, videos, pictures,
+  documents, music
+- Where a file lives decides its kind first (a video inside a game folder counts
+  as the game), then its extension
+- Drill into the largest folders from the drive root, and list the largest files
+  overall or per kind
+- Space the scan can't read (other users, System Volume Information, restore
+  points) and online-only cloud files are reported separately instead of hidden
+- Reuses an existing whole-PC scan from the name search page
 
 ### 🗜️ Fast Zip
 - **Extract here / Extract to folder** on any `.zip` from Explorer's right-click menu
@@ -44,13 +60,19 @@ and follow the exe if it moves. On Windows 11 they appear under
 Grepdesk merges them into a single job.
 
 ### ⚡ Quick Actions (right-click any result)
-- **Open** — launch with the default associated app
-- **Show in File Manager** — reveal and select the file in Explorer
-- **Copy Path** — copy the full path to clipboard
+- **Open** (`Enter`) — launch with the default associated app
+- **Show in File Manager** (`Ctrl+Enter`) — reveal and select the file in Explorer
+- **Copy Path** (`Ctrl+C`) / **Copy file** (`Ctrl+Shift+C`) — the path as text, or the file itself to paste in Explorer
+- **Compress to zip**, and **Extract here / to folder** on `.zip` files
+- **Move to Recycle Bin** (`Delete`, asks first)
+- Drag a result out to Explorer, an editor or a mail (always copied, never moved)
 - **Open in Terminal** — open a terminal at the file's folder
 - **Open in Editor** — automatically detects installed editors (VS Code,
   Rider, Notepad++, ...) on your `PATH` and lists only the ones compatible
   with the selected item (e.g. Notepad++ only shows up for files, not folders)
+
+All keyboard shortcuts are listed on the **Settings** page, along with the
+language (English / Türkçe, or follow the system) and the preview panel toggle.
 
 ## Why
 

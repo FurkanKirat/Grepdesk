@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:Grepdesk.UI"
+        xmlns:disk="using:Grepdesk.UI.DiskUsage"
         x:Class="Grepdesk.UI.MainWindow"
         Title="Grepdesk"
         Icon="avares://Grepdesk.UI/Assets/icon.ico"
@@ -244,6 +245,12 @@
                             <TextBlock x:Name="NavContentSearchText" Classes="navText" Text="Content Search"/>
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconChartPie}"/>
+                            <TextBlock x:Name="NavDiskText" Classes="navText" Text="Disk Usage"/>
+                        </StackPanel>
+                    </ListBoxItem>
                 </ListBox>
             </DockPanel>
         </Border>
@@ -350,6 +357,9 @@
                     <ui:PreviewPane x:Name="ContentPreview" Grid.Column="1" Width="320" Margin="10,0,0,0"/>
                 </Grid>
             </DockPanel>
+
+            <!-- ===================== PAGE : DISK USAGE ===================== -->
+            <disk:DiskUsageView x:Name="DiskPage" IsVisible="False"/>
 
             <!-- ===================== PAGE : SETTINGS ===================== -->
             <ScrollViewer x:Name="SettingsPage" IsVisible="False">
