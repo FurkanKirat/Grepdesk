@@ -78,7 +78,7 @@ public sealed record CleanupContext(string UserProfile, string TempFolder, strin
         return new CleanupContext(
             profile,
             System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetTempPath()),
-            System.IO.Path.Combine(profile, "Downloads"),
+            KnownFolders.Downloads(),
             DateTime.Now);
     }
 }
