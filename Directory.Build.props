@@ -5,7 +5,7 @@
 -->
 <Project>
   <PropertyGroup>
-    <Version>1.0.0</Version>
+    <Version>0.2.0</Version>
     <Product>Grepdesk</Product>
     <Authors>Furkan Kırat</Authors>
     <Company>Furkan Kırat</Company>

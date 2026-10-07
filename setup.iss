@@ -20,7 +20,8 @@ UninstallDisplayIcon={app}\Grepdesk.UI.exe
 DefaultDirName={autopf}\Grepdesk
 DefaultGroupName=Grepdesk
 OutputDir=Output
-OutputBaseFilename=GrepdeskSetup-{#AppVersion}
+; GitHub release'lerindeki adla aynı: Grepdesk-v0.1.0-win-x64-Setup.exe
+OutputBaseFilename=Grepdesk-v{#AppVersion}-win-x64-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
