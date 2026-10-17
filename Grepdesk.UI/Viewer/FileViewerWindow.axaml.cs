@@ -87,6 +87,7 @@ public partial class FileViewerWindow : Window
     {
         _standalone = standalone;
         InitializeComponent();
+        SessionTrail.Track(this, "viewer");
         if (standalone) WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         Editor.FontFamily = PreviewPane.Monospace;
@@ -167,6 +168,8 @@ public partial class FileViewerWindow : Window
         try
         {
             var kind = ViewerFormats.KindOf(path);
+            // Type and size only: the log may be shared, file names stay private.
+            SessionTrail.Note($"viewer: open {kind} {Path.GetExtension(path)}, {Format.Size(new FileInfo(path).Length)}");
             switch (kind)
             {
                 case ViewerKind.Image or ViewerKind.ShellImage:
@@ -493,11 +496,21 @@ public partial class FileViewerWindow : Window
         SetInfo(size);
         var view = new MediaView(Playback, path, video, art) { SpaceToggles = _standalone };
         view.InfoChanged += info => { if (FilePath == path) SetInfo(info, size); };
-        view.Failed += async hr =>
+        view.Failed += async error =>
         {
+            ErrorLog.Write($"media {Path.GetExtension(path)}", error.ToString());
+            SessionTrail.Note($"media: failed at {error.Stage}, 0x{error.HResult:X8} ({error.Problem})");
             if (FilePath != path) return;
             DisposeBody();
-            await ShowCardAsync(path, Loc.Get("ViewerMediaFailed", $"0x{hr:X8}"), _cts.Token);
+            var code = $"0x{error.HResult:X8}";
+            var message = error.Problem switch
+            {
+                MediaProblem.CodecMissing => Loc.Get("ViewerMediaCodecMissing", code),
+                MediaProblem.NoMediaFoundation => Loc.Get("ViewerMediaNoMediaFoundation"),
+                MediaProblem.NoVideoWindow => Loc.Get("ViewerMediaNoVideoWindow", code),
+                _ => Loc.Get("ViewerMediaFailed", code),
+            };
+            await ShowCardAsync(path, message, _cts.Token);
         };
         ShowBody(view);
     }

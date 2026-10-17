@@ -67,9 +67,27 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         return player;
     }
 
+    /// <summary>
+    /// Called by Windows: an exception must not travel back into native code,
+    /// where it ends the process without a word. It stops playback instead.
+    /// </summary>
     private static IntPtr SurfaceWndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         Players.TryGetValue(hwnd, out var player);
+        try
+        {
+            if (HandleSurfaceMessage(hwnd, msg, player) is { } result) return result;
+        }
+        catch (Exception e)
+        {
+            player?.Fail(new MediaError(e.HResult, $"video window message 0x{msg:X4}", e));
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    /// <returns>The message's result, or null to leave it to the default handling.</returns>
+    private static IntPtr? HandleSurfaceMessage(IntPtr hwnd, uint msg, Player? player)
+    {
         switch (msg)
         {
             case WM_ERASEBKGND:
@@ -77,9 +95,15 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
             case WM_PAINT:
                 var paint = new PaintStruct();
                 var hdc = BeginPaint(hwnd, ref paint);
-                if (player is { VideoSize: not null }) player.UpdateVideo();
-                else FillRect(hdc, ref paint.Paint, GetStockObject(BLACK_BRUSH));
-                EndPaint(hwnd, ref paint);
+                try
+                {
+                    if (player is { VideoSize: not null }) player.UpdateVideo();
+                    else FillRect(hdc, ref paint.Paint, GetStockObject(BLACK_BRUSH));
+                }
+                finally
+                {
+                    EndPaint(hwnd, ref paint);
+                }
                 return IntPtr.Zero;
             case WM_SIZE:
                 player?.UpdateVideo();
@@ -88,7 +112,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                 player?.RaiseClicked();
                 return IntPtr.Zero;
         }
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
+        return null;
     }
 
     private sealed class Player : IMediaPlayer, IMFPMediaPlayerCallback
@@ -98,7 +122,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         private bool _playing;
 
         public event Action? Ready;
-        public event Action<int>? Failed;
+        public event Action<MediaError>? Failed;
         public event Action? StateChanged;
         public event Action? Ended;
         public event Action? SurfaceClicked;
@@ -264,7 +288,33 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
         internal void RaiseClicked() => SurfaceClicked?.Invoke();
 
+        /// <summary>Stops reporting progress and tells the UI once; it disposes the player in response.</summary>
+        internal void Fail(MediaError error)
+        {
+            _playing = false;
+            var failed = Failed;
+            Failed = null;
+            failed?.Invoke(error);
+        }
+
+        /// <summary>
+        /// Called by Media Foundation through a [PreserveSig] void method: an
+        /// exception escaping it would end the process with no log, so it is
+        /// turned into a playback failure.
+        /// </summary>
         void IMFPMediaPlayerCallback.OnMediaPlayerEvent(IntPtr header)
+        {
+            try
+            {
+                OnEvent(header);
+            }
+            catch (Exception e)
+            {
+                Fail(new MediaError(e.HResult, "playback event", e));
+            }
+        }
+
+        private void OnEvent(IntPtr header)
         {
             if (_player is null) return;
             var type = Marshal.ReadInt32(header);
@@ -272,8 +322,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
             if (hr < 0 || type == MFP_EVENT_TYPE_ERROR)
             {
-                _playing = false;
-                Failed?.Invoke(hr);
+                Fail(new MediaError(hr, type == MFP_EVENT_TYPE_ERROR ? "playback" : $"playback event {type}"));
                 return;
             }
 
@@ -291,7 +340,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                         Marshal.ReleaseComObject(item);
                     }
                     hr = _player.SetMediaItem(itemPointer);
-                    if (hr < 0) Failed?.Invoke(hr);
+                    if (hr < 0) Fail(new MediaError(hr, "set media item"));
                     break;
                 case MFP_EVENT_TYPE_MEDIAITEM_SET:
                     var position = Guid.Empty;

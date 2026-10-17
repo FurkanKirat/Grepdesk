@@ -19,7 +19,11 @@ internal static class ErrorLog
 
     /// <param name="source">Where it was caught, e.g. "UI thread" or "unobserved task".</param>
     /// <returns>The log file written to, or null if even that failed.</returns>
-    public static string? Write(Exception exception, string source, string? directory = null)
+    public static string? Write(Exception exception, string source, string? directory = null) =>
+        Write(source, exception.ToString(), directory);
+
+    /// <summary>A problem that isn't an exception here: a crash found after the fact, a file the OS can't play.</summary>
+    public static string? Write(string source, string details, string? directory = null)
     {
         directory ??= Directory;
         try
@@ -33,7 +37,7 @@ internal static class ErrorLog
                     .AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {source}")
                     .AppendLine($"Grepdesk {AppInfo.Display} · {RuntimeInformation.OSDescription} · .NET {Environment.Version}")
                     .AppendLine($"Command line: {Environment.CommandLine}")
-                    .AppendLine(exception.ToString())
+                    .AppendLine(details.TrimEnd())
                     .AppendLine();
                 File.AppendAllText(path, entry.ToString());
 

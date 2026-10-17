@@ -475,5 +475,13 @@
   "FileTypesShellImages": "Diğer resimler (HEIC, TIFF, RAW, SVG - Windows önizlemesiyle gösterilir)",
   "FileTypesVideo": "Video",
   "FileTypesAudio": "Ses",
-  "FileTypesDocuments": "Office belgeleri (salt okunur metin olarak gösterilir)"
+  "FileTypesDocuments": "Office belgeleri (salt okunur metin olarak gösterilir)",
+
+  "ErrorCopyDetails": "Ayrıntıları kopyala",
+  "ErrorDetails": "Ayrıntılar",
+  "CrashTitle": "Grepdesk beklenmedik şekilde kapandı",
+  "CrashMessage": "Grepdesk son çalıştığında uyarı vermeden kapandı. O sırada ne yaptığı ve Windows'un çökme kaydı log klasörüne kaydedildi.",
+  "ViewerMediaCodecMissing": "Windows'ta bu dosyanın codec'i yok ({0}). HEVC ve AV1 videolar için Microsoft Store'dan \"HEVC Video Uzantıları\" ya da \"AV1 Video Uzantısı\" gerekir. Dosyayı kendi uygulamasında da açabilirsin.",
+  "ViewerMediaNoMediaFoundation": "Bu Windows'ta Media Foundation yok, bu yüzden video ve ses oynatılamıyor (Windows N/KN sürümleri). Ayarlar > Uygulamalar > İsteğe bağlı özellikler'den \"Medya Özellik Paketi\"ni kurabilirsin.",
+  "ViewerMediaNoVideoWindow": "Bu bilgisayarda video penceresi oluşturulamadı ({0}). Ayrıntılar log klasörüne kaydedildi; dosyayı kendi uygulamasında açabilirsin."
 }

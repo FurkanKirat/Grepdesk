@@ -42,6 +42,8 @@ class Program
             }
         }
 
+        SessionTrail.Start();
+        SessionTrail.Note($"command: {command.Kind}, {command.Paths.Count} path(s)");
         App.StartupCommand = command;
         App.Host = host;
         try

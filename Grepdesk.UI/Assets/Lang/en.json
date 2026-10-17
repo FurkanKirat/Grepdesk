@@ -475,5 +475,13 @@
   "FileTypesShellImages": "Other images (HEIC, TIFF, RAW, SVG - shown through Windows' preview)",
   "FileTypesVideo": "Video",
   "FileTypesAudio": "Audio",
-  "FileTypesDocuments": "Office documents (shown as read-only text)"
+  "FileTypesDocuments": "Office documents (shown as read-only text)",
+
+  "ErrorCopyDetails": "Copy details",
+  "ErrorDetails": "Details",
+  "CrashTitle": "Grepdesk closed unexpectedly",
+  "CrashMessage": "The last time Grepdesk ran, it stopped without warning. What it was doing and Windows' record of the crash were saved to the log folder.",
+  "ViewerMediaCodecMissing": "Windows has no codec for this file ({0}). HEVC and AV1 videos need \"HEVC Video Extensions\" or \"AV1 Video Extension\" from the Microsoft Store. You can also open it in its own app.",
+  "ViewerMediaNoMediaFoundation": "This Windows has no Media Foundation, so it can't play video or audio (Windows N/KN editions). Install the \"Media Feature Pack\" from Settings > Apps > Optional features.",
+  "ViewerMediaNoVideoWindow": "The video window couldn't be created on this PC ({0}). The details were saved to the log folder; you can open the file in its own app."
 }

@@ -48,6 +48,10 @@ public class App : Application
                 var startFolder = StartupCommand.Paths.FirstOrDefault(Directory.Exists);
                 desktop.MainWindow = new MainWindow(startFolder);
             }
+
+            // Job windows stay quiet; the next normal start reports their crashes too.
+            if (desktop.MainWindow is { } window)
+                window.Opened += (_, _) => _ = CrashHandling.ReportPreviousCrashes();
         }
 
         base.OnFrameworkInitializationCompleted();

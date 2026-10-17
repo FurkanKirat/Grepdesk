@@ -37,8 +37,8 @@ internal sealed class MediaView : DockPanel, IViewerBody
     private bool _updatingSeek;
     private bool _failed;
 
-    /// <summary>The OS couldn't play the file; the HRESULT.</summary>
-    public event Action<int>? Failed;
+    /// <summary>The OS couldn't play the file, or the video window couldn't be made.</summary>
+    public event Action<MediaError>? Failed;
 
     /// <summary>Video size and duration, once known, for the window's info line.</summary>
     public event Action<string>? InfoChanged;
@@ -111,14 +111,16 @@ internal sealed class MediaView : DockPanel, IViewerBody
     /// <summary>Starts playback into the surface (or no surface, for audio).</summary>
     private void Start(IntPtr surface)
     {
-        if (_player is not null) return;
+        if (_player is not null || _failed) return;
+        SessionTrail.Note($"media: open {Path.GetExtension(_path)}{(surface == IntPtr.Zero ? "" : " into a video window")}");
         try
         {
             _player = _playback.Open(_path, surface);
         }
-        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or DllNotFoundException or EntryPointNotFoundException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            RaiseFailed(e.HResult);
+            // COMException, or DllNotFoundException on Windows without Media Foundation.
+            RaiseFailed(new MediaError(e.HResult, "open", e));
             return;
         }
         _player.Ready += OnReady;
@@ -132,11 +134,11 @@ internal sealed class MediaView : DockPanel, IViewerBody
     /// Once, and after the player's callback has returned: the window reacts
     /// by disposing the player, which must not happen inside its own callback.
     /// </summary>
-    private void RaiseFailed(int hr)
+    private void RaiseFailed(MediaError error)
     {
         if (_failed) return;
         _failed = true;
-        Dispatcher.UIThread.Post(() => Failed?.Invoke(hr));
+        Dispatcher.UIThread.Post(() => Failed?.Invoke(error));
     }
 
     public void FocusContent() => Focus();
@@ -144,6 +146,7 @@ internal sealed class MediaView : DockPanel, IViewerBody
     private void OnReady()
     {
         if (_player is null) return;
+        SessionTrail.Note($"media: ready, {(_player.VideoSize is var (vw, vh) ? $"{vw}×{vh}" : "audio")}, {Time(_player.Duration)}");
         _updatingSeek = true;
         _seek.Maximum = Math.Max(0.1, _player.Duration.TotalSeconds);
         _updatingSeek = false;
@@ -289,6 +292,25 @@ internal sealed class MediaView : DockPanel, IViewerBody
         private IntPtr _surface;
 
         public VideoHost(MediaView owner) => _owner = owner;
+
+        /// <summary>
+        /// Avalonia makes its own (layered) host window here before asking for
+        /// ours, and Windows refuses it on some setups (no supported-OS manifest,
+        /// e.g. when run through dotnet.exe; some remote or virtual displays).
+        /// That is reported as the video failing instead of an error dialog over
+        /// a black area.
+        /// </summary>
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            try
+            {
+                base.OnAttachedToVisualTree(e);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException or System.ComponentModel.Win32Exception)
+            {
+                _owner.RaiseFailed(new MediaError(ex.HResult, MediaError.VideoWindowStage, ex));
+            }
+        }
 
         protected override IPlatformHandle CreateNativeControlCore(IPlatformHandle parent)
         {

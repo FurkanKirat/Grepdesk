@@ -13,7 +13,9 @@ namespace Grepdesk.UI;
 /// Last line of defence for errors nothing else caught (many UI handlers are
 /// async void). Each one is logged; errors on the UI thread and in forgotten
 /// tasks are survived with a short notice, and a fatal one at least says
-/// where the log is before the process ends.
+/// where the log is before the process ends. A crash in native code ends the
+/// process before any of this runs; <see cref="SessionTrail"/> finds it at the
+/// next start and <see cref="ReportPreviousCrashes"/> shows it.
 /// </summary>
 internal static class CrashHandling
 {
@@ -31,6 +33,7 @@ internal static class CrashHandling
         {
             if (e.ExceptionObject is not Exception exception) return;
             ErrorLog.Write(exception, "fatal");
+            SessionTrail.End(); // logged and shown here; not a mystery crash next time
             if (OperatingSystem.IsWindows())
                 MessageBoxW(IntPtr.Zero, $"{Text("ErrorFatal")}\n\n{exception.Message}\n\n{ErrorLog.Directory}", "Grepdesk", MB_ICONERROR);
         };
@@ -50,16 +53,51 @@ internal static class CrashHandling
         {
             ErrorLog.Write(e.Exception, "UI thread");
             Logged.AddOrUpdate(e.Exception, true);
+            SessionTrail.Note($"error: {e.Exception.GetType().Name}: {e.Exception.Message}");
             e.Handled = true;
-            ShowNotice(e.Exception);
+            // A handler failing in a loop would otherwise stack up dialogs.
+            if (_openDialog is null)
+                ShowDialog(Text("ErrorTitle"), Text("ErrorMessage"), e.Exception.Message, e.Exception.ToString());
         };
     }
 
-    private static void ShowNotice(Exception exception)
+    /// <summary>
+    /// Looks for runs that ended in a crash nothing could catch, logs them with
+    /// Windows' record of the crash, and shows what was found. Off the UI thread:
+    /// asking the event log takes a moment.
+    /// </summary>
+    public static async Task ReportPreviousCrashes()
     {
-        // A handler failing in a loop would otherwise stack up dialogs.
-        if (_openDialog is not null) return;
+        List<SessionTrail.Crash> crashes;
+        try
+        {
+            crashes = await Task.Run(() =>
+            {
+                var found = SessionTrail.TakeCrashes().Select(SessionTrail.WithSystemReport).ToList();
+                foreach (var crash in found)
+                    ErrorLog.Write("crash found at next start", crash.ToString());
+                return found;
+            });
+        }
+        catch (Exception e)
+        {
+            ErrorLog.Write(e, "crash report");
+            return;
+        }
+        if (crashes.Count == 0 || _openDialog is not null) return;
 
+        var newest = crashes.MaxBy(c => c.LastWriteUtc)!;
+        var summary = newest.SystemReport?.Split('\n')[0].Trim()
+                      ?? newest.Trail.LastOrDefault()
+                      ?? "";
+        ShowDialog(Text("CrashTitle"), Text("CrashMessage"), summary,
+            string.Join(Environment.NewLine + Environment.NewLine, crashes.Select(c => c.ToString())));
+    }
+
+    /// <param name="summary">One line, shown as is.</param>
+    /// <param name="details">The whole report: shown under "Details" and copied by its button.</param>
+    private static void ShowDialog(string title, string message, string summary, string details)
+    {
         var openLogs = new Button
         {
             Content = Text("ErrorOpenLogs"),
@@ -68,6 +106,27 @@ internal static class CrashHandling
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(14, 6)
         };
+        var copy = new Button
+        {
+            Content = Text("ErrorCopyDetails"),
+            Background = Brush.Parse("#313244"),
+            Foreground = Brush.Parse("#cdd6f4"),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 6)
+        };
+        var detailsBox = new TextBox
+        {
+            Text = details,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"),
+            FontSize = 11,
+            MaxHeight = 260,
+            Background = Brush.Parse("#11111b"),
+            Foreground = Brush.Parse("#a6adc8"),
+            BorderBrush = Brush.Parse("#313244"),
+        };
+        ScrollViewer.SetHorizontalScrollBarVisibility(detailsBox, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
         var close = new Button
         {
             Content = Text("ErrorClose"),
@@ -81,8 +140,8 @@ internal static class CrashHandling
 
         var dialog = new Window
         {
-            Title = Text("ErrorTitle"),
-            Width = 460,
+            Title = title,
+            Width = 560,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
             Topmost = true,
@@ -94,21 +153,31 @@ internal static class CrashHandling
                 Spacing = 8,
                 Children =
                 {
-                    new TextBlock { Text = Text("ErrorTitle"), Foreground = Brush.Parse("#cdd6f4"), FontSize = 14, FontWeight = FontWeight.SemiBold },
-                    new TextBlock { Text = Text("ErrorMessage"), Foreground = Brush.Parse("#bac2de"), FontSize = 12, TextWrapping = TextWrapping.Wrap },
-                    new SelectableTextBlock { Text = exception.Message, Foreground = Brush.Parse("#7f849c"), FontSize = 11, TextWrapping = TextWrapping.Wrap },
+                    new TextBlock { Text = title, Foreground = Brush.Parse("#cdd6f4"), FontSize = 14, FontWeight = FontWeight.SemiBold },
+                    new TextBlock { Text = message, Foreground = Brush.Parse("#bac2de"), FontSize = 12, TextWrapping = TextWrapping.Wrap },
+                    new SelectableTextBlock { Text = summary, Foreground = Brush.Parse("#7f849c"), FontSize = 11, TextWrapping = TextWrapping.Wrap },
+                    new Expander
+                    {
+                        Header = Text("ErrorDetails"),
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        Content = detailsBox
+                    },
                     new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
                         Spacing = 8,
                         Margin = new Thickness(0, 10, 0, 0),
-                        Children = { openLogs, close }
+                        Children = { copy, openLogs, close }
                     }
                 }
             }
         };
         openLogs.Click += (_, _) => PlatformShellFactory.CreatePlatformShell().OpenPath(ErrorLog.Directory);
+        copy.Click += async (_, _) =>
+        {
+            if (dialog.Clipboard is { } clipboard) await clipboard.SetTextAsync(details);
+        };
         close.Click += (_, _) => dialog.Close();
         dialog.Closed += (_, _) => _openDialog = null;
 
@@ -129,6 +198,10 @@ internal static class CrashHandling
             "ErrorMessage" => "Grepdesk ran into an unexpected error and kept running. If something looks off, restart the app.",
             "ErrorOpenLogs" => "Open log folder",
             "ErrorClose" => "Close",
+            "ErrorCopyDetails" => "Copy details",
+            "ErrorDetails" => "Details",
+            "CrashTitle" => "Grepdesk closed unexpectedly",
+            "CrashMessage" => "The last time Grepdesk ran, it stopped without warning. What it was doing and Windows' record of the crash were saved to the log folder.",
             _ => key
         };
     }

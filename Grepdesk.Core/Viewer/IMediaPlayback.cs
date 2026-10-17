@@ -23,8 +23,8 @@ public interface IMediaPlayer : IDisposable
     /// <summary>The file is loaded: duration and video size are known.</summary>
     event Action? Ready;
 
-    /// <summary>The file can't be played (missing codec, corrupt file); the HRESULT.</summary>
-    event Action<int>? Failed;
+    /// <summary>The file can't be played (missing codec, corrupt file), or playback broke down.</summary>
+    event Action<MediaError>? Failed;
 
     event Action? StateChanged;
 
@@ -67,6 +67,38 @@ public interface IMediaPlayer : IDisposable
 
     /// <summary>Redraws the current frame after the surface was resized or uncovered.</summary>
     void UpdateVideo();
+}
+
+public enum MediaProblem
+{
+    /// <summary>Windows has no decoder for the file's video or audio (HEVC and AV1 come from the Store).</summary>
+    CodecMissing,
+    /// <summary>Not a container Windows reads, or a damaged file.</summary>
+    UnsupportedFile,
+    /// <summary>Media Foundation isn't installed (Windows N and KN editions, without the Media Feature Pack).</summary>
+    NoMediaFoundation,
+    /// <summary>The native window video is drawn into couldn't be created.</summary>
+    NoVideoWindow,
+    Other
+}
+
+/// <summary>Why a file couldn't be played, with what the log needs to tell the cases apart.</summary>
+/// <param name="HResult">The OS's error code, or the exception's.</param>
+/// <param name="Stage">Where it failed ("open", "playback", "video window"...).</param>
+public sealed record MediaError(int HResult, string Stage, Exception? Exception = null)
+{
+    public const string VideoWindowStage = "video window";
+
+    public MediaProblem Problem => Stage == VideoWindowStage ? MediaProblem.NoVideoWindow : unchecked((uint)HResult) switch
+    {
+        0xC00D5212 => MediaProblem.CodecMissing,                   // MF_E_TOPO_CODEC_NOT_FOUND
+        0xC00D36C4 or 0xC00D36B4 => MediaProblem.UnsupportedFile,  // MF_E_UNSUPPORTED_BYTESTREAM_TYPE, MF_E_INVALIDMEDIATYPE
+        0x80131524 or 0x80131523 => MediaProblem.NoMediaFoundation, // DllNotFound, EntryPointNotFound
+        _ => MediaProblem.Other,
+    };
+
+    public override string ToString() =>
+        $"{Stage}: 0x{HResult:X8} ({Problem}){(Exception is null ? "" : Environment.NewLine + Exception)}";
 }
 
 /// <param name="Name">The track's title in the file, if it has one.</param>

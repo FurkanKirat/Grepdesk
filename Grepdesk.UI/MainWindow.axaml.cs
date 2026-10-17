@@ -68,6 +68,7 @@ public partial class MainWindow : Window
     public MainWindow(string? startFolder)
     {
         InitializeComponent();
+        SessionTrail.Track(this, "main window");
         _editorDetector = new EditorDetector(_shell);
 
         InitNavigation();

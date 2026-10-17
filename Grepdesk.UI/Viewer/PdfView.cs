@@ -27,6 +27,14 @@ internal sealed class PdfView : DockPanel, IViewerBody
     /// <summary>Pages further than this from the visible ones give their bitmap back.</summary>
     private const int KeepAround = 4;
 
+    /// <summary>
+    /// All kept bitmaps together stay under this many pixels (~256 MB). A
+    /// maximized window on a large, high-DPI screen draws each page several
+    /// times bigger, and keeping 4 neighbours each way at that size runs a
+    /// small machine out of memory; then fewer neighbours are kept.
+    /// </summary>
+    private const double KeptPixelsBudget = 64_000_000;
+
     /// <summary>Caps one page's bitmap (~64 MB) at high zoom on a big page.</summary>
     private const double MaxPagePixels = 16_000_000;
 
@@ -42,6 +50,7 @@ internal sealed class PdfView : DockPanel, IViewerBody
 
     private bool _fit = true;
     private double _zoom = 1;
+    private double _notedZoom;
     private CancellationTokenSource _renderCts = new();
     private bool _disposed;
 
@@ -130,6 +139,11 @@ internal sealed class PdfView : DockPanel, IViewerBody
             page.Height = sizes[i].Height * PointsToDips * _zoom;
         }
         _zoomText.Text = $"{_zoom * 100:0}%";
+        if (Math.Abs(_zoom - _notedZoom) > _notedZoom * 0.01)
+        {
+            _notedZoom = _zoom;
+            SessionTrail.Note($"pdf: zoom {_zoom * 100:0}%{(_fit ? " (fit)" : "")}, view {_scroll.Bounds.Width:0}×{_scroll.Bounds.Height:0}");
+        }
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -160,23 +174,36 @@ internal sealed class PdfView : DockPanel, IViewerBody
         if (_disposed || _images.Length == 0) return;
         var (first, last) = VisiblePages();
         _pageText.Text = Loc.Get("ViewerPage", first + 1, _images.Length);
+        var renderScaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+        var around = PagesAround(first, last, renderScaling);
 
         // Drop what scrolled far away, then draw what's on screen first, its neighbours next.
         for (var i = 0; i < _images.Length; i++)
         {
-            if (i >= first - KeepAround && i <= last + KeepAround) continue;
+            if (i >= first - around && i <= last + around) continue;
             Release(i);
         }
 
+        var ahead = Math.Min(2, around);
         var wanted = Enumerable.Range(first, last - first + 1)
-            .Concat(Enumerable.Range(last + 1, 2)).Concat(Enumerable.Range(first - 2, 2).Reverse())
+            .Concat(Enumerable.Range(last + 1, ahead)).Concat(Enumerable.Range(first - ahead, ahead).Reverse())
             .Where(i => i >= 0 && i < _images.Length && Math.Abs(_renderedZoom[i] - _zoom) > 1e-9)
             .ToList();
         if (wanted.Count == 0) return;
 
         _renderCts.Cancel();
         _renderCts = new CancellationTokenSource();
-        _ = RenderAsync(wanted, _zoom, TopLevel.GetTopLevel(this)?.RenderScaling ?? 1, _renderCts.Token);
+        _ = RenderAsync(wanted, _zoom, renderScaling, _renderCts.Token);
+    }
+
+    /// <summary>How many pages each side of the visible ones keep their bitmap within <see cref="KeptPixelsBudget"/>.</summary>
+    private int PagesAround(int first, int last, double renderScaling)
+    {
+        var (width, height) = _renderer.PageSizes[first];
+        var scale = _zoom * PointsToDips * renderScaling;
+        var pagePixels = Math.Clamp(width * height * scale * scale, 1, MaxPagePixels);
+        var spare = KeptPixelsBudget / pagePixels - (last - first + 1);
+        return (int)Math.Clamp(spare / 2, 0, KeepAround);
     }
 
     private async Task RenderAsync(List<int> pages, double zoom, double renderScaling, CancellationToken ct)
@@ -188,6 +215,7 @@ internal sealed class PdfView : DockPanel, IViewerBody
             var scale = zoom * PointsToDips * renderScaling;
             scale = Math.Min(scale, Math.Sqrt(MaxPagePixels / Math.Max(1, width * height)));
 
+            SessionTrail.Note($"pdf: page {index + 1} at {scale:0.##} px/pt, {width * scale:0}×{height * scale:0} px");
             Bitmap? bitmap;
             try
             {
@@ -197,9 +225,13 @@ internal sealed class PdfView : DockPanel, IViewerBody
             {
                 return;
             }
-            catch (Exception e) when (e is not OutOfMemoryException)
+            catch (Exception e)
             {
-                continue; // a page PDFium can't draw stays blank
+                // A page PDFium can't draw (or that doesn't fit in memory) stays blank.
+                ErrorLog.Write(e, $"pdf render, page {index + 1} at {scale:0.##} px/pt");
+                SessionTrail.Note($"pdf: page {index + 1} failed: {e.GetType().Name}");
+                if (e is OutOfMemoryException) return;
+                continue;
             }
 
             if (ct.IsCancellationRequested || _disposed)
