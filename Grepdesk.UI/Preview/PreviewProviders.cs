@@ -281,7 +281,7 @@ internal sealed class ShellPreviewProvider : IPreviewProvider
         return rows;
     }
 
-    private static Bitmap ToBitmap(ShellThumbnail thumbnail)
+    internal static Bitmap ToBitmap(ShellThumbnail thumbnail)
     {
         var handle = GCHandle.Alloc(thumbnail.Pixels, GCHandleType.Pinned);
         try

@@ -427,7 +427,7 @@ public partial class MainWindow : Window
         UpdatePreviewVisibility();
     }
 
-    /// <summary>Opens (or reuses) the viewer window for a text, code or Markdown file.</summary>
+    /// <summary>Opens (or reuses) the viewer window for a file of any type.</summary>
     private void ViewFile(ResultItem item, string? highlight)
     {
         if (_viewer is null)
@@ -449,11 +449,14 @@ public partial class MainWindow : Window
         _viewer.Load(item.FullPath, highlight);
     }
 
-    /// <summary>While the viewer is open, picking another result in the list shows that one instead.</summary>
+    /// <summary>
+    /// While the viewer is open, picking another result in the list shows that
+    /// one instead, unless the viewer holds unsaved edits.
+    /// </summary>
     private void FollowInViewer(ResultItem? item, string? highlight)
     {
         if (_viewer is null || item is null || item.IsDirectory || item.FullPath == _viewer.FilePath) return;
-        if (ViewerFileLoader.CanView(item.FullPath)) _viewer.Load(item.FullPath, highlight);
+        if (!_viewer.HasUnsavedChanges) _viewer.Load(item.FullPath, highlight);
     }
 
     private void UpdatePreviewVisibility()
@@ -821,7 +824,7 @@ public partial class MainWindow : Window
             };
 
             menuItems.Add(openItem);
-            if (!item.IsDirectory && ViewerFileLoader.CanView(item.FullPath))
+            if (!item.IsDirectory)
             {
                 var viewItem = new MenuItem { Header = Loc.Get("ContextMenuView"), InputGesture = new KeyGesture(Key.Space) };
                 viewItem.Click += (_, _) => ViewFile(item, list == ContentResultsList ? _contentQuery : null);
@@ -1156,8 +1159,7 @@ public partial class MainWindow : Window
                 ReportShellResult(ctrl ? _shell.ShowInFileManager(selected.FullPath) : _shell.OpenPath(selected.FullPath),
                     Loc.Get(ctrl ? "ShowInFolderFailed" : "FileOpenFailed"));
                 break;
-            case Key.Space when e.KeyModifiers == KeyModifiers.None && ResultsHaveFocus && selected is { IsDirectory: false }
-                                && ViewerFileLoader.CanView(selected.FullPath):
+            case Key.Space when e.KeyModifiers == KeyModifiers.None && ResultsHaveFocus && selected is { IsDirectory: false }:
                 ViewFile(selected, ContentSearchPage.IsVisible ? _contentQuery : null);
                 break;
             case Key.C when ctrl && e.KeyModifiers.HasFlag(KeyModifiers.Shift) && ResultsHaveFocus && selected is not null:

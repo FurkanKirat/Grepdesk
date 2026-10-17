@@ -2,6 +2,7 @@
 using Grepdesk.Core;
 using Grepdesk.Core.Preview;
 using Grepdesk.Core.Transfer;
+using Grepdesk.Core.Viewer;
 using Grepdesk.Linux;
 using Grepdesk.MacOS;
 using Grepdesk.Windows;
@@ -59,4 +60,8 @@ public static class PlatformShellFactory
     /// <summary>The file manager's thumbnails and media metadata; null where not supported.</summary>
     public static IShellPreview? CreateShellPreview() =>
         OperatingSystem.IsWindows() ? new WindowsShellPreview() : null;
+
+    /// <summary>Video and audio playback in the viewer; null where not supported.</summary>
+    public static IMediaPlayback? CreateMediaPlayback() =>
+        OperatingSystem.IsWindows() ? new MediaFoundationPlayback() : null;
 }

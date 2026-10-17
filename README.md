@@ -69,7 +69,7 @@ Free, no ads, no telemetry; the only network request is the optional update chec
 - Sort by name, size or date across **all** matches, not just the first page
 - Filter by type (folders, documents, images, code, archives, video, audio), minimum size and last modified
 - Preview panel: images, rendered Markdown, the start of text and code files, the text of Office documents and PDFs; on Windows also video frames, album art and the first slide of presentations, with duration, resolution and similar details
-- Viewer window for text, code and Markdown files (Space): the whole file, read-only, with line numbers and Ctrl+F
+- Viewer window for any file (Space), see [Viewer and editor](#-viewer-and-editor)
 
 ### 📄 Content Search
 - Search inside file contents — not just names
@@ -150,9 +150,29 @@ and follow the exe if it moves. On Windows 11 they appear under
 **Show more options**. Selecting many files launches one process per file;
 Grepdesk merges them into a single job.
 
+**Open with Grepdesk** works on files too: they open in the viewer and editor.
+Grepdesk is also added to Explorer's **Open with** list for the file types it
+shows, so you can make it the default app for, say, `.txt` or `.md` files.
+
+### 👁️ Viewer and editor
+- **Text and code**: an editor with syntax highlighting, line numbers, Ctrl+F
+  (and Ctrl+H to replace). Turn on **Edit** (`Ctrl+E`) and save with `Ctrl+S`;
+  the file keeps its encoding (UTF-8, UTF-16, BOM or the old code page) and its
+  line endings. Closing with unsaved changes asks first. Files opened from
+  Explorer open ready to edit.
+- **Markdown**: rendered, or its source in the editor
+- **Images**: fit to the window or zoomed (`Ctrl`+wheel, `+`/`-`, `0`, `1`);
+  HEIC, TIFF and camera raw files through Windows' codecs
+- **PDF**: every page, drawn as you scroll, with zoom
+- **Video and audio**: played with Windows' own codecs, with a seek bar and
+  volume (`K` play/pause, arrows seek, `M` mute)
+- **Word and Excel**: their text
+- Anything else: shown as text if it is text, otherwise its thumbnail, type,
+  size and date
+
 ### ⚡ Quick Actions (right-click any result)
 - **Open** (`Enter`) — launch with the default associated app
-- **View** (`Space`) — text, code and Markdown files in a read-only viewer window
+- **View** (`Space`) — any file in the viewer window; Space or Esc closes it
 - **Show in File Manager** (`Ctrl+Enter`) — reveal and select the file in Explorer
 - **Copy Path** (`Ctrl+C`) / **Copy file** (`Ctrl+Shift+C`) — the path as text, or the file itself to paste in Explorer
 - **Compress to zip**, and **Extract here / to folder** on `.zip` files

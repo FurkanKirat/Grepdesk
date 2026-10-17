@@ -12,10 +12,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Docnet.Core" Version="2.6.0" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- .docx / .xlsx are plain zip+XML and need no package; PdfPig reads .pdf. -->
+  <!-- .docx / .xlsx are plain zip+XML and need no package; PdfPig reads .pdf text,
+       Docnet (PDFium) draws .pdf pages for the viewer. -->
 
 </Project>

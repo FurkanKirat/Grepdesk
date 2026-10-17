@@ -19,6 +19,9 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.22" />
     <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.4.1" />
+    <!-- Syntax highlighting in the viewer's editor: VS Code's grammars and themes. -->
+    <PackageReference Include="AvaloniaEdit.TextMate" Version="11.4.1" />
+    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />

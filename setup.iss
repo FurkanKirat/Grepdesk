@@ -61,12 +61,17 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 ; girdiler kalır. Liste WindowsShellIntegration ile aynı olmalı (test kontrol eder).
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\Grepdesk"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\Grepdesk"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\*\shell\Grepdesk"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\GrepdeskExtractHere"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.zip\shell\GrepdeskExtractTo"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\*\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
+; "Birlikte aç" kaydı: dosya türü ve uygulama anahtarı. Uzantıların altındaki
+; OpenWithProgids değerleri kalır, ama silinmiş bir türü gösterdikleri için Windows yok sayar.
+Root: HKCU; Subkey: "Software\Classes\Grepdesk.File"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\Grepdesk.UI.exe"; Flags: dontcreatekey uninsdeletekey
 
 [Run]
 ; Kurulum bittiğinde çalıştırma kutucuğu

@@ -2,7 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Grepdesk.UI.Helpers;
 using Grepdesk.UI.Startup;
+using Grepdesk.UI.Viewer;
 
 namespace Grepdesk.UI;
 
@@ -34,6 +36,12 @@ public class App : Application
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 new JobDispatcher(desktop, Host).Start(StartupCommand);
             }
+            else if (StartupCommand.Paths.FirstOrDefault(File.Exists) is { } file)
+            {
+                // A file opened with Grepdesk (its menu entry, "Open with", or
+                // Grepdesk as the file type's default app): just the viewer.
+                desktop.MainWindow = OpenStandaloneViewer(file);
+            }
             else
             {
                 // Explorer's "Open with Grepdesk" passes the folder as the argument.
@@ -43,5 +51,15 @@ public class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static FileViewerWindow OpenStandaloneViewer(string path)
+    {
+        var shell = PlatformShellFactory.CreatePlatformShell();
+        var viewer = new FileViewerWindow(standalone: true);
+        viewer.OpenRequested += target => shell.OpenPath(target);
+        viewer.ShowInFolderRequested += target => shell.ShowInFileManager(target);
+        viewer.Opened += (_, _) => viewer.Load(path, null);
+        return viewer;
     }
 }

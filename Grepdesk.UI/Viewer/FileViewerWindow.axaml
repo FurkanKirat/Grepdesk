@@ -3,12 +3,26 @@
         xmlns:ae="using:AvaloniaEdit"
         x:Class="Grepdesk.UI.Viewer.FileViewerWindow"
         Title="Grepdesk"
-        Width="920"
-        Height="720"
-        MinWidth="420"
-        MinHeight="280"
+        Width="1000"
+        Height="740"
+        MinWidth="480"
+        MinHeight="300"
         WindowStartupLocation="CenterOwner"
+        Icon="avares://Grepdesk.UI/Assets/icon.ico"
         Background="#11111b">
+
+    <!-- The media view's seek and volume bars in the app's blue, not the system accent. -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="SliderThumbBackground" Color="#89b4fa"/>
+        <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#b4befe"/>
+        <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#b4befe"/>
+        <SolidColorBrush x:Key="SliderTrackValueFill" Color="#89b4fa"/>
+        <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#b4befe"/>
+        <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#b4befe"/>
+        <SolidColorBrush x:Key="SliderTrackFill" Color="#45475a"/>
+        <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#585b70"/>
+        <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#585b70"/>
+    </Window.Resources>
 
     <Window.Styles>
         <Style Selector="Button, ToggleButton">
@@ -21,6 +35,14 @@
         <Style Selector="ToggleButton:checked /template/ ContentPresenter">
             <Setter Property="Background" Value="#45475a"/>
             <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#89b4fa"/>
+            <Setter Property="Foreground" Value="#11111b"/>
+        </Style>
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#b4befe"/>
+            <Setter Property="Foreground" Value="#11111b"/>
         </Style>
     </Window.Styles>
 
@@ -44,8 +66,15 @@
                                TextTrimming="PathSegmentEllipsis"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText"
+                               Foreground="#a6e3a1"
+                               FontSize="12"
+                               VerticalAlignment="Center"
+                               IsVisible="False"/>
                     <ToggleButton x:Name="RenderedToggle" IsVisible="False"/>
-                    <ToggleButton x:Name="WrapToggle"/>
+                    <ToggleButton x:Name="WrapToggle" IsVisible="False"/>
+                    <ToggleButton x:Name="EditToggle" IsVisible="False"/>
+                    <Button x:Name="SaveButton" Classes="primary" IsVisible="False"/>
                     <Button x:Name="OpenButton"/>
                     <Button x:Name="ShowInFolderButton"/>
                 </StackPanel>
@@ -71,14 +100,23 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <TextBlock x:Name="MessageText"
-                       Foreground="#6c7086"
-                       FontSize="13"
-                       TextWrapping="Wrap"
-                       TextAlignment="Center"
-                       MaxWidth="460"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center"/>
+            <!-- Image, PDF and media views -->
+            <ContentControl x:Name="BodyHost" IsVisible="False"/>
+
+            <!-- Loading, problems, and the summary card for files nothing here can show -->
+            <StackPanel x:Name="MessagePanel"
+                        Spacing="14"
+                        MaxWidth="480"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Image x:Name="MessageImage" MaxWidth="256" MaxHeight="256" IsVisible="False"/>
+                <TextBlock x:Name="MessageText"
+                           Foreground="#6c7086"
+                           FontSize="13"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"/>
+                <ItemsControl x:Name="MessageDetails" HorizontalAlignment="Center"/>
+            </StackPanel>
         </Panel>
     </DockPanel>
 </Window>
