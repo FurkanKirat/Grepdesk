@@ -51,8 +51,12 @@ internal sealed class PdfView : DockPanel, IViewerBody
     private bool _fit = true;
     private double _zoom = 1;
     private double _notedZoom;
-    private CancellationTokenSource _renderCts = new();
     private bool _disposed;
+
+    /// <summary>Pages to draw, most wanted first, at this zoom and screen scaling; updated on every scroll.</summary>
+    private List<int> _wanted = [];
+    private double _wantedZoom, _wantedScaling = 1;
+    private bool _rendering;
 
     public PdfView(PdfRenderer renderer)
     {
@@ -185,15 +189,13 @@ internal sealed class PdfView : DockPanel, IViewerBody
         }
 
         var ahead = Math.Min(2, around);
-        var wanted = Enumerable.Range(first, last - first + 1)
+        _wanted = Enumerable.Range(first, last - first + 1)
             .Concat(Enumerable.Range(last + 1, ahead)).Concat(Enumerable.Range(first - ahead, ahead).Reverse())
-            .Where(i => i >= 0 && i < _images.Length && Math.Abs(_renderedZoom[i] - _zoom) > 1e-9)
+            .Where(i => i >= 0 && i < _images.Length)
             .ToList();
-        if (wanted.Count == 0) return;
-
-        _renderCts.Cancel();
-        _renderCts = new CancellationTokenSource();
-        _ = RenderAsync(wanted, _zoom, renderScaling, _renderCts.Token);
+        _wantedZoom = _zoom;
+        _wantedScaling = renderScaling;
+        if (!_rendering) _ = RenderAsync();
     }
 
     /// <summary>How many pages each side of the visible ones keep their bitmap within <see cref="KeptPixelsBudget"/>.</summary>
@@ -206,43 +208,62 @@ internal sealed class PdfView : DockPanel, IViewerBody
         return (int)Math.Clamp(spare / 2, 0, KeepAround);
     }
 
-    private async Task RenderAsync(List<int> pages, double zoom, double renderScaling, CancellationToken ct)
+    /// <summary>
+    /// Draws the wanted pages one at a time, re-reading what is wanted after
+    /// each: scrolling only changes the list, so a page is drawn once however
+    /// many scroll events ask for it, and pages scrolled past are skipped.
+    /// </summary>
+    private async Task RenderAsync()
     {
-        foreach (var index in pages)
+        _rendering = true;
+        try
         {
-            if (ct.IsCancellationRequested) return;
-            var (width, height) = _renderer.PageSizes[index];
-            var scale = zoom * PointsToDips * renderScaling;
-            scale = Math.Min(scale, Math.Sqrt(MaxPagePixels / Math.Max(1, width * height)));
+            while (!_disposed && NextWanted() is { } index)
+            {
+                var zoom = _wantedZoom;
+                var (width, height) = _renderer.PageSizes[index];
+                var scale = zoom * PointsToDips * _wantedScaling;
+                scale = Math.Min(scale, Math.Sqrt(MaxPagePixels / Math.Max(1, width * height)));
 
-            SessionTrail.Note($"pdf: page {index + 1} at {scale:0.##} px/pt, {width * scale:0}×{height * scale:0} px");
-            Bitmap? bitmap;
-            try
-            {
-                bitmap = await Task.Run(() => ToBitmap(_renderer.Render(index, scale)), ct);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception e)
-            {
-                // A page PDFium can't draw (or that doesn't fit in memory) stays blank.
-                ErrorLog.Write(e, $"pdf render, page {index + 1} at {scale:0.##} px/pt");
-                SessionTrail.Note($"pdf: page {index + 1} failed: {e.GetType().Name}");
-                if (e is OutOfMemoryException) return;
-                continue;
-            }
+                SessionTrail.Note($"pdf: page {index + 1} at {scale:0.##} px/pt, {width * scale:0}×{height * scale:0} px");
+                Bitmap? bitmap;
+                try
+                {
+                    bitmap = await Task.Run(() => ToBitmap(_renderer.Render(index, scale)));
+                }
+                catch (Exception e)
+                {
+                    // A page PDFium can't draw (or that doesn't fit in memory) stays blank
+                    // until the zoom changes, instead of being retried on every scroll.
+                    ErrorLog.Write(e, $"pdf render, page {index + 1} at {scale:0.##} px/pt");
+                    SessionTrail.Note($"pdf: page {index + 1} failed: {e.GetType().Name}");
+                    _renderedZoom[index] = zoom;
+                    if (e is OutOfMemoryException) return;
+                    continue;
+                }
 
-            if (ct.IsCancellationRequested || _disposed)
-            {
-                bitmap?.Dispose();
-                return;
+                // Zoomed or scrolled away meanwhile: drawn for nothing.
+                if (_disposed || zoom != _wantedZoom || !_wanted.Contains(index))
+                {
+                    bitmap?.Dispose();
+                    continue;
+                }
+                Release(index);
+                _images[index].Source = bitmap;
+                _renderedZoom[index] = zoom;
             }
-            Release(index);
-            _images[index].Source = bitmap;
-            _renderedZoom[index] = zoom;
         }
+        finally
+        {
+            _rendering = false;
+        }
+    }
+
+    private int? NextWanted()
+    {
+        foreach (var i in _wanted)
+            if (Math.Abs(_renderedZoom[i] - _wantedZoom) > 1e-9) return i;
+        return null;
     }
 
     private static Bitmap? ToBitmap(PdfPageImage? page)
@@ -291,7 +312,6 @@ internal sealed class PdfView : DockPanel, IViewerBody
     public void Dispose()
     {
         _disposed = true;
-        _renderCts.Cancel();
         for (var i = 0; i < _images.Length; i++) Release(i);
         _renderer.Dispose();
     }

@@ -251,6 +251,8 @@ internal sealed class ShellPreviewProvider : IPreviewProvider
 
     public Task<PreviewContent> LoadAsync(SearchResult item, CancellationToken ct)
     {
+        // Explorer's handlers are native code from whoever registered the type.
+        SessionTrail.Note($"preview: shell thumbnail {Path.GetExtension(item.FullPath)}");
         var info = Shell!.GetMediaInfo(item.FullPath);
         ct.ThrowIfCancellationRequested();
         var thumbnail = Shell.GetThumbnail(item.FullPath, ThumbnailSize);

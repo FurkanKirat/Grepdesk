@@ -46,6 +46,24 @@ public class SessionTrailTests
         Assert.Empty(Directory.GetFiles(dir.Path));
     }
 
+    /// <summary>A burst of one step must not push what came before it out of the trail.</summary>
+    [Fact]
+    public void A_step_repeated_back_to_back_is_kept_as_one_line_with_a_count()
+    {
+        var lines = new SessionTrail.TrailLines(keep: 3);
+        lines.Add("10:00:00.000", "viewer: open Pdf .pdf, 2 MB");
+        for (var i = 0; i < 50; i++) lines.Add($"10:00:01.{i:000}", "pdf: page 24 at 1.26 px/pt");
+        lines.Add("10:00:02.000", "pdf: page 25 at 1.26 px/pt");
+
+        Assert.Equal(
+            ["10:00:00.000 viewer: open Pdf .pdf, 2 MB", "10:00:01.049 pdf: page 24 at 1.26 px/pt (×50)", "10:00:02.000 pdf: page 25 at 1.26 px/pt"],
+            lines);
+
+        lines.Add("10:00:03.000", "pdf: page 24 at 1.26 px/pt");
+        Assert.Equal("10:00:01.049 pdf: page 24 at 1.26 px/pt (×50)", lines.First());
+        Assert.Equal("10:00:03.000 pdf: page 24 at 1.26 px/pt", lines.Last());
+    }
+
     [Fact]
     public void Windows_crash_record_names_the_faulting_module_for_that_process()
     {

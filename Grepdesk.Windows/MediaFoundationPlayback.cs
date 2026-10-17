@@ -126,6 +126,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         public event Action? StateChanged;
         public event Action? Ended;
         public event Action? SurfaceClicked;
+        public event Action<string>? Step;
 
         /// <summary>One per audio track when there are several, each playing into its own renderer.</summary>
         private readonly List<Track> _tracks = new();
@@ -333,12 +334,15 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                     var item = (IMFPMediaItem)Marshal.GetObjectForIUnknown(itemPointer);
                     try
                     {
+                        Step?.Invoke(item.GetNumberOfStreams(out var streams) >= 0 ? $"file read, {streams} streams" : "file read");
                         SetUpAudioTracks(item);
                     }
                     finally
                     {
                         Marshal.ReleaseComObject(item);
                     }
+                    // Picks the decoders and makes the video renderer (Direct3D) on the surface.
+                    Step?.Invoke(_tracks.Count > 0 ? $"building the pipeline, {_tracks.Count} audio tracks" : "building the pipeline");
                     hr = _player.SetMediaItem(itemPointer);
                     if (hr < 0) Fail(new MediaError(hr, "set media item"));
                     break;

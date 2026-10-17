@@ -515,8 +515,13 @@ public partial class FileViewerWindow : Window
         ShowBody(view);
     }
 
-    private static Bitmap? ShellBitmap(string path, int size) =>
-        ShellPreview?.GetThumbnail(path, size) is { } thumbnail ? ShellPreviewProvider.ToBitmap(thumbnail) : null;
+    private static Bitmap? ShellBitmap(string path, int size)
+    {
+        if (ShellPreview is null) return null;
+        // Explorer's handlers are native code from whoever registered the type.
+        SessionTrail.Note($"viewer: shell thumbnail {Path.GetExtension(path)}");
+        return ShellPreview.GetThumbnail(path, size) is { } thumbnail ? ShellPreviewProvider.ToBitmap(thumbnail) : null;
+    }
 
     private void ShowBody(IViewerBody body)
     {

@@ -18,7 +18,7 @@ internal static class SessionTrail
     private const int KeepLines = 80;
     private const string Pattern = "session-*.trail";
     private static readonly Lock Gate = new();
-    private static readonly Queue<string> Lines = new();
+    private static readonly TrailLines Lines = new(KeepLines);
     private static string? _path;
     private static string _header = "";
 
@@ -67,8 +67,7 @@ internal static class SessionTrail
         lock (Gate)
         {
             if (_path is null) return;
-            Lines.Enqueue($"{DateTime.Now:HH:mm:ss.fff} {text.ToString(CultureInfo.InvariantCulture)}");
-            while (Lines.Count > KeepLines) Lines.Dequeue();
+            Lines.Add($"{DateTime.Now:HH:mm:ss.fff}", text.ToString(CultureInfo.InvariantCulture));
             try { File.WriteAllLines(_path, Lines.Prepend(_header)); }
             catch { /* a full disk must not break what the user is doing */ }
         }
@@ -84,6 +83,41 @@ internal static class SessionTrail
             if (e.Property == Avalonia.Controls.Window.WindowStateProperty)
                 Note($"{name}: {e.NewValue}");
         };
+    }
+
+    /// <summary>
+    /// The last lines, a step repeated back to back kept as one line with a
+    /// count: a burst of the same step (a page asked for on every scroll event)
+    /// must not push what came before it out of the trail.
+    /// </summary>
+    internal sealed class TrailLines(int keep) : IEnumerable<string>
+    {
+        private readonly List<string> _lines = new();
+        private string? _lastText;
+        private int _repeats;
+
+        public void Add(string time, string text)
+        {
+            if (text == _lastText && _lines.Count > 0)
+            {
+                _repeats++;
+                _lines[^1] = $"{time} {text} (×{_repeats})";
+                return;
+            }
+            _lastText = text;
+            _repeats = 1;
+            _lines.Add($"{time} {text}");
+            if (_lines.Count > keep) _lines.RemoveAt(0);
+        }
+
+        public void Clear()
+        {
+            _lines.Clear();
+            _lastText = null;
+        }
+
+        public IEnumerator<string> GetEnumerator() => _lines.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>The process closes normally, or its crash was already shown: nothing to report next time.</summary>

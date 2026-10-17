@@ -33,6 +33,12 @@ public interface IMediaPlayer : IDisposable
     /// <summary>The user clicked the video.</summary>
     event Action? SurfaceClicked;
 
+    /// <summary>
+    /// What loading is doing now ("file read, 3 streams"), for the crash trail:
+    /// a crash inside the OS's player ends the process without a word.
+    /// </summary>
+    event Action<string>? Step;
+
     bool IsPlaying { get; }
 
     /// <summary>Zero until <see cref="Ready"/>.</summary>

@@ -123,6 +123,7 @@ internal sealed class MediaView : DockPanel, IViewerBody
             RaiseFailed(new MediaError(e.HResult, "open", e));
             return;
         }
+        _player.Step += step => SessionTrail.Note($"media: {step}");
         _player.Ready += OnReady;
         _player.Failed += RaiseFailed;
         _player.StateChanged += () => _playButton.Content = _player?.IsPlaying == true ? "❚❚" : "▶";
