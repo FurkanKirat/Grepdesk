@@ -505,6 +505,26 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- File types "Open with" registers (groups filled in code from ViewerFormats) -->
+                    <Border x:Name="FileTypesCard" Classes="card" Padding="16,14">
+                        <StackPanel Spacing="12">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Top" Margin="16,0,0,0">
+                                    <Button x:Name="FileTypesAllButton"/>
+                                    <Button x:Name="FileTypesNoneButton"/>
+                                    <Button x:Name="FileTypesDefaultsButton"/>
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <TextBlock x:Name="FileTypesHeader" Classes="sectionTitle"/>
+                                    <TextBlock x:Name="FileTypesDescription" Classes="hint"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <TextBlock x:Name="FileTypesNeedsOpenWithText" Classes="hint" Foreground="#f9e2af"/>
+                            <ui:FileTypePicker x:Name="FileTypesPicker"/>
+                        </StackPanel>
+                    </Border>
+
                     <!-- About -->
                     <Border Classes="card" Padding="16,14">
                         <StackPanel Spacing="12">

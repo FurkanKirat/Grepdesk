@@ -26,6 +26,9 @@ internal sealed class AppSettings
 
     public bool ShowPreview { get; set; } = true;
 
+    /// <summary>Extensions "Open with Grepdesk" registers for, or null for the defaults.</summary>
+    public List<string>? OpenWithFileTypes { get; set; }
+
     /// <summary>Off until the user turns it on: the check contacts GitHub.</summary>
     public bool CheckForUpdates { get; set; }
 

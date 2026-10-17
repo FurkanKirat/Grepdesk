@@ -43,7 +43,33 @@ public class ViewerFileTests
         Assert.Contains(".pdf", extensions);
         Assert.Contains(".mp4", extensions);
         Assert.DoesNotContain(".gitignore", extensions);
+        Assert.DoesNotContain(".bat", extensions);
+        Assert.DoesNotContain(".cmd", extensions);
+        Assert.DoesNotContain(".ps1", extensions);
         Assert.Equal(extensions.Count, extensions.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void File_type_groups_hold_each_associable_type_once()
+    {
+        var all = ViewerFormats.FileTypeCategories.SelectMany(c => c.Extensions).ToList();
+
+        Assert.Equal(all.Count, all.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.DoesNotContain(all, ViewerFormats.LaunchedExtensions.Contains);
+        Assert.Contains(".heic", all);
+        Assert.Contains(".docx", all);
+        Assert.Contains(".cs", ViewerFormats.FileTypeCategories.Single(c => c.Id == "Code").Extensions);
+        Assert.Contains(".txt", ViewerFormats.FileTypeCategories.Single(c => c.Id == "Text").Extensions);
+    }
+
+    [Fact]
+    public void Default_associations_leave_out_types_shown_only_in_part()
+    {
+        var defaults = ViewerFormats.OpenWithExtensions.ToList();
+
+        Assert.DoesNotContain(".heic", defaults);
+        Assert.DoesNotContain(".docx", defaults);
+        Assert.Subset(ViewerFormats.AssociableExtensions.ToHashSet(StringComparer.OrdinalIgnoreCase), defaults.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     [Fact]

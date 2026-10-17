@@ -1,4 +1,6 @@
 using Avalonia;
+using Grepdesk.Core;
+using Grepdesk.UI.Helpers;
 using Grepdesk.UI.Startup;
 
 namespace Grepdesk.UI;
@@ -9,6 +11,17 @@ class Program
     public static void Main(string[] args)
     {
         CrashHandling.InstallProcessHandlers();
+
+        // Run by the uninstaller: take every Explorer entry and file association
+        // off before the exe is deleted, so nothing is left pointing at it.
+        if (args is ["--unregister"])
+        {
+            if (PlatformShellFactory.CreateShellIntegration() is { } shell)
+                foreach (var feature in Enum.GetValues<ShellFeature>())
+                    shell.Disable(feature);
+            return;
+        }
+
         var command = AppCommand.Parse(args);
 
         SingleInstanceHost? host = null;

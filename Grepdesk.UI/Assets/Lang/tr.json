@@ -456,5 +456,24 @@
   "OrganizeSkippedIsTarget": "\"{1}\" klasörünün kendisi seçiliydi; yerinde kaldı.",
   "OrganizeRestOf": "Diğer {0}",
   "OrganizeTextFamily": "Aynı kelimelerle başlayan adlar: \"{0}\". Çoğu zaman aynı ders, proje ya da paket seti.",
-  "OrganizeTextRest": "Bunlar bir seriye ya da aileye uymadığı için türlerine göre gruplandı."
+  "OrganizeTextRest": "Bunlar bir seriye ya da aileye uymadığı için türlerine göre gruplandı.",
+
+  "FileTypesHeader": "İlişkili dosya türleri",
+  "FileTypesDescription": "Grepdesk'in Explorer'ın \"Birlikte aç\" listesinde hangi dosya türleri için görüneceğini seçin. Bir grubun tamamını işaretleyin ya da grubu açıp türleri tek tek seçin. İşareti kaldırılan türlerden Grepdesk kaldırılır; Grepdesk varsayılan uygulama yapıldıysa o seçim de silinir.",
+  "FileTypesNeedsOpenWith": "Dosya türlerini ilişkilendirmek için yukarıdan \"Grepdesk ile aç\" seçeneğini açın.",
+  "FileTypesSelectAll": "Tümünü seç",
+  "FileTypesSelectNone": "Tümünü kaldır",
+  "FileTypesDefaults": "Varsayılanlar",
+  "FileTypesShow": "Türleri göster",
+  "FileTypesHide": "Türleri gizle",
+  "FileTypesCount": "{0} / {1}",
+  "FileTypesText": "Metin, veri ve yapılandırma",
+  "FileTypesCode": "Kaynak kod",
+  "FileTypesMarkdown": "Markdown",
+  "FileTypesPdf": "PDF",
+  "FileTypesImages": "Resimler",
+  "FileTypesShellImages": "Diğer resimler (HEIC, TIFF, RAW, SVG - Windows önizlemesiyle gösterilir)",
+  "FileTypesVideo": "Video",
+  "FileTypesAudio": "Ses",
+  "FileTypesDocuments": "Office belgeleri (salt okunur metin olarak gösterilir)"
 }

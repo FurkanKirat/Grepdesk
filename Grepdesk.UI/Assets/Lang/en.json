@@ -456,5 +456,24 @@
   "OrganizeSkippedIsTarget": "The folder \"{1}\" itself was selected; it stayed where it is.",
   "OrganizeRestOf": "Other {0}",
   "OrganizeTextFamily": "Names that start with the same words: \"{0}\". Often the same course, project or package set.",
-  "OrganizeTextRest": "These fit no series or family, so they are grouped by type."
+  "OrganizeTextRest": "These fit no series or family, so they are grouped by type.",
+
+  "FileTypesHeader": "Associated file types",
+  "FileTypesDescription": "Pick the file types Grepdesk is offered for in Explorer's \"Open with\" list. Tick a whole group or open it to choose single types. Types you untick are removed, including a default-app choice that pointed at Grepdesk.",
+  "FileTypesNeedsOpenWith": "Turn on \"Open with Grepdesk\" above to associate file types.",
+  "FileTypesSelectAll": "Select all",
+  "FileTypesSelectNone": "Clear all",
+  "FileTypesDefaults": "Defaults",
+  "FileTypesShow": "Show types",
+  "FileTypesHide": "Hide types",
+  "FileTypesCount": "{0} of {1}",
+  "FileTypesText": "Text, data and config",
+  "FileTypesCode": "Source code",
+  "FileTypesMarkdown": "Markdown",
+  "FileTypesPdf": "PDF",
+  "FileTypesImages": "Images",
+  "FileTypesShellImages": "Other images (HEIC, TIFF, RAW, SVG - shown through Windows' preview)",
+  "FileTypesVideo": "Video",
+  "FileTypesAudio": "Audio",
+  "FileTypesDocuments": "Office documents (shown as read-only text)"
 }

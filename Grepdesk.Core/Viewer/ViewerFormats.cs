@@ -26,6 +26,10 @@ public enum ViewerKind
     Other
 }
 
+/// <summary>A group of related extensions the settings page lets the user associate together.</summary>
+/// <param name="Id">Stable name, also the suffix of its label key ("FileTypes" + Id).</param>
+public sealed record FileTypeCategory(string Id, IReadOnlyList<string> Extensions, bool OnByDefault);
+
 /// <summary>
 /// Which file types the viewer handles and how. Also the list of extensions
 /// Grepdesk registers under Explorer's "Open with".
@@ -79,13 +83,65 @@ public static class ViewerFormats
         return ViewerKind.Other;
     }
 
-    /// <summary>Extensions offered in Explorer's "Open with" list: everything the viewer shows itself.</summary>
+    /// <summary>
+    /// Files whose double-click runs, installs or launches something (scripts,
+    /// registry files, solutions, web pages). The viewer still shows them, but
+    /// they stay out of "Open with": a new handler makes Windows ask how to open
+    /// the type, and a batch file that opens in an editor no longer runs.
+    /// </summary>
+    public static readonly IReadOnlySet<string> LaunchedExtensions = Set(
+        ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".js", ".reg", ".inf",
+        ".sh", ".bash", ".zsh", ".fish", ".htm", ".html", ".sln", ".csproj");
+
+    /// <summary>Source code, split from the rest of <see cref="TextExtensions"/> so the two can be associated apart.</summary>
+    private static readonly IReadOnlySet<string> CodeExtensions = Set(
+        ".cs", ".py", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".cpp", ".c", ".h", ".hpp", ".cc", ".cxx", ".hh",
+        ".java", ".go", ".rs", ".rb", ".php", ".css", ".scss", ".less", ".vue", ".svelte", ".sql",
+        ".kt", ".kts", ".swift", ".dart", ".lua", ".pl", ".r", ".fs", ".fsx", ".vb", ".m", ".scala", ".groovy",
+        ".xaml", ".axaml", ".props", ".targets", ".gradle", ".cmake", ".graphql", ".proto", ".tf", ".hcl", ".iss");
+
+    /// <summary>
+    /// Every type Grepdesk can be associated with, grouped as the settings page
+    /// shows them. An extension sits in the first group that lists it. Groups
+    /// not on by default open in a lesser view (OS thumbnail, extracted text).
+    /// </summary>
+    public static readonly IReadOnlyList<FileTypeCategory> FileTypeCategories = BuildCategories();
+
+    /// <summary>Extensions offered in Explorer's "Open with" list until the user picks their own.</summary>
     public static IEnumerable<string> OpenWithExtensions =>
-        MarkdownExtensions.Concat(TextExtensions).Concat(ImageExtensions).Concat(VideoExtensions)
-            .Concat(AudioExtensions).Append(".pdf")
-            .Where(e => e.Length > 1 && !e.StartsWith(".git") && e is not ".editorconfig" and not ".dockerignore" and not ".env")
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase);
+        FileTypeCategories.Where(c => c.OnByDefault).SelectMany(c => c.Extensions).Order(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Every extension the user may associate with Grepdesk.</summary>
+    public static IEnumerable<string> AssociableExtensions =>
+        FileTypeCategories.SelectMany(c => c.Extensions).Order(StringComparer.OrdinalIgnoreCase);
+
+    private static List<FileTypeCategory> BuildCategories()
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var categories = new List<FileTypeCategory>();
+
+        void Add(string id, IEnumerable<string> extensions, bool onByDefault)
+        {
+            var list = extensions
+                .Where(e => e.Length > 1 && !e.StartsWith(".git") && e is not ".editorconfig" and not ".dockerignore" and not ".env")
+                .Where(e => !LaunchedExtensions.Contains(e))
+                .Where(taken.Add)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (list.Count > 0) categories.Add(new FileTypeCategory(id, list, onByDefault));
+        }
+
+        Add("Text", TextExtensions.Where(e => !CodeExtensions.Contains(e)), true);
+        Add("Code", TextExtensions.Where(CodeExtensions.Contains), true);
+        Add("Markdown", MarkdownExtensions, true);
+        Add("Pdf", [".pdf"], true);
+        Add("Images", ImageExtensions, true);
+        Add("ShellImages", ShellImageExtensions, false);
+        Add("Video", VideoExtensions, true);
+        Add("Audio", AudioExtensions, true);
+        Add("Documents", DocumentExtensions, false);
+        return categories;
+    }
 
     private static HashSet<string> Set(params string[] items) => new(items, StringComparer.OrdinalIgnoreCase);
 }

@@ -68,11 +68,17 @@ Root: HKCU; Subkey: "Software\Classes\*\shell\GrepdeskCompress"; Flags: dontcrea
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
-; "Birlikte aç" kaydı: dosya türü ve uygulama anahtarı. Uzantıların altındaki
-; OpenWithProgids değerleri kalır, ama silinmiş bir türü gösterdikleri için Windows yok sayar.
+; "Birlikte aç" kaydı: dosya türü ve uygulama anahtarı. Uzantıların altına dağılan
+; kayıtları (varsayılan uygulama seçimi dahil) [UninstallRun]'daki --unregister siler.
 Root: HKCU; Subkey: "Software\Classes\Grepdesk.File"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\Grepdesk.UI.exe"; Flags: dontcreatekey uninsdeletekey
 
 [Run]
 ; Kurulum bittiğinde çalıştırma kutucuğu
 Filename: "{app}\Grepdesk.UI.exe"; Description: "{cm:LaunchProgram,Grepdesk}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; Dosyalar silinmeden önce: Grepdesk'i varsayılan uygulama yapan seçimleri ve
+; uzantılara eklenen "Birlikte aç" kayıtlarını temizler. Yoksa o dosyalar silinmiş
+; exe'yi açmaya çalışır ve çift tıklayınca hiçbir şey olmaz.
+Filename: "{app}\Grepdesk.UI.exe"; Parameters: "--unregister"; Flags: runhidden waituntilterminated; RunOnceId: "Unregister"

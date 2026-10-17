@@ -11,6 +11,7 @@ using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
 using System.Collections.ObjectModel;
 using Grepdesk.Core.Editor;
+using Grepdesk.Core.Viewer;
 using Grepdesk.UI.Helpers;
 using Grepdesk.UI.Updates;
 using Grepdesk.UI.Viewer;
@@ -114,6 +115,7 @@ public partial class MainWindow : Window
         InitDiskPage();
         InitLanguageSetting();
         InitExplorerMenuSettings();
+        InitFileTypeSettings();
         InitAbout();
         InitUpdates();
         ApplyLanguage();
@@ -294,6 +296,15 @@ public partial class MainWindow : Window
             SetFeatureText(MenuPasteCheckBox, MenuPasteHint, "FeaturePaste");
             if (SettingsStatusText.IsVisible)
                 SettingsStatusText.Text = Loc.Get("ContextMenuUpdateFailed");
+
+            // Settings: associated file types
+            FileTypesHeader.Text = Loc.Get("FileTypesHeader");
+            FileTypesDescription.Text = Loc.Get("FileTypesDescription");
+            FileTypesNeedsOpenWithText.Text = Loc.Get("FileTypesNeedsOpenWith");
+            FileTypesAllButton.Content = Loc.Get("FileTypesSelectAll");
+            FileTypesNoneButton.Content = Loc.Get("FileTypesSelectNone");
+            FileTypesDefaultsButton.Content = Loc.Get("FileTypesDefaults");
+            FileTypesPicker.ApplyLanguage();
 
             foreach (var (target, text) in _statusTexts)
                 target.Text = text();
@@ -525,6 +536,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Before the rewrite below, so "Open with" keeps the user's file types.
+        _shellIntegration.SetOpenWithFileTypes(Settings.OpenWithFileTypes ?? ViewerFormats.OpenWithExtensions);
+
         Bind(MenuOpenWithCheckBox, ShellFeature.OpenWith);
         Bind(MenuExtractCheckBox, ShellFeature.Extract);
         Bind(MenuCompressCheckBox, ShellFeature.Compress);
@@ -552,6 +566,70 @@ public partial class MainWindow : Window
                     box.IsChecked = shell.IsEnabled(feature);
                 }
             };
+        }
+    }
+
+    /// <summary>
+    /// The extensions "Open with Grepdesk" registers, picked by group or one by one.
+    /// Only Windows keeps per-type "Open with" entries. A burst of clicks is
+    /// written to the registry once, after the user pauses.
+    /// </summary>
+    private void InitFileTypeSettings()
+    {
+        if (!OperatingSystem.IsWindows() || _shellIntegration is null || Environment.ProcessPath is not { } exePath)
+        {
+            FileTypesCard.IsVisible = false;
+            return;
+        }
+
+        var shell = _shellIntegration;
+        FileTypesPicker.SetSelection(Settings.OpenWithFileTypes ?? ViewerFormats.OpenWithExtensions);
+
+        var pending = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+        pending.Tick += (_, _) => Apply();
+        FileTypesPicker.SelectionChanged += Restart;
+        FileTypesAllButton.Click += (_, _) => Pick(ViewerFormats.AssociableExtensions);
+        FileTypesNoneButton.Click += (_, _) => Pick([]);
+        FileTypesDefaultsButton.Click += (_, _) => Pick(ViewerFormats.OpenWithExtensions);
+        Closed += (_, _) => { if (pending.IsEnabled) Apply(); };
+
+        // The types only mean something while "Open with" is registered.
+        UpdateEnabled();
+        MenuOpenWithCheckBox.IsCheckedChanged += (_, _) => UpdateEnabled();
+
+        void UpdateEnabled()
+        {
+            var on = MenuOpenWithCheckBox.IsChecked == true;
+            FileTypesPicker.IsEnabled = on;
+            FileTypesAllButton.IsEnabled = FileTypesNoneButton.IsEnabled = FileTypesDefaultsButton.IsEnabled = on;
+            FileTypesNeedsOpenWithText.IsVisible = !on;
+        }
+
+        void Pick(IEnumerable<string> extensions)
+        {
+            FileTypesPicker.SetSelection(extensions);
+            Restart();
+        }
+
+        void Restart()
+        {
+            pending.Stop();
+            pending.Start();
+        }
+
+        void Apply()
+        {
+            pending.Stop();
+            var selected = FileTypesPicker.Selected.Order(StringComparer.OrdinalIgnoreCase).ToList();
+            Settings.OpenWithFileTypes = selected;
+            Settings.Save();
+
+            shell.SetOpenWithFileTypes(selected);
+            if (!shell.IsEnabled(ShellFeature.OpenWith)) return;
+            var result = shell.Enable(ShellFeature.OpenWith, exePath, Loc.Get);
+            SettingsStatusText.IsVisible = !result.IsSuccess;
+            if (!result.IsSuccess)
+                SettingsStatusText.Text = Loc.Get("ContextMenuUpdateFailed");
         }
     }
 

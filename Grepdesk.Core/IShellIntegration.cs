@@ -29,4 +29,11 @@ public interface IShellIntegration
     ShellActionResult Enable(ShellFeature feature, string executablePath, Func<string, string> label);
 
     ShellActionResult Disable(ShellFeature feature);
+
+    /// <summary>
+    /// The extensions <see cref="ShellFeature.OpenWith"/> registers Grepdesk for,
+    /// used by the next <see cref="Enable"/>. Only platforms with per-type
+    /// "Open with" entries (Windows) use it.
+    /// </summary>
+    void SetOpenWithFileTypes(IEnumerable<string> extensions) { }
 }
