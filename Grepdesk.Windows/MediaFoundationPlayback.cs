@@ -11,6 +11,11 @@ namespace Grepdesk.Windows;
 /// pipeline from a file name and draws video into a window we give it, with
 /// whatever codecs Windows has (H.264, HEVC and AV1 when their extensions are
 /// installed, MP3, AAC, FLAC...). Nothing to ship.
+/// <para>
+/// MFPlay only plays a file's first audio track. When there are several, we
+/// select them all and give each its own audio renderer (Windows mixes them),
+/// so each can be silenced through its own stream volume.
+/// </para>
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class MediaFoundationPlayback : IMediaPlayback
@@ -98,12 +103,122 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         public event Action? Ended;
         public event Action? SurfaceClicked;
 
+        /// <summary>One per audio track when there are several, each playing into its own renderer.</summary>
+        private readonly List<Track> _tracks = new();
+        private AudioTrack[] _audioTracks = [];
+
+        private sealed record Track(IMFMediaSink Sink)
+        {
+            public bool Enabled { get; set; } = true;
+        }
+
         public Player(IntPtr surface) => _surface = surface;
 
+        /// <summary>The item is created first and set by hand, so its streams can be set up before playback.</summary>
         public void Start(string path)
         {
-            var hr = MFPCreateMediaPlayer(path, true, 0, this, _surface, out _player);
+            var hr = MFPCreateMediaPlayer(null, false, 0, this, _surface, out _player);
             if (hr < 0) throw new COMException("MFPCreateMediaPlayer failed", hr);
+            hr = _player.CreateMediaItemFromURL(path, false, IntPtr.Zero, IntPtr.Zero);
+            if (hr < 0) throw new COMException("CreateMediaItemFromURL failed", hr);
+        }
+
+        public IReadOnlyList<AudioTrack> AudioTracks => _audioTracks;
+
+        public bool IsTrackEnabled(int track) => track >= 0 && track < _tracks.Count && _tracks[track].Enabled;
+
+        public void SetTrackEnabled(int track, bool enabled)
+        {
+            if (track < 0 || track >= _tracks.Count) return;
+            _tracks[track].Enabled = enabled;
+            ApplyTrackVolume(_tracks[track]);
+        }
+
+        /// <summary>
+        /// The renderer's stream volume only exists once its format is known, so
+        /// this is done again when playback starts.
+        /// </summary>
+        private static void ApplyTrackVolume(Track track)
+        {
+            if (track.Sink is not IMFGetService service) return;
+            var serviceId = MR_STREAM_VOLUME_SERVICE;
+            var iid = typeof(IMFAudioStreamVolume).GUID;
+            if (service.GetService(ref serviceId, ref iid, out var pointer) < 0 || pointer == IntPtr.Zero) return;
+            try
+            {
+                var volume = (IMFAudioStreamVolume)Marshal.GetObjectForIUnknown(pointer);
+                if (volume.GetChannelCount(out var channels) >= 0)
+                    for (uint c = 0; c < channels; c++)
+                        volume.SetChannelVolume(c, track.Enabled ? 1f : 0f);
+                Marshal.ReleaseComObject(volume);
+            }
+            finally
+            {
+                Marshal.Release(pointer);
+            }
+        }
+
+        /// <summary>
+        /// Selects every audio stream and gives each a renderer of its own. On
+        /// any failure the item is put back as MFPlay chose it: first track only.
+        /// </summary>
+        private void SetUpAudioTracks(IMFPMediaItem item)
+        {
+            if (item.GetNumberOfStreams(out var count) < 0) return;
+            var audio = new List<uint>();
+            for (uint i = 0; i < count; i++)
+                if (StreamGuid(item, i, MF_MT_MAJOR_TYPE) == MFMediaType_Audio) audio.Add(i);
+            if (audio.Count < 2) return;
+
+            var selected = new bool[audio.Count];
+            for (var i = 0; i < audio.Count; i++)
+                selected[i] = item.GetStreamSelection(audio[i], out var on) >= 0 && on;
+
+            var tracks = new List<AudioTrack>();
+            try
+            {
+                foreach (var stream in audio)
+                {
+                    var hr = MFCreateAudioRenderer(IntPtr.Zero, out var sink);
+                    if (hr < 0) throw new COMException("MFCreateAudioRenderer failed", hr);
+                    _tracks.Add(new Track(sink));
+                    hr = sink.GetStreamSinkByIndex(0, out var streamSink);
+                    if (hr < 0) throw new COMException("GetStreamSinkByIndex failed", hr);
+                    try
+                    {
+                        hr = item.SetStreamSelection(stream, true);
+                        if (hr >= 0) hr = item.SetStreamSink(stream, streamSink);
+                        if (hr < 0) throw new COMException("SetStreamSink failed", hr);
+                    }
+                    finally
+                    {
+                        Marshal.Release(streamSink);
+                    }
+                    tracks.Add(new AudioTrack(StreamString(item, stream, MF_SD_STREAM_NAME),
+                        StreamString(item, stream, MF_SD_LANGUAGE), (int)StreamUInt(item, stream, MF_MT_AUDIO_NUM_CHANNELS)));
+                }
+                _audioTracks = tracks.ToArray();
+            }
+            catch (COMException)
+            {
+                for (var i = 0; i < audio.Count; i++)
+                {
+                    item.SetStreamSink(audio[i], IntPtr.Zero);
+                    item.SetStreamSelection(audio[i], selected[i]);
+                }
+                ShutDownTracks();
+            }
+        }
+
+        private void ShutDownTracks()
+        {
+            foreach (var track in _tracks)
+            {
+                track.Sink.Shutdown();
+                Marshal.ReleaseComObject(track.Sink);
+            }
+            _tracks.Clear();
+            _audioTracks = [];
         }
 
         public bool IsPlaying => _playing;
@@ -164,6 +279,20 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
             switch (type)
             {
+                case MFP_EVENT_TYPE_MEDIAITEM_CREATED:
+                    var itemPointer = Marshal.ReadIntPtr(header, MediaItemOffset);
+                    var item = (IMFPMediaItem)Marshal.GetObjectForIUnknown(itemPointer);
+                    try
+                    {
+                        SetUpAudioTracks(item);
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(item);
+                    }
+                    hr = _player.SetMediaItem(itemPointer);
+                    if (hr < 0) Failed?.Invoke(hr);
+                    break;
                 case MFP_EVENT_TYPE_MEDIAITEM_SET:
                     var position = Guid.Empty;
                     if (_player.GetDuration(ref position, out var duration) >= 0)
@@ -172,8 +301,10 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                         ? (size.Width, size.Height)
                         : null;
                     Ready?.Invoke();
+                    _player?.Play();
                     break;
                 case MFP_EVENT_TYPE_PLAY:
+                    foreach (var track in _tracks) ApplyTrackVolume(track);
                     _playing = true;
                     StateChanged?.Invoke();
                     break;
@@ -198,6 +329,31 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
             Players.Remove(_surface);
             player.Shutdown();
             Marshal.ReleaseComObject(player);
+            ShutDownTracks();
+        }
+
+        private static Guid StreamGuid(IMFPMediaItem item, uint stream, Guid attribute)
+        {
+            if (item.GetStreamAttribute(stream, ref attribute, out var value) < 0) return Guid.Empty;
+            var result = value.Type == VT_CLSID && value.Pointer != IntPtr.Zero ? Marshal.PtrToStructure<Guid>(value.Pointer) : Guid.Empty;
+            PropVariantClear(ref value);
+            return result;
+        }
+
+        private static string? StreamString(IMFPMediaItem item, uint stream, Guid attribute)
+        {
+            if (item.GetStreamAttribute(stream, ref attribute, out var value) < 0) return null;
+            var result = value.Type == VT_LPWSTR ? Marshal.PtrToStringUni(value.Pointer) : null;
+            PropVariantClear(ref value);
+            return string.IsNullOrWhiteSpace(result) ? null : result.Trim();
+        }
+
+        private static uint StreamUInt(IMFPMediaItem item, uint stream, Guid attribute)
+        {
+            if (item.GetStreamAttribute(stream, ref attribute, out var value) < 0) return 0;
+            var result = value.Type == VT_UI4 ? value.UInt : 0;
+            PropVariantClear(ref value);
+            return result;
         }
     }
 
@@ -208,25 +364,47 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
     private const int MFP_EVENT_TYPE_PLAY = 0;
     private const int MFP_EVENT_TYPE_PAUSE = 1;
     private const int MFP_EVENT_TYPE_STOP = 2;
+    private const int MFP_EVENT_TYPE_MEDIAITEM_CREATED = 5;
     private const int MFP_EVENT_TYPE_MEDIAITEM_SET = 6;
     private const int MFP_EVENT_TYPE_ERROR = 10;
     private const int MFP_EVENT_TYPE_PLAYBACK_ENDED = 11;
 
-    private const ushort VT_I8 = 20, VT_UI8 = 21;
-
-    [DllImport("mfplay.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int MFPCreateMediaPlayer(string url, [MarshalAs(UnmanagedType.Bool)] bool startPlayback, int options,
-        IMFPMediaPlayerCallback callback, IntPtr hwnd, out IMFPMediaPlayer player);
+    private const ushort VT_UI4 = 19, VT_I8 = 20, VT_UI8 = 21, VT_LPWSTR = 31, VT_CLSID = 72;
 
     /// <summary>
-    /// PROPVARIANT holding a time in 100 ns units: positions come back as
-    /// VT_I8, the duration as VT_UI8. 24 bytes on x64.
+    /// Where MFP_MEDIAITEM_CREATED_EVENT keeps its item: after the
+    /// MFP_EVENT_HEADER (type, HRESULT, player, state, property store).
+    /// </summary>
+    private static readonly int MediaItemOffset = IntPtr.Size == 8 ? 32 : 20;
+
+    private static readonly Guid MF_MT_MAJOR_TYPE = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
+    private static readonly Guid MF_MT_AUDIO_NUM_CHANNELS = new("37e48bf5-645e-4c5b-89de-ada9e29b696a");
+    private static readonly Guid MF_SD_LANGUAGE = new("00af2180-bdc2-423c-abca-f503593bc121");
+    private static readonly Guid MF_SD_STREAM_NAME = new("4f1b099d-d314-41e5-a781-7fefaa4c501f");
+    private static readonly Guid MFMediaType_Audio = new("73647561-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MR_STREAM_VOLUME_SERVICE = new("f8b5fa2f-32ef-46f5-b172-1321212fb2c4");
+
+    [DllImport("mfplay.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int MFPCreateMediaPlayer(string? url, [MarshalAs(UnmanagedType.Bool)] bool startPlayback, int options,
+        IMFPMediaPlayerCallback callback, IntPtr hwnd, out IMFPMediaPlayer player);
+
+    [DllImport("mf.dll", ExactSpelling = true)]
+    private static extern int MFCreateAudioRenderer(IntPtr attributes, out IMFMediaSink sink);
+
+    [DllImport("ole32.dll", ExactSpelling = true)]
+    private static extern int PropVariantClear(ref PropVariant value);
+
+    /// <summary>
+    /// PROPVARIANT holding a time in 100 ns units (positions come back as
+    /// VT_I8, the duration as VT_UI8), or a stream attribute. 24 bytes on x64.
     /// </summary>
     [StructLayout(LayoutKind.Explicit, Size = 24)]
     private struct PropVariant
     {
         [FieldOffset(0)] public ushort Type;
         [FieldOffset(8)] public long Long;
+        [FieldOffset(8)] public uint UInt;
+        [FieldOffset(8)] public IntPtr Pointer;
 
         public readonly TimeSpan Ticks => Type is VT_I8 or VT_UI8 && Long > 0 ? TimeSpan.FromTicks(Long) : TimeSpan.Zero;
     }
@@ -259,7 +437,8 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         [PreserveSig] int GetRate(out float rate);
         [PreserveSig] int GetSupportedRates([MarshalAs(UnmanagedType.Bool)] bool forward, out float slowest, out float fastest);
         [PreserveSig] int GetState(out int state);
-        [PreserveSig] int CreateMediaItemFromURL([MarshalAs(UnmanagedType.LPWStr)] string url, [MarshalAs(UnmanagedType.Bool)] bool sync, IntPtr userData, out IntPtr item);
+        // The item pointer must be null when not synchronous: the item arrives with MFP_EVENT_TYPE_MEDIAITEM_CREATED.
+        [PreserveSig] int CreateMediaItemFromURL([MarshalAs(UnmanagedType.LPWStr)] string url, [MarshalAs(UnmanagedType.Bool)] bool sync, IntPtr userData, IntPtr item);
         [PreserveSig] int CreateMediaItemFromObject(IntPtr obj, [MarshalAs(UnmanagedType.Bool)] bool sync, IntPtr userData, out IntPtr item);
         [PreserveSig] int SetMediaItem(IntPtr item);
         [PreserveSig] int ClearMediaItem();
@@ -284,6 +463,65 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         [PreserveSig] int RemoveEffect(IntPtr effect);
         [PreserveSig] int RemoveAllEffects();
         [PreserveSig] int Shutdown();
+    }
+
+    // Every method, in vtable order, even the unused ones.
+    [ComImport, Guid("90EB3E6B-ECBF-45cc-B1DA-C6FE3EA70D57"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFPMediaItem
+    {
+        [PreserveSig] int GetMediaPlayer(out IntPtr player);
+        [PreserveSig] int GetURL(out IntPtr url);
+        [PreserveSig] int GetObject(out IntPtr obj);
+        [PreserveSig] int GetUserData(out IntPtr userData);
+        [PreserveSig] int SetUserData(IntPtr userData);
+        [PreserveSig] int GetStartStopPosition(IntPtr startFormat, IntPtr start, IntPtr stopFormat, IntPtr stop);
+        [PreserveSig] int SetStartStopPosition(IntPtr startFormat, IntPtr start, IntPtr stopFormat, IntPtr stop);
+        [PreserveSig] int HasVideo([MarshalAs(UnmanagedType.Bool)] out bool hasVideo, [MarshalAs(UnmanagedType.Bool)] out bool selected);
+        [PreserveSig] int HasAudio([MarshalAs(UnmanagedType.Bool)] out bool hasAudio, [MarshalAs(UnmanagedType.Bool)] out bool selected);
+        [PreserveSig] int IsProtected([MarshalAs(UnmanagedType.Bool)] out bool isProtected);
+        [PreserveSig] int GetDuration(ref Guid positionType, out PropVariant duration);
+        [PreserveSig] int GetNumberOfStreams(out uint count);
+        [PreserveSig] int GetStreamSelection(uint stream, [MarshalAs(UnmanagedType.Bool)] out bool enabled);
+        [PreserveSig] int SetStreamSelection(uint stream, [MarshalAs(UnmanagedType.Bool)] bool enabled);
+        [PreserveSig] int GetStreamAttribute(uint stream, ref Guid attribute, out PropVariant value);
+        [PreserveSig] int GetPresentationAttribute(ref Guid attribute, out PropVariant value);
+        [PreserveSig] int GetCharacteristics(out int characteristics);
+        [PreserveSig] int SetStreamSink(uint stream, IntPtr sink);
+        [PreserveSig] int GetMetadata(out IntPtr propertyStore);
+    }
+
+    // ---------------------------------------------------------------------
+    // The audio renderer and its per-stream volume (mfidl.h)
+    // ---------------------------------------------------------------------
+
+    [ComImport, Guid("6ef2a660-47c0-4666-b13d-cbb717f2fa2c"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFMediaSink
+    {
+        [PreserveSig] int GetCharacteristics(out uint characteristics);
+        [PreserveSig] int AddStreamSink(uint id, IntPtr mediaType, out IntPtr streamSink);
+        [PreserveSig] int RemoveStreamSink(uint id);
+        [PreserveSig] int GetStreamSinkCount(out uint count);
+        [PreserveSig] int GetStreamSinkByIndex(uint index, out IntPtr streamSink);
+        [PreserveSig] int GetStreamSinkById(uint id, out IntPtr streamSink);
+        [PreserveSig] int SetPresentationClock(IntPtr clock);
+        [PreserveSig] int GetPresentationClock(out IntPtr clock);
+        [PreserveSig] int Shutdown();
+    }
+
+    [ComImport, Guid("fa993888-4383-415a-a930-dd472a8cf6f7"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFGetService
+    {
+        [PreserveSig] int GetService(ref Guid service, ref Guid iid, out IntPtr obj);
+    }
+
+    [ComImport, Guid("76B1BBDB-4EC8-4f36-B106-70A9316DF593"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFAudioStreamVolume
+    {
+        [PreserveSig] int GetChannelCount(out uint count);
+        [PreserveSig] int SetChannelVolume(uint channel, float level);
+        [PreserveSig] int GetChannelVolume(uint channel, out float level);
+        [PreserveSig] int SetAllVolumes(uint count, [In] float[] levels);
+        [PreserveSig] int GetAllVolumes(uint count, [Out] float[] levels);
     }
 
     // ---------------------------------------------------------------------

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Grepdesk.Core.Viewer;
 
@@ -47,6 +48,19 @@ public interface IMediaPlayer : IDisposable
     /// <summary>Width × height of the video, or null for audio.</summary>
     (int Width, int Height)? VideoSize { get; }
 
+    /// <summary>
+    /// The file's audio tracks, once <see cref="Ready"/>, when there is more
+    /// than one (a recording with game and microphone on separate tracks, a
+    /// film with several languages). All of them play together; each can be
+    /// switched off. Empty for a single track.
+    /// </summary>
+    IReadOnlyList<AudioTrack> AudioTracks { get; }
+
+    bool IsTrackEnabled(int track);
+
+    /// <summary>Silences or restores one of <see cref="AudioTracks"/>, without interrupting playback.</summary>
+    void SetTrackEnabled(int track, bool enabled);
+
     void Play();
 
     void Pause();
@@ -54,3 +68,8 @@ public interface IMediaPlayer : IDisposable
     /// <summary>Redraws the current frame after the surface was resized or uncovered.</summary>
     void UpdateVideo();
 }
+
+/// <param name="Name">The track's title in the file, if it has one.</param>
+/// <param name="Language">An RFC 1766 tag such as "en" or "tr-TR", if the file says.</param>
+/// <param name="Channels">2 for stereo, 6 for 5.1; 0 if unknown.</param>
+public sealed record AudioTrack(string? Name, string? Language, int Channels);

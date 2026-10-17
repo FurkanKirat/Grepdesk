@@ -15,7 +15,7 @@ namespace Grepdesk.UI.Viewer;
 /// Video and audio with play/pause, a seek bar and volume. Video is drawn by
 /// the OS into a native child window, so nothing of ours may overlap it: the
 /// controls sit in a bar below. Space or K plays and pauses, the arrow keys
-/// seek 5 s, M mutes.
+/// seek 5 s, M mutes, 1-9 switch audio tracks on and off when there are several.
 /// </summary>
 internal sealed class MediaView : DockPanel, IViewerBody
 {
@@ -27,6 +27,7 @@ internal sealed class MediaView : DockPanel, IViewerBody
     private readonly Bitmap? _art;
     private readonly Button _playButton;
     private readonly Button _muteButton;
+    private readonly Button _tracksButton;
     private readonly Slider _seek;
     private readonly Slider _volume;
     private readonly TextBlock _timeText;
@@ -54,6 +55,9 @@ internal sealed class MediaView : DockPanel, IViewerBody
         _playButton.Click += (_, _) => TogglePlay();
         _muteButton = ViewerBar.Button("🔊", Loc.Get("ViewerMute"));
         _muteButton.Click += (_, _) => ToggleMute();
+        _tracksButton = ViewerBar.Button("🎧", Loc.Get("ViewerAudioTracks"));
+        _tracksButton.IsVisible = false;
+        _tracksButton.Click += (_, _) => ShowTracks();
         _timeText = ViewerBar.Label("0:00 / 0:00", 96);
 
         _seek = new Slider { Minimum = 0, Maximum = 1, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0) };
@@ -65,7 +69,7 @@ internal sealed class MediaView : DockPanel, IViewerBody
         _volume.ValueChanged += (_, e) => { if (_player is not null) _player.Volume = (float)e.NewValue; };
 
         var left = ViewerBar.Row(_playButton, _timeText);
-        var right = ViewerBar.Row(_muteButton, _volume);
+        var right = ViewerBar.Row(_tracksButton, _muteButton, _volume);
         var bar = new DockPanel { Children = { left, right, _seek } };
         SetDock(left, Dock.Left);
         SetDock(right, Dock.Right);
@@ -148,6 +152,65 @@ internal sealed class MediaView : DockPanel, IViewerBody
         if (_player.VideoSize is var (w, h)) parts.Add($"{w} × {h}");
         if (_player.Duration > TimeSpan.Zero) parts.Add(Time(_player.Duration));
         InfoChanged?.Invoke(string.Join("  ·  ", parts));
+        UpdateTracksButton();
+    }
+
+    private void UpdateTracksButton()
+    {
+        var tracks = _player?.AudioTracks ?? [];
+        _tracksButton.IsVisible = tracks.Count > 1;
+        var on = Enumerable.Range(0, tracks.Count).Count(i => _player!.IsTrackEnabled(i));
+        _tracksButton.Content = $"🎧 {on}/{tracks.Count}";
+    }
+
+    private void ShowTracks()
+    {
+        if (_player is not { AudioTracks.Count: > 1 } player) return;
+        var items = new List<MenuItem>();
+        for (var i = 0; i < player.AudioTracks.Count; i++)
+        {
+            var track = i;
+            var item = new MenuItem
+            {
+                Header = TrackLabel(track, player.AudioTracks[track]),
+                ToggleType = MenuItemToggleType.CheckBox,
+                IsChecked = player.IsTrackEnabled(track),
+                StaysOpenOnClick = true,
+                InputGesture = track < 9 ? new KeyGesture(Key.D1 + track) : null,
+            };
+            item.Click += (_, _) =>
+            {
+                ToggleTrack(track);
+                item.IsChecked = player.IsTrackEnabled(track);
+            };
+            items.Add(item);
+        }
+        new ContextMenu { ItemsSource = items, Placement = PlacementMode.TopEdgeAlignedRight }.Open(_tracksButton);
+    }
+
+    /// <summary>"Track 2 · Microphone · en · 5.1", leaving out what the file doesn't say.</summary>
+    private static string TrackLabel(int index, AudioTrack track)
+    {
+        var parts = new List<string> { Loc.Get("ViewerAudioTrack", index + 1) };
+        if (track.Name is { } name) parts.Add(name);
+        if (track.Language is { } language) parts.Add(language);
+        parts.Add(track.Channels switch
+        {
+            1 => Loc.Get("ViewerAudioMono"),
+            2 => Loc.Get("ViewerAudioStereo"),
+            6 => "5.1",
+            8 => "7.1",
+            > 0 => Loc.Get("ViewerAudioChannels", track.Channels),
+            _ => "",
+        });
+        return string.Join("  ·  ", parts.Where(p => p.Length > 0));
+    }
+
+    private void ToggleTrack(int track)
+    {
+        if (_player is null || track >= _player.AudioTracks.Count) return;
+        _player.SetTrackEnabled(track, !_player.IsTrackEnabled(track));
+        UpdateTracksButton();
     }
 
     private void Tick()
@@ -204,6 +267,9 @@ internal sealed class MediaView : DockPanel, IViewerBody
             case Key.Left: SeekBy(-SeekStep); return true;
             case Key.Right: SeekBy(SeekStep); return true;
             case Key.M: ToggleMute(); return true;
+            case >= Key.D1 and <= Key.D9 when _player is { AudioTracks.Count: > 1 } && e.KeyModifiers == KeyModifiers.None:
+                ToggleTrack(e.Key - Key.D1);
+                return true;
             default: return false;
         }
     }
