@@ -8,13 +8,19 @@ namespace Grepdesk.Windows;
 
 /// <summary>
 /// Video and audio through Media Foundation's MFPlay API: it builds the whole
-/// pipeline from a file name and draws video into a window we give it, with
-/// whatever codecs Windows has (H.264, HEVC and AV1 when their extensions are
-/// installed, MP3, AAC, FLAC...). Nothing to ship.
+/// pipeline from a file name, with whatever codecs Windows has (H.264, HEVC
+/// and AV1 when their extensions are installed, MP3, AAC, FLAC...). Nothing to ship.
 /// <para>
 /// MFPlay only plays a file's first audio track. When there are several, we
 /// select them all and give each its own audio renderer (Windows mixes them),
 /// so each can be silenced through its own stream volume.
+/// </para>
+/// <para>
+/// Video doesn't go to MFPlay's own renderer, the EVR: it is built on
+/// Direct3D 9 and crashed inside D3D9.DLL on some graphics drivers. The video
+/// stream goes to a sample grabber instead, which hands us each decoded frame
+/// as RGB at its presentation time, and we draw it with GDI. Decoding is in
+/// software, and nothing touches the graphics driver beyond a GDI blit.
 /// </para>
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -26,7 +32,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
     private static readonly WndProc SurfaceProc = SurfaceWndProc;
     private static bool _classRegistered;
 
-    /// <summary>The player drawing into each surface, so the surface's messages can reach it.</summary>
+    /// <summary>The player drawing into each surface, so the surface's messages can reach it. UI thread only.</summary>
     private static readonly Dictionary<IntPtr, Player> Players = new();
 
     public IntPtr CreateSurface(IntPtr parent)
@@ -53,17 +59,26 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
         return hwnd;
     }
 
+    /// <summary>The player goes first: it draws into the window from Media Foundation's threads.</summary>
     public void DestroySurface(IntPtr surface)
     {
-        Players.Remove(surface);
+        if (Players.Remove(surface, out var player)) player.Dispose();
         DestroyWindow(surface);
     }
 
     public IMediaPlayer Open(string path, IntPtr surface)
     {
         var player = new Player(surface);
-        Players[surface] = player;
-        player.Start(path);
+        try
+        {
+            player.Start(path);
+        }
+        catch
+        {
+            player.Dispose();
+            throw;
+        }
+        if (surface != IntPtr.Zero) Players[surface] = player;
         return player;
     }
 
@@ -97,8 +112,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                 var hdc = BeginPaint(hwnd, ref paint);
                 try
                 {
-                    if (player is { VideoSize: not null }) player.UpdateVideo();
-                    else FillRect(hdc, ref paint.Paint, GetStockObject(BLACK_BRUSH));
+                    if (player is null || !player.DrawFrame(hdc)) FillRect(hdc, ref paint.Paint, GetStockObject(BLACK_BRUSH));
                 }
                 finally
                 {
@@ -137,12 +151,22 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
             public bool Enabled { get; set; } = true;
         }
 
+        /// <summary>Where video frames arrive and are drawn; null for audio, or until the item is read.</summary>
+        private VideoFrames? _video;
+        private IMFMediaSink? _videoSink;
+
+        /// <summary>The UI thread's, for what the grabber reports from Media Foundation's threads.</summary>
+        private readonly SynchronizationContext? _context = SynchronizationContext.Current;
+
         public Player(IntPtr surface) => _surface = surface;
 
-        /// <summary>The item is created first and set by hand, so its streams can be set up before playback.</summary>
+        /// <summary>
+        /// The item is created first and set by hand, so its streams can be set up before playback.
+        /// No window for MFPlay: without one it makes no video renderer of its own.
+        /// </summary>
         public void Start(string path)
         {
-            var hr = MFPCreateMediaPlayer(null, false, 0, this, _surface, out _player);
+            var hr = MFPCreateMediaPlayer(null, false, 0, this, IntPtr.Zero, out _player);
             if (hr < 0) throw new COMException("MFPCreateMediaPlayer failed", hr);
             hr = _player.CreateMediaItemFromURL(path, false, IntPtr.Zero, IntPtr.Zero);
             if (hr < 0) throw new COMException("CreateMediaItemFromURL failed", hr);
@@ -250,7 +274,75 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
         public TimeSpan Duration { get; private set; }
 
-        public (int Width, int Height)? VideoSize { get; private set; }
+        public (int Width, int Height)? VideoSize => _video is { } v ? (v.Width, v.Height) : null;
+
+        /// <summary>
+        /// Sends the first video stream to a sample grabber that wants NV12, what
+        /// decoders put out, so nothing sits between them. With a converter in
+        /// between (asking for RGB), playback failed with MF_E_ATTRIBUTENOTFOUND
+        /// whenever the decoder changed its output on the first frame, as H.264
+        /// does for any size not a multiple of 16 (1080 lines decode as 1088 and
+        /// a crop). The size is left open; the grabber reads what it got.
+        /// </summary>
+        private void SetUpVideo(IMFPMediaItem item, uint count)
+        {
+            if (_surface == IntPtr.Zero) return;
+            for (uint i = 0; i < count; i++)
+            {
+                if (StreamGuid(item, i, MF_MT_MAJOR_TYPE) != MFMediaType_Video) continue;
+                var (width, height) = Split(StreamULong(item, i, MF_MT_FRAME_SIZE));
+                if (width == 0 || height == 0) continue;
+                var (pixelX, pixelY) = Split(StreamULong(item, i, MF_MT_PIXEL_ASPECT_RATIO));
+                var aspect = width * (pixelX > 0 && pixelY > 0 ? (double)pixelX / pixelY : 1) / height;
+                var video = new VideoFrames(_surface, (int)width, (int)height, aspect, () => Post(() => Step?.Invoke("first frame shown")));
+
+                var hr = MFCreateMediaType(out var typePointer);
+                if (hr < 0) throw new COMException("MFCreateMediaType failed", hr);
+                var activate = IntPtr.Zero;
+                try
+                {
+                    var type = (IMFAttributes)Marshal.GetObjectForIUnknown(typePointer);
+                    type.SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+                    type.SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+                    Marshal.ReleaseComObject(type);
+
+                    hr = MFCreateSampleGrabberSinkActivate(typePointer, video, out activate);
+                    if (hr < 0) throw new COMException("MFCreateSampleGrabberSinkActivate failed", hr);
+                    hr = Vtable.ActivateObject(activate, typeof(IMFMediaSink).GUID, out var sinkPointer);
+                    if (hr < 0) throw new COMException("Activating the sample grabber failed", hr);
+                    _videoSink = (IMFMediaSink)Marshal.GetObjectForIUnknown(sinkPointer);
+                    Marshal.Release(sinkPointer);
+
+                    hr = _videoSink.GetStreamSinkByIndex(0, out var streamSink);
+                    if (hr < 0) throw new COMException("GetStreamSinkByIndex (video) failed", hr);
+                    video.StreamSink = streamSink;
+                    hr = item.SetStreamSelection(i, true);
+                    if (hr >= 0) hr = item.SetStreamSink(i, streamSink);
+                    if (hr < 0)
+                    {
+                        video.Stop();
+                        throw new COMException("SetStreamSink (video) failed", hr);
+                    }
+                    _video = video;
+                }
+                finally
+                {
+                    if (activate != IntPtr.Zero) Marshal.Release(activate);
+                    Marshal.Release(typePointer);
+                }
+                return;
+            }
+        }
+
+        /// <summary>From Media Foundation's threads to the one that created the player.</summary>
+        private void Post(Action action)
+        {
+            if (_context is null) action();
+            else _context.Post(_ => action(), null);
+        }
+
+        /// <summary>Draws the latest frame for WM_PAINT; false when there is none yet.</summary>
+        internal bool DrawFrame(IntPtr hdc) => _video?.Draw(hdc) == true;
 
         public TimeSpan Position
         {
@@ -285,7 +377,7 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
         public void Pause() => _player?.Pause();
 
-        public void UpdateVideo() => _player?.UpdateVideo();
+        public void UpdateVideo() => _video?.Redraw();
 
         internal void RaiseClicked() => SurfaceClicked?.Invoke();
 
@@ -334,15 +426,18 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                     var item = (IMFPMediaItem)Marshal.GetObjectForIUnknown(itemPointer);
                     try
                     {
-                        Step?.Invoke(item.GetNumberOfStreams(out var streams) >= 0 ? $"file read, {streams} streams" : "file read");
+                        var streams = item.GetNumberOfStreams(out var count) >= 0 ? count : 0;
+                        Step?.Invoke($"file read, {streams} streams");
+                        SetUpVideo(item, streams);
                         SetUpAudioTracks(item);
                     }
                     finally
                     {
                         Marshal.ReleaseComObject(item);
                     }
-                    // Picks the decoders and makes the video renderer (Direct3D) on the surface.
-                    Step?.Invoke(_tracks.Count > 0 ? $"building the pipeline, {_tracks.Count} audio tracks" : "building the pipeline");
+                    // Picks the decoders and converters, and opens the audio device.
+                    Step?.Invoke($"building the pipeline{(_video is { } v ? $", video {v.Width}×{v.Height} to the sample grabber" : "")}"
+                        + (_tracks.Count > 0 ? $", {_tracks.Count} audio tracks" : ""));
                     hr = _player.SetMediaItem(itemPointer);
                     if (hr < 0) Fail(new MediaError(hr, "set media item"));
                     break;
@@ -350,9 +445,6 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
                     var position = Guid.Empty;
                     if (_player.GetDuration(ref position, out var duration) >= 0)
                         Duration = duration.Ticks;
-                    VideoSize = _player.GetNativeVideoSize(out var size, out _) >= 0 && size.Width > 0 && size.Height > 0
-                        ? (size.Width, size.Height)
-                        : null;
                     Ready?.Invoke();
                     _player?.Play();
                     break;
@@ -376,13 +468,31 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
         public void Dispose()
         {
-            if (_player is null) return;
-            var player = _player;
-            _player = null;
-            Players.Remove(_surface);
-            player.Shutdown();
-            Marshal.ReleaseComObject(player);
+            if (Players.TryGetValue(_surface, out var registered) && registered == this) Players.Remove(_surface);
+            // Before the shutdown: a frame may be arriving on another thread, and the window is next to go.
+            _video?.Stop();
+            if (_player is not null)
+            {
+                var player = _player;
+                _player = null;
+                player.Shutdown();
+                Marshal.ReleaseComObject(player);
+            }
             ShutDownTracks();
+            if (_videoSink is not null)
+            {
+                _videoSink.Shutdown();
+                Marshal.ReleaseComObject(_videoSink);
+                _videoSink = null;
+            }
+        }
+
+        private static ulong StreamULong(IMFPMediaItem item, uint stream, Guid attribute)
+        {
+            if (item.GetStreamAttribute(stream, ref attribute, out var value) < 0) return 0;
+            var result = value.Type is VT_UI8 or VT_I8 ? (ulong)value.Long : 0;
+            PropVariantClear(ref value);
+            return result;
         }
 
         private static Guid StreamGuid(IMFPMediaItem item, uint stream, Guid attribute)
@@ -407,6 +517,362 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
             var result = value.Type == VT_UI4 ? value.UInt : 0;
             PropVariantClear(ref value);
             return result;
+        }
+    }
+
+    /// <summary>Frame sizes and ratios are two UINT32s packed into one UINT64, the first on top.</summary>
+    private static (uint High, uint Low) Split(ulong value) => ((uint)(value >> 32), (uint)value);
+
+    /// <summary>
+    /// The sample grabber's callback: converts the latest frame to RGB and
+    /// draws it, letterboxed, into the video window. Frames arrive on Media
+    /// Foundation's threads at their presentation time, repaints and resizes
+    /// come from the UI thread; the lock keeps them apart, and away from a
+    /// stopped player.
+    /// </summary>
+    private sealed class VideoFrames : IMFSampleGrabberSinkCallback
+    {
+        private readonly IntPtr _surface;
+        private readonly double _aspect;
+        private readonly Action _firstFrame;
+        private readonly object _lock = new();
+        private byte[] _pixels = [];
+        private BitmapInfoHeader _header;
+        private Format? _format;
+        private bool _hasFrame;
+        private bool _stopped;
+
+        /// <summary>
+        /// What the decoder sends: NV12 at a size rounded up to its blocks (1080
+        /// lines arrive as 1088), the part to show, and how to turn it into RGB.
+        /// </summary>
+        private sealed record Format(int Height, int Stride, Rect Visible, YuvToRgb Colors)
+        {
+            /// <summary>The luma plane, then half as much interleaved chroma.</summary>
+            public int Bytes => Stride * Height * 3 / 2;
+            public int VisibleWidth => Visible.Right - Visible.Left;
+            public int VisibleHeight => Visible.Bottom - Visible.Top;
+        }
+
+        /// <summary>The picture's size as the file describes it.</summary>
+        public int Width { get; }
+        public int Height { get; }
+
+        /// <summary>The grabber's IMFStreamSink, for the media type frames arrive in. Released by <see cref="Stop"/>.</summary>
+        public IntPtr StreamSink { get; set; }
+
+        /// <param name="aspect">The picture's width over its height, as displayed.</param>
+        /// <param name="firstFrame">Called once, from a Media Foundation thread.</param>
+        public VideoFrames(IntPtr surface, int width, int height, double aspect, Action firstFrame)
+        {
+            _surface = surface;
+            Width = width;
+            Height = height;
+            _aspect = aspect;
+            _firstFrame = firstFrame;
+        }
+
+        public void Stop()
+        {
+            lock (_lock)
+            {
+                _stopped = true;
+                if (StreamSink != IntPtr.Zero) Marshal.Release(StreamSink);
+                StreamSink = IntPtr.Zero;
+            }
+        }
+
+        public void Redraw()
+        {
+            lock (_lock)
+            {
+                if (_stopped || !_hasFrame) return;
+                DrawToWindow();
+            }
+        }
+
+        /// <summary>Into a DC from BeginPaint; false when there is no frame to draw.</summary>
+        public bool Draw(IntPtr hdc)
+        {
+            lock (_lock)
+            {
+                if (_stopped || !_hasFrame) return false;
+                DrawLocked(hdc);
+                return true;
+            }
+        }
+
+        private void DrawToWindow()
+        {
+            var hdc = GetDC(_surface);
+            if (hdc == IntPtr.Zero) return;
+            try
+            {
+                DrawLocked(hdc);
+            }
+            finally
+            {
+                ReleaseDC(_surface, hdc);
+            }
+        }
+
+        /// <summary>As large as fits in the picture's own proportions, black around it.</summary>
+        private void DrawLocked(IntPtr hdc)
+        {
+            if (_format is not { } format) return;
+            GetClientRect(_surface, out var client);
+            int cw = client.Right, ch = client.Bottom;
+            if (cw <= 0 || ch <= 0) return;
+            var scale = Math.Min(cw / (Height * _aspect), (double)ch / Height);
+            var w = Math.Max(1, (int)Math.Round(Height * _aspect * scale));
+            var h = Math.Max(1, (int)Math.Round(Height * scale));
+            int x = (cw - w) / 2, y = (ch - h) / 2;
+
+            var black = GetStockObject(BLACK_BRUSH);
+            var bars = new[]
+            {
+                new Rect { Left = 0, Top = 0, Right = cw, Bottom = y },
+                new Rect { Left = 0, Top = y + h, Right = cw, Bottom = ch },
+                new Rect { Left = 0, Top = y, Right = x, Bottom = y + h },
+                new Rect { Left = x + w, Top = y, Right = cw, Bottom = y + h },
+            };
+            foreach (var bar in bars)
+            {
+                var rect = bar;
+                if (rect.Right > rect.Left && rect.Bottom > rect.Top) FillRect(hdc, ref rect, black);
+            }
+
+            // HALFTONE averages the pixels a smaller picture skips; it needs the brush origin set after it.
+            SetStretchBltMode(hdc, HALFTONE);
+            SetBrushOrgEx(hdc, 0, 0, IntPtr.Zero);
+            StretchDIBits(hdc, x, y, w, h, 0, 0, format.VisibleWidth, format.VisibleHeight, _pixels, ref _header, DIB_RGB_COLORS, SRCCOPY);
+        }
+
+        /// <summary>The media type the grabber receives now; its aperture is the part to show.</summary>
+        private Format? ReadFormat()
+        {
+            if (StreamSink == IntPtr.Zero || Vtable.GetCurrentMediaType(StreamSink, out var type) < 0) return null;
+            try
+            {
+                if (Vtable.GetUInt64(type, MF_MT_FRAME_SIZE, out var size) < 0) return null;
+                var (width, height) = Split(size);
+                if (width < 2 || height < 2) return null;
+                var stride = Vtable.GetUInt32(type, MF_MT_DEFAULT_STRIDE, out var s) >= 0 && (int)s >= width ? (int)s : (int)width;
+
+                var full = new Rect { Right = (int)width, Bottom = (int)height };
+                var visible = Vtable.GetArea(type, MF_MT_MINIMUM_DISPLAY_APERTURE)
+                    ?? Vtable.GetArea(type, MF_MT_GEOMETRIC_APERTURE)
+                    ?? full;
+                visible.Left = Math.Clamp(visible.Left, 0, full.Right - 1);
+                visible.Top = Math.Clamp(visible.Top, 0, full.Bottom - 1);
+                visible.Right = Math.Clamp(visible.Right, visible.Left + 1, full.Right);
+                visible.Bottom = Math.Clamp(visible.Bottom, visible.Top + 1, full.Bottom);
+
+                var matrix = Vtable.GetUInt32(type, MF_MT_YUV_MATRIX, out var m) >= 0 ? m : 0;
+                var fullRange = Vtable.GetUInt32(type, MF_MT_VIDEO_NOMINAL_RANGE, out var r) >= 0 && r == MFNominalRange_0_255;
+                return new Format((int)height, stride, visible, YuvToRgb.For(matrix, height >= 720, fullRange));
+            }
+            finally
+            {
+                Marshal.Release(type);
+            }
+        }
+
+        /// <summary>
+        /// Called by Media Foundation: an exception escaping into it would end
+        /// the process with no log. A frame that can't be drawn is skipped.
+        /// </summary>
+        int IMFSampleGrabberSinkCallback.OnProcessSample(in Guid majorMediaType, uint sampleFlags, long sampleTime, long sampleDuration,
+            IntPtr sampleBuffer, uint sampleSize)
+        {
+            try
+            {
+                bool first;
+                lock (_lock)
+                {
+                    if (_stopped) return 0;
+                    if (_format?.Bytes != sampleSize)
+                    {
+                        _format = ReadFormat();
+                        if (_format is not { } format || format.Bytes > sampleSize) return 0;
+                        _pixels = new byte[format.VisibleWidth * format.VisibleHeight * 4];
+                        // A negative height is a top-down DIB.
+                        _header = new BitmapInfoHeader
+                        {
+                            Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
+                            Width = format.VisibleWidth,
+                            Height = -format.VisibleHeight,
+                            Planes = 1,
+                            BitCount = 32,
+                        };
+                    }
+                    ConvertNv12(sampleBuffer, _format, _pixels);
+                    first = !_hasFrame;
+                    _hasFrame = true;
+                    DrawToWindow();
+                }
+                if (first) _firstFrame();
+            }
+            catch
+            {
+                // The next frame tries again.
+            }
+            return 0;
+        }
+
+        /// <summary>The visible part of an NV12 frame as top-down BGRA rows; large frames are split across cores.</summary>
+        private static void ConvertNv12(IntPtr source, Format format, byte[] target)
+        {
+            var rows = format.VisibleHeight;
+            var bands = rows >= 480 ? Math.Min(Environment.ProcessorCount, 8) : 1;
+            if (bands == 1)
+            {
+                ConvertRows(source, format, target, 0, rows);
+                return;
+            }
+            // Bands of whole row pairs, so no two share a chroma row.
+            var bandRows = (rows / bands + 1) & ~1;
+            Parallel.For(0, bands, band =>
+            {
+                var first = band * bandRows;
+                if (first < rows) ConvertRows(source, format, target, first, Math.Min(rows, first + bandRows));
+            });
+        }
+
+        private static unsafe void ConvertRows(IntPtr source, Format format, byte[] target, int firstRow, int endRow)
+        {
+            var c = format.Colors;
+            var visible = format.Visible;
+            var width = format.VisibleWidth;
+            var luma = (byte*)source;
+            var chroma = luma + format.Stride * format.Height;
+            fixed (byte* output = target)
+            {
+                for (var row = firstRow; row < endRow; row++)
+                {
+                    var y = visible.Top + row;
+                    var yRow = luma + y * format.Stride + visible.Left;
+                    var uvRow = chroma + (y >> 1) * format.Stride;
+                    var o = output + row * width * 4;
+                    for (var i = 0; i < width; i++)
+                    {
+                        var x = visible.Left + i;
+                        var uv = uvRow + (x & ~1);
+                        var l = (yRow[i] - c.LumaOffset) * c.Luma;
+                        int u = uv[0] - 128, v = uv[1] - 128;
+                        o[0] = Clamp(l + c.BlueU * u);
+                        o[1] = Clamp(l - c.GreenU * u - c.GreenV * v);
+                        o[2] = Clamp(l + c.RedV * v);
+                        o[3] = 255;
+                        o += 4;
+                    }
+                }
+            }
+        }
+
+        private static byte Clamp(int value) => (byte)Math.Clamp((value + 32768) >> 16, 0, 255);
+
+        int IMFSampleGrabberSinkCallback.OnClockStart(long systemTime, long clockStartOffset) => 0;
+        int IMFSampleGrabberSinkCallback.OnClockStop(long systemTime) => 0;
+        int IMFSampleGrabberSinkCallback.OnClockPause(long systemTime) => 0;
+        int IMFSampleGrabberSinkCallback.OnClockRestart(long systemTime) => 0;
+        int IMFSampleGrabberSinkCallback.OnClockSetRate(long systemTime, float rate) => 0;
+        int IMFSampleGrabberSinkCallback.OnSetPresentationClock(IntPtr clock) => 0;
+        int IMFSampleGrabberSinkCallback.OnShutdown() => 0;
+    }
+
+    /// <summary>
+    /// Y'CbCr to RGB as 16.16 fixed-point factors: R = Y + RedV·Cr, G = Y −
+    /// GreenU·Cb − GreenV·Cr, B = Y + BlueU·Cb, after scaling studio-range
+    /// values (16–235, chroma 16–240) out to 0–255.
+    /// </summary>
+    internal sealed record YuvToRgb(int LumaOffset, int Luma, int RedV, int GreenU, int GreenV, int BlueU)
+    {
+        /// <param name="matrix">An MFVideoTransferMatrix; unknown means BT.709 for HD and BT.601 below it.</param>
+        public static YuvToRgb For(uint matrix, bool hd, bool fullRange)
+        {
+            var (kr, kb) = matrix switch
+            {
+                1 => (0.2126, 0.0722),                // BT.709
+                2 => (0.299, 0.114),                  // BT.601
+                3 => (0.212, 0.087),                  // SMPTE 240M
+                4 or 5 => (0.2627, 0.0593),           // BT.2020
+                _ => hd ? (0.2126, 0.0722) : (0.299, 0.114),
+            };
+            var kg = 1 - kr - kb;
+            var luma = fullRange ? 1.0 : 255.0 / 219;
+            var chroma = fullRange ? 1.0 : 255.0 / 224;
+            int Fixed(double value) => (int)Math.Round(value * 65536);
+            return new YuvToRgb(
+                fullRange ? 0 : 16,
+                Fixed(luma),
+                Fixed(chroma * (2 - 2 * kr)),
+                Fixed(chroma * (2 - 2 * kb) * kb / kg),
+                Fixed(chroma * (2 - 2 * kr) * kr / kg),
+                Fixed(chroma * (2 - 2 * kb)));
+        }
+    }
+
+    /// <summary>
+    /// Calls through vtables, for objects used from Media Foundation's threads,
+    /// where a runtime wrapper would try to marshal the call to the apartment
+    /// that made it. Slots count IUnknown's three methods.
+    /// </summary>
+    private static unsafe class Vtable
+    {
+        private static void** Of(IntPtr obj) => *(void***)obj;
+
+        /// <summary>IMFActivate::ActivateObject, after IMFAttributes' 30 methods.</summary>
+        public static int ActivateObject(IntPtr activate, Guid iid, out IntPtr obj)
+        {
+            var result = IntPtr.Zero;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)Of(activate)[33])(activate, &iid, &result);
+            obj = result;
+            return hr;
+        }
+
+        /// <summary>IMFStreamSink::GetMediaTypeHandler, then IMFMediaTypeHandler::GetCurrentMediaType.</summary>
+        public static int GetCurrentMediaType(IntPtr streamSink, out IntPtr type)
+        {
+            IntPtr handler = IntPtr.Zero, result = IntPtr.Zero;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Of(streamSink)[9])(streamSink, &handler);
+            if (hr >= 0)
+            {
+                hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Of(handler)[7])(handler, &result);
+                Marshal.Release(handler);
+            }
+            type = result;
+            return hr;
+        }
+
+        /// <summary>IMFAttributes::GetUINT32.</summary>
+        public static int GetUInt32(IntPtr attributes, Guid key, out uint value)
+        {
+            uint result = 0;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, uint*, int>)Of(attributes)[7])(attributes, &key, &result);
+            value = result;
+            return hr;
+        }
+
+        /// <summary>IMFAttributes::GetUINT64.</summary>
+        public static int GetUInt64(IntPtr attributes, Guid key, out ulong value)
+        {
+            ulong result = 0;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, ulong*, int>)Of(attributes)[8])(attributes, &key, &result);
+            value = result;
+            return hr;
+        }
+
+        /// <summary>An MFVideoArea blob (IMFAttributes::GetBlob) as a rectangle; its offsets are 16.16 fixed point.</summary>
+        public static Rect? GetArea(IntPtr attributes, Guid key)
+        {
+            var area = stackalloc int[4];
+            uint size = 0;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, Guid*, int*, uint, uint*, int>)Of(attributes)[15])(attributes, &key, area, 16, &size) < 0
+                || size != 16 || area[2] <= 0 || area[3] <= 0)
+                return null;
+            int left = area[0] >> 16, top = area[1] >> 16;
+            return new Rect { Left = left, Top = top, Right = left + area[2], Bottom = top + area[3] };
         }
     }
 
@@ -435,6 +901,17 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
     private static readonly Guid MF_SD_LANGUAGE = new("00af2180-bdc2-423c-abca-f503593bc121");
     private static readonly Guid MF_SD_STREAM_NAME = new("4f1b099d-d314-41e5-a781-7fefaa4c501f");
     private static readonly Guid MFMediaType_Audio = new("73647561-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MF_MT_SUBTYPE = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
+    private static readonly Guid MF_MT_FRAME_SIZE = new("1652c33d-d6b2-4012-b834-72030849a37d");
+    private static readonly Guid MF_MT_PIXEL_ASPECT_RATIO = new("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6");
+    private static readonly Guid MF_MT_DEFAULT_STRIDE = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
+    private static readonly Guid MF_MT_MINIMUM_DISPLAY_APERTURE = new("d7388766-18fe-48c6-a177-ee894867c8c4");
+    private static readonly Guid MF_MT_GEOMETRIC_APERTURE = new("66758743-7e5f-400d-980a-aa8596c85696");
+    private static readonly Guid MFVideoFormat_NV12 = new("3231564e-0000-0010-8000-00aa00389b71");
+    private static readonly Guid MF_MT_YUV_MATRIX = new("3e23d450-2c75-4d25-a00e-b91670d12327");
+    private static readonly Guid MF_MT_VIDEO_NOMINAL_RANGE = new("c21b8ee5-b956-4071-8daf-325edf5cab11");
+    private const uint MFNominalRange_0_255 = 1;
     private static readonly Guid MR_STREAM_VOLUME_SERVICE = new("f8b5fa2f-32ef-46f5-b172-1321212fb2c4");
 
     [DllImport("mfplay.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
@@ -443,6 +920,12 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
     [DllImport("mf.dll", ExactSpelling = true)]
     private static extern int MFCreateAudioRenderer(IntPtr attributes, out IMFMediaSink sink);
+
+    [DllImport("mf.dll", ExactSpelling = true)]
+    private static extern int MFCreateSampleGrabberSinkActivate(IntPtr mediaType, IMFSampleGrabberSinkCallback callback, out IntPtr activate);
+
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    private static extern int MFCreateMediaType(out IntPtr mediaType);
 
     [DllImport("ole32.dll", ExactSpelling = true)]
     private static extern int PropVariantClear(ref PropVariant value);
@@ -578,12 +1061,68 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
     }
 
     // ---------------------------------------------------------------------
+    // The sample grabber and the media type it asks for (mfidl.h, mfobjects.h)
+    // ---------------------------------------------------------------------
+
+    // IMFClockStateSink's methods, then its own.
+    [ComImport, Guid("8c7b80bf-ee42-4b59-b1df-55668e1bdca8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFSampleGrabberSinkCallback
+    {
+        [PreserveSig] int OnClockStart(long systemTime, long clockStartOffset);
+        [PreserveSig] int OnClockStop(long systemTime);
+        [PreserveSig] int OnClockPause(long systemTime);
+        [PreserveSig] int OnClockRestart(long systemTime);
+        [PreserveSig] int OnClockSetRate(long systemTime, float rate);
+        [PreserveSig] int OnSetPresentationClock(IntPtr clock);
+        [PreserveSig] int OnProcessSample(in Guid majorMediaType, uint sampleFlags, long sampleTime, long sampleDuration, IntPtr sampleBuffer, uint sampleSize);
+        [PreserveSig] int OnShutdown();
+    }
+
+    // Every method, in vtable order, even the unused ones.
+    [ComImport, Guid("2cd2d921-c447-44a7-a13c-4adabfc247e3"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMFAttributes
+    {
+        [PreserveSig] int GetItem(in Guid key, IntPtr value);
+        [PreserveSig] int GetItemType(in Guid key, out int type);
+        [PreserveSig] int CompareItem(in Guid key, IntPtr value, [MarshalAs(UnmanagedType.Bool)] out bool result);
+        [PreserveSig] int Compare(IntPtr other, int matchType, [MarshalAs(UnmanagedType.Bool)] out bool result);
+        [PreserveSig] int GetUINT32(in Guid key, out uint value);
+        [PreserveSig] int GetUINT64(in Guid key, out ulong value);
+        [PreserveSig] int GetDouble(in Guid key, out double value);
+        [PreserveSig] int GetGUID(in Guid key, out Guid value);
+        [PreserveSig] int GetStringLength(in Guid key, out uint length);
+        [PreserveSig] int GetString(in Guid key, IntPtr value, uint size, IntPtr length);
+        [PreserveSig] int GetAllocatedString(in Guid key, out IntPtr value, out uint length);
+        [PreserveSig] int GetBlobSize(in Guid key, out uint size);
+        [PreserveSig] int GetBlob(in Guid key, IntPtr buffer, uint size, IntPtr blobSize);
+        [PreserveSig] int GetAllocatedBlob(in Guid key, out IntPtr buffer, out uint size);
+        [PreserveSig] int GetUnknown(in Guid key, in Guid iid, out IntPtr obj);
+        [PreserveSig] int SetItem(in Guid key, IntPtr value);
+        [PreserveSig] int DeleteItem(in Guid key);
+        [PreserveSig] int DeleteAllItems();
+        [PreserveSig] int SetUINT32(in Guid key, uint value);
+        [PreserveSig] int SetUINT64(in Guid key, ulong value);
+        [PreserveSig] int SetDouble(in Guid key, double value);
+        [PreserveSig] int SetGUID(in Guid key, in Guid value);
+        [PreserveSig] int SetString(in Guid key, [MarshalAs(UnmanagedType.LPWStr)] string value);
+        [PreserveSig] int SetBlob(in Guid key, IntPtr buffer, uint size);
+        [PreserveSig] int SetUnknown(in Guid key, IntPtr obj);
+        [PreserveSig] int LockStore();
+        [PreserveSig] int UnlockStore();
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetItemByIndex(uint index, out Guid key, IntPtr value);
+        [PreserveSig] int CopyAllItems(IntPtr destination);
+    }
+
+    // ---------------------------------------------------------------------
     // Win32 window for the video
     // ---------------------------------------------------------------------
 
     private const uint WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000, WS_CLIPCHILDREN = 0x02000000;
     private const uint WM_SIZE = 0x0005, WM_PAINT = 0x000F, WM_ERASEBKGND = 0x0014, WM_LBUTTONUP = 0x0202;
     private const int BLACK_BRUSH = 4;
+    private const int HALFTONE = 4;
+    private const uint DIB_RGB_COLORS = 0, SRCCOPY = 0x00CC0020;
     private static readonly IntPtr IDC_ARROW = 32512;
 
     private delegate IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -640,6 +1179,42 @@ public sealed class MediaFoundationPlayback : IMediaPlayback
 
     [DllImport("user32.dll")]
     private static extern int FillRect(IntPtr hdc, ref Rect rect, IntPtr brush);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hwnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    private static extern int SetStretchBltMode(IntPtr hdc, int mode);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool SetBrushOrgEx(IntPtr hdc, int x, int y, IntPtr previous);
+
+    [DllImport("gdi32.dll")]
+    private static extern int StretchDIBits(IntPtr hdc, int xDest, int yDest, int destWidth, int destHeight,
+        int xSrc, int ySrc, int srcWidth, int srcHeight, byte[] bits, ref BitmapInfoHeader info, uint usage, uint rop);
+
+    /// <summary>BITMAPINFOHEADER; 32-bit RGB needs no color table after it.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        public uint Size;
+        public int Width;
+        public int Height;
+        public ushort Planes;
+        public ushort BitCount;
+        public uint Compression;
+        public uint SizeImage;
+        public int XPelsPerMeter;
+        public int YPelsPerMeter;
+        public uint ClrUsed;
+        public uint ClrImportant;
+    }
 
     [DllImport("user32.dll")]
     private static extern IntPtr LoadCursorW(IntPtr instance, IntPtr name);
