@@ -55,6 +55,9 @@ internal static class MarkdownView
 
     public static MarkdownDocument Parse(string text) => Markdown.Parse(text, Pipeline);
 
+    /// <summary>A file a click shouldn't open: it would run a program.</summary>
+    public static bool IsRunnable(string path) => RunnableExtensions.Contains(Path.GetExtension(path));
+
     /// <summary>
     /// The file a relative or file: link points to, or null for web links,
     /// in-page anchors and anything that isn't a path.

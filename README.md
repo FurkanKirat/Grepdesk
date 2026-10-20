@@ -166,7 +166,16 @@ shows, so you can make it the default app for, say, `.txt` or `.md` files.
 - **PDF**: every page, drawn as you scroll, with zoom
 - **Video and audio**: played with Windows' own codecs, with a seek bar and
   volume (`K` play/pause, arrows seek, `M` mute)
-- **Word and Excel**: their text
+- **Word (.docx)**: laid out as pages, with headings, bold/italic, lists,
+  tables, pictures, links, headers and footers with page numbers, and
+  footnotes; zoom like a PDF
+- **Editing Word documents**: Edit turns the pages into an editor with a
+  formatting bar: typing, paragraph styles and headings, font and size,
+  bold/italic/underline/strikethrough, text and highlight colors, alignment,
+  bullets and numbering, indent, page breaks, cut/copy/paste and undo.
+  Saving rewrites only what changed, so pictures, headers, comments and
+  anything else in the file are kept as they were
+- **Excel**: its text
 - Anything else: shown as text if it is text, otherwise its thumbnail, type,
   size and date
 

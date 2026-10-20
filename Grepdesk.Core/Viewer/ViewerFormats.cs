@@ -20,7 +20,9 @@ public enum ViewerKind
     Pdf,
     Video,
     Audio,
-    /// <summary>Office documents: their extracted text, read-only.</summary>
+    /// <summary>Word documents: laid out as pages, read-only.</summary>
+    Word,
+    /// <summary>Other Office documents: their extracted text, read-only.</summary>
     Document,
     /// <summary>Anything else: shown as text if it turns out to be text, otherwise a summary card.</summary>
     Other
@@ -64,9 +66,11 @@ public static class ViewerFormats
     public static readonly IReadOnlySet<string> AudioExtensions = Set(
         ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".aiff");
 
+    public static readonly IReadOnlySet<string> WordExtensions = Set(".docx");
+
     public static readonly IReadOnlySet<string> DocumentExtensions = new HashSet<string>(
         ExtractorRegistry.AllSupportedExtensions.Where(e =>
-            ExtractorRegistry.TryGetExtractor(e, out var x) && x is not PlainTextExtractor and not PdfExtractor),
+            ExtractorRegistry.TryGetExtractor(e, out var x) && x is not PlainTextExtractor and not PdfExtractor && !WordExtensions.Contains(e)),
         StringComparer.OrdinalIgnoreCase);
 
     public static ViewerKind KindOf(string path)
@@ -79,6 +83,7 @@ public static class ViewerFormats
         if (string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase)) return ViewerKind.Pdf;
         if (VideoExtensions.Contains(ext)) return ViewerKind.Video;
         if (AudioExtensions.Contains(ext)) return ViewerKind.Audio;
+        if (WordExtensions.Contains(ext)) return ViewerKind.Word;
         if (DocumentExtensions.Contains(ext)) return ViewerKind.Document;
         return ViewerKind.Other;
     }
@@ -139,6 +144,7 @@ public static class ViewerFormats
         Add("ShellImages", ShellImageExtensions, false);
         Add("Video", VideoExtensions, true);
         Add("Audio", AudioExtensions, true);
+        Add("Word", WordExtensions, true);
         Add("Documents", DocumentExtensions, false);
         return categories;
     }

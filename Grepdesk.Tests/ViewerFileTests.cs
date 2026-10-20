@@ -28,7 +28,8 @@ public class ViewerFileTests
     [InlineData("manual.pdf", ViewerKind.Pdf)]
     [InlineData("clip.mkv", ViewerKind.Video)]
     [InlineData("song.flac", ViewerKind.Audio)]
-    [InlineData("report.docx", ViewerKind.Document)]
+    [InlineData("report.docx", ViewerKind.Word)]
+    [InlineData("sheet.xlsx", ViewerKind.Document)]
     [InlineData("setup.exe", ViewerKind.Other)]
     [InlineData("noextension", ViewerKind.Other)]
     public void Every_file_gets_a_way_to_be_shown(string name, ViewerKind expected) =>
@@ -68,7 +69,8 @@ public class ViewerFileTests
         var defaults = ViewerFormats.OpenWithExtensions.ToList();
 
         Assert.DoesNotContain(".heic", defaults);
-        Assert.DoesNotContain(".docx", defaults);
+        Assert.DoesNotContain(".xlsx", defaults);
+        Assert.Contains(".docx", defaults);
         Assert.Subset(ViewerFormats.AssociableExtensions.ToHashSet(StringComparer.OrdinalIgnoreCase), defaults.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 

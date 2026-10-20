@@ -67,6 +67,9 @@ public partial class FileViewerWindow : Window
     private bool _loading;
     private bool _closeConfirmed;
     private IViewerBody? _body;
+    /// <summary>The file is a Word document: Edit switches between its pages and the Word editor.</summary>
+    private bool _word;
+    private DocxEditor? _docx;
     private FileEncoding? _encoding;
     private CancellationTokenSource? _statusCts;
 
@@ -77,7 +80,8 @@ public partial class FileViewerWindow : Window
     public string? FilePath { get; private set; }
 
     /// <summary>The editor holds edits that aren't saved yet.</summary>
-    public bool HasUnsavedChanges => _encoding is not null && !Editor.Document.UndoStack.IsOriginalFile;
+    public bool HasUnsavedChanges =>
+        (_encoding is not null && !Editor.Document.UndoStack.IsOriginalFile) || _docx?.IsDirty == true;
 
     private bool IsEditing => EditToggle.IsVisible && EditToggle.IsChecked == true;
 
@@ -110,8 +114,14 @@ public partial class FileViewerWindow : Window
             if (_preferRendered && EditToggle.IsChecked == true) EditToggle.IsChecked = false;
             ShowTextBody();
         };
-        EditToggle.IsCheckedChanged += (_, _) =>
+        EditToggle.IsCheckedChanged += async (_, _) =>
         {
+            if (_word)
+            {
+                SaveButton.IsVisible = IsEditing;
+                if (!_loading) await SwitchWordEditingAsync(IsEditing);
+                return;
+            }
             Editor.IsReadOnly = !IsEditing;
             SaveButton.IsVisible = IsEditing;
             if (_loading) return;
@@ -180,6 +190,9 @@ public partial class FileViewerWindow : Window
                     break;
                 case ViewerKind.Video or ViewerKind.Audio:
                     await LoadMediaAsync(path, kind == ViewerKind.Video, token);
+                    break;
+                case ViewerKind.Word:
+                    await LoadWordAsync(path, token, editIfStandalone: true);
                     break;
                 case ViewerKind.Document:
                     await LoadDocumentAsync(path, token);
@@ -258,7 +271,119 @@ public partial class FileViewerWindow : Window
         if (!MarkdownScroll.IsVisible) Dispatcher.UIThread.Post(() => SelectHighlight(file.Text), DispatcherPriority.Loaded);
     }
 
-    /// <summary>Word, Excel and other documents: their text, read-only.</summary>
+    /// <summary>Word documents as pages; their text alone when the layout can't be read.</summary>
+    private async Task LoadWordAsync(string path, CancellationToken token, bool editIfStandalone)
+    {
+        var size = new FileInfo(path).Length;
+        if (size > MaxDocumentBytes)
+        {
+            await ShowCardAsync(path, Loc.Get("ViewerTooLarge", Format.Size(MaxDocumentBytes)), token);
+            return;
+        }
+
+        DocxPreview preview;
+        try
+        {
+            preview = await Task.Run(() => DocxPreview.Load(path, token), token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            // Damaged, password protected (an encrypted package isn't a zip), or something unexpected in the XML.
+            ErrorLog.Write("docx viewer", e.ToString());
+            if (!token.IsCancellationRequested) await LoadDocumentAsync(path, token);
+            return;
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            preview.Dispose();
+            return;
+        }
+        SetInfo(Format.Size(size));
+        ShowBody(new DocxView(preview, _highlight,
+            open: target => OpenRequested?.Invoke(target),
+            reveal: target => ShowInFolderRequested?.Invoke(target)));
+
+        _word = true;
+        SetEditToggle(false);
+        EditToggle.IsVisible = true;
+        // Opened from Explorer, a document is there to be worked on, as in Word.
+        if (_standalone && editIfStandalone) EditToggle.IsChecked = true;
+    }
+
+    private void SetEditToggle(bool on)
+    {
+        _loading = true;
+        EditToggle.IsChecked = on;
+        _loading = false;
+        SaveButton.IsVisible = on;
+    }
+
+    /// <summary>From the pages to the editor and back. Leaving the editor with changes asks to save them first.</summary>
+    private async Task SwitchWordEditingAsync(bool editing)
+    {
+        if (FilePath is not { } path) return;
+        var token = _cts.Token;
+
+        if (!editing)
+        {
+            if (_docx is { IsDirty: true } && !await ConfirmLeaveAsync())
+            {
+                SetEditToggle(true);
+                return;
+            }
+            DisposeBody();
+            ShowMessage(Loc.Get("PreviewLoading"));
+            await LoadWordAsync(path, token, editIfStandalone: false);
+            UpdateTitle();
+            return;
+        }
+
+        DocxEditDocument document;
+        DocxDocument layout;
+        Dictionary<byte[], Bitmap> images = new(ReferenceEqualityComparer.Instance);
+        try
+        {
+            (document, layout) = await Task.Run(() =>
+            {
+                var opened = DocxEditDocument.Open(path, token);
+                var laid = opened.Layout(token);
+                DocxPreview.From(laid, "", images, token, ownsImages: false);
+                return (opened, laid);
+            }, token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            ErrorLog.Write("docx editor", e.ToString());
+            foreach (var bitmap in images.Values) bitmap.Dispose();
+            if (FilePath == path) ShowStatus(Loc.Get("DocxEditFailed", e.Message), ok: false);
+            SetEditToggle(false);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var bitmap in images.Values) bitmap.Dispose();
+            return;
+        }
+        if (token.IsCancellationRequested || FilePath != path || !IsEditing)
+        {
+            foreach (var bitmap in images.Values) bitmap.Dispose();
+            return;
+        }
+
+        DisposeBody();
+        var editor = new DocxEditor(document, path, images);
+        editor.Changed += UpdateTitle;
+        ShowBody(new DocxView(editor.Preview(layout, token), null,
+            open: target => OpenRequested?.Invoke(target),
+            reveal: target => ShowInFolderRequested?.Invoke(target),
+            editor));
+        _docx = editor;
+        SaveButton.IsVisible = true;
+        UpdateTitle();
+    }
+
+    /// <summary>Excel and other documents: their text, read-only.</summary>
     private async Task LoadDocumentAsync(string path, CancellationToken token)
     {
         var size = new FileInfo(path).Length;
@@ -377,6 +502,23 @@ public partial class FileViewerWindow : Window
 
     private async Task<bool> SaveAsync()
     {
+        if (_docx is { } docx)
+        {
+            try
+            {
+                // On the UI thread: the document is edited there, and saving reads it.
+                docx.Save();
+                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                UpdateTitle();
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Most often: the file is open in Word, which locks it.
+                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                return false;
+            }
+        }
         if (FilePath is null || _encoding is null || !IsEditing) return false;
         var path = FilePath;
         var text = Editor.Text;
@@ -534,6 +676,7 @@ public partial class FileViewerWindow : Window
 
     private void DisposeBody()
     {
+        _docx = null;
         BodyHost.Content = null;
         BodyHost.IsVisible = false;
         _body?.Dispose();
@@ -626,6 +769,7 @@ public partial class FileViewerWindow : Window
     /// <summary>Back to an empty window before the next file loads.</summary>
     private void Reset()
     {
+        _word = false;
         DisposeBody();
         SetMarkdown(null);
         SetMessageImage(null);
@@ -662,7 +806,8 @@ public partial class FileViewerWindow : Window
             return;
         }
 
-        var typing = FocusManager?.GetFocusedElement() is TextBox || (IsEditing && Editor.IsKeyboardFocusWithin);
+        var typing = FocusManager?.GetFocusedElement() is TextBox || (IsEditing && Editor.IsKeyboardFocusWithin) ||
+                     _body is DocxView { IsEditing: true, IsKeyboardFocusWithin: true };
         if (!typing && !ctrl && _body?.HandleKey(e) == true)
         {
             e.Handled = true;
