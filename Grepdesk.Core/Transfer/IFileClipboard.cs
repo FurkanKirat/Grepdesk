@@ -10,4 +10,7 @@ public interface IFileClipboard
 
     /// <summary>After a successful cut-and-paste the files are gone from their source, so the clipboard is emptied (as Explorer does).</summary>
     void Clear();
+
+    /// <summary>Puts files on the clipboard the way the file manager's Copy / Cut does, so they paste there too. False if that isn't supported.</summary>
+    bool SetFiles(ClipboardFiles files) => false;
 }

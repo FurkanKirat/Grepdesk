@@ -1,0 +1,285 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:b="using:Grepdesk.UI.Browse"
+             xmlns:ui="using:Grepdesk.UI"
+             x:Class="Grepdesk.UI.Browse.BrowseView"
+             Background="Transparent">
+
+    <UserControl.Styles>
+        <!-- Toolbar: icon-only buttons -->
+        <Style Selector="Button.tool">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="7"/>
+            <Setter Property="CornerRadius" Value="6"/>
+        </Style>
+        <Style Selector="Button.tool:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+        <Style Selector="Button.tool PathIcon, ToggleButton.tool PathIcon">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="Button.tool:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Button.tool:disabled PathIcon">
+            <Setter Property="Foreground" Value="#45475a"/>
+        </Style>
+        <Style Selector="ToggleButton.tool">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="7"/>
+            <Setter Property="CornerRadius" Value="6"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+        </Style>
+
+        <!-- Address bar -->
+        <Style Selector="Border.address">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Cursor" Value="Ibeam"/>
+        </Style>
+        <Style Selector="Button.crumb">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.crumb:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+        </Style>
+        <Style Selector="TextBox.address">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBox.address:focus /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="TextBox.filter">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <!-- Places sidebar -->
+        <Style Selector="ListBox.places">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.places ListBoxItem">
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+        </Style>
+        <Style Selector="ListBox.places ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#252536"/>
+        </Style>
+        <Style Selector="ListBox.places ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+        <Style Selector="ListBox.places ListBoxItem:selected">
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+
+        <!-- File list -->
+        <Style Selector="ListBox.files">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+        <Style Selector="ListBox.files ListBoxItem">
+            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="MinHeight" Value="0"/>
+        </Style>
+        <Style Selector="ListBox.files ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#232334"/>
+        </Style>
+        <Style Selector="ListBox.files ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+        </Style>
+        <Style Selector="ListBox.files ListBoxItem:selected:focus-within /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#3b3d55"/>
+        </Style>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="Foreground" Value="#a6adc8"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+        <Style Selector="TextBox.rename">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="4,1"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Background" Value="#11111b"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#89b4fa"/>
+        </Style>
+        <Style Selector="Button.column">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#7f849c"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="0,6"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="CornerRadius" Value="0"/>
+        </Style>
+        <Style Selector="Button.column:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel>
+        <!-- ===== Toolbar: navigation, address, filter ===== -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" Margin="0,0,8,0">
+                <Button x:Name="BackButton" Classes="tool" IsEnabled="False">
+                    <PathIcon Data="{StaticResource IconBack}"/>
+                </Button>
+                <Button x:Name="ForwardButton" Classes="tool" IsEnabled="False">
+                    <PathIcon Data="{StaticResource IconForward}"/>
+                </Button>
+                <Button x:Name="UpButton" Classes="tool" IsEnabled="False">
+                    <PathIcon Data="{StaticResource IconUp}"/>
+                </Button>
+                <Button x:Name="RefreshButton" Classes="tool">
+                    <PathIcon Data="{StaticResource IconRefresh}"/>
+                </Button>
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" Margin="8,0,0,0">
+                <TextBox x:Name="FilterBox" Classes="filter" Width="220" Margin="0,0,4,0"/>
+                <Button x:Name="SearchBelowButton" Classes="tool">
+                    <PathIcon Data="{StaticResource IconSearch}"/>
+                </Button>
+                <Button x:Name="NewFolderButton" Classes="tool">
+                    <PathIcon Data="{StaticResource IconFolderPlus}"/>
+                </Button>
+                <ToggleButton x:Name="HiddenToggle" Classes="tool">
+                    <PathIcon Data="{StaticResource IconEye}"/>
+                </ToggleButton>
+            </StackPanel>
+
+            <Border x:Name="AddressBar" Classes="address">
+                <Panel>
+                    <ScrollViewer x:Name="CrumbScroller"
+                                  HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="Crumbs" Orientation="Horizontal" VerticalAlignment="Center" Margin="3,0"/>
+                    </ScrollViewer>
+                    <TextBox x:Name="AddressBox" Classes="address" IsVisible="False"/>
+                </Panel>
+            </Border>
+        </DockPanel>
+
+        <!-- ===== Status line ===== -->
+        <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Classes="label" Margin="2,8,0,0"
+                   TextTrimming="CharacterEllipsis"/>
+
+        <Grid ColumnDefinitions="190,*,Auto">
+            <!-- ===== Places ===== -->
+            <ScrollViewer Grid.Column="0" Margin="0,0,10,0" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="10">
+                    <ListBox x:Name="PlacesList" Classes="places">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="b:PlaceRow">
+                                <StackPanel Orientation="Horizontal" Spacing="9">
+                                    <PathIcon Data="{Binding Icon}" Width="15" Height="15" Foreground="#89b4fa"/>
+                                    <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <ListBox x:Name="DrivesList" Classes="places">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="b:PlaceRow">
+                                <DockPanel>
+                                    <PathIcon DockPanel.Dock="Left" Data="{Binding Icon}" Width="15" Height="15"
+                                              Foreground="#94e2d5" Margin="0,0,9,0" VerticalAlignment="Top"/>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="{Binding Label}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                        <ProgressBar IsVisible="{Binding HasUsage}" Value="{Binding UsedPercent}"
+                                                     Minimum="0" Maximum="100" Height="4" MinHeight="4"
+                                                     Foreground="#89b4fa" Background="#313244"/>
+                                        <TextBlock IsVisible="{Binding HasDetail}" Text="{Binding Detail}"
+                                                   FontSize="10" Foreground="#6c7086" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ===== Files ===== -->
+            <Border Grid.Column="1" Classes="card" Padding="0">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" BorderBrush="#313244" BorderThickness="0,0,0,1" Padding="11,0,14,0">
+                        <Grid ColumnDefinitions="*,140,120,90">
+                            <Button x:Name="NameColumn" Grid.Column="0" Classes="column" Padding="28,6,0,6"/>
+                            <Button x:Name="ModifiedColumn" Grid.Column="1" Classes="column"/>
+                            <Button x:Name="TypeColumn" Grid.Column="2" Classes="column"/>
+                            <Button x:Name="SizeColumn" Grid.Column="3" Classes="column" HorizontalContentAlignment="Right"/>
+                        </Grid>
+                    </Border>
+                    <Panel>
+                        <ListBox x:Name="FileList" Classes="files" SelectionMode="Multiple" IsTextSearchEnabled="True" Focusable="True">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="b:BrowseRow">
+                                    <Grid ColumnDefinitions="*,140,120,90" Opacity="{Binding Opacity}" Background="Transparent"
+                                          ToolTip.Tip="{Binding FullPath}" ToolTip.ShowDelay="900">
+                                        <DockPanel Grid.Column="0" Margin="0,0,10,0">
+                                            <Panel DockPanel.Dock="Left" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                <Image Source="{Binding Icon}" Width="18" Height="18"
+                                                       RenderOptions.BitmapInterpolationMode="HighQuality"/>
+                                                <PathIcon Data="{StaticResource IconFolder}" Width="17" Height="17"
+                                                          Foreground="#f9e2af" IsVisible="{Binding ShowFolderIcon}"/>
+                                                <Border IsVisible="{Binding ShowBadge}" Background="{Binding Kind.Background}"
+                                                        BorderBrush="{Binding Kind.Foreground}" BorderThickness="1" CornerRadius="3">
+                                                    <TextBlock Text="{Binding Kind.Label}" Foreground="{Binding Kind.Foreground}"
+                                                               FontSize="6" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </Panel>
+                                            <Panel>
+                                                <TextBlock Text="{Binding Name}" IsVisible="{Binding IsNotRenaming}"
+                                                           Foreground="#cdd6f4" FontSize="13" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <!-- Negative margin: the box is taller than the text it covers, and the row shouldn't grow -->
+                                                <TextBox Classes="rename" IsVisible="{Binding IsRenaming}" Margin="-5,-4,0,-4"/>
+                                            </Panel>
+                                        </DockPanel>
+                                        <TextBlock Grid.Column="1" Classes="cell" Text="{Binding ModifiedText}"/>
+                                        <TextBlock Grid.Column="2" Classes="cell" Text="{Binding TypeText}"/>
+                                        <TextBlock Grid.Column="3" Classes="cell" Text="{Binding SizeText}" TextAlignment="Right"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="EmptyText" IsVisible="False" Foreground="#7f849c" FontSize="13"
+                                   TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                    </Panel>
+                </DockPanel>
+            </Border>
+
+            <ui:PreviewPane x:Name="Preview" Grid.Column="2" Width="320" Margin="10,0,0,0"/>
+        </Grid>
+    </DockPanel>
+</UserControl>

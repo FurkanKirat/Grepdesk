@@ -61,6 +61,10 @@ public static class PlatformShellFactory
     public static IShellPreview? CreateShellPreview() =>
         OperatingSystem.IsWindows() ? new WindowsShellPreview() : null;
 
+    /// <summary>The file manager's file and folder icons; null where not supported (a type badge is drawn instead).</summary>
+    public static IShellIcons? CreateShellIcons() =>
+        OperatingSystem.IsWindows() ? new WindowsShellIcons() : null;
+
     /// <summary>Video and audio playback in the viewer; null where not supported.</summary>
     public static IMediaPlayback? CreateMediaPlayback() =>
         OperatingSystem.IsWindows() ? new MediaFoundationPlayback() : null;

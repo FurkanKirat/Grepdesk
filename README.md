@@ -61,6 +61,23 @@ Free, no ads, no telemetry; the only network request is the optional update chec
 
 ## Features
 
+### 📁 Files
+A folder browser, the first page, so Grepdesk can be where you work with files
+rather than a tool you visit ([roadmap](ROADMAP.md#explorer-replacement)):
+- Back / forward / up (`Alt+←/→/↑`, `Backspace`, the mouse's side buttons), a
+  breadcrumb address bar you can type a path into (`Ctrl+L`), and a sidebar
+  with your user folders and drives (with free space)
+- Details list with Explorer's own icons; sort by name (naturally: `file2`
+  before `file10`), date, type or size, folders first; filter the folder as
+  you type (`Ctrl+F`), or search it and everything below with one click
+- Updates live as files appear, change or go; hidden items on request (`Ctrl+H`)
+- Rename in place (`F2`), new folder (`Ctrl+Shift+N`), Recycle Bin (`Delete`)
+- Cut, copy and paste (`Ctrl+X/C/V`) through the Windows clipboard, so it works
+  both ways with Explorer; pastes run as the fast copy / move job below.
+  `Ctrl+Shift+C` copies the paths
+- `Space` opens the viewer, the preview panel follows the selection, and the
+  right-click menu has zip, extract, terminal, your editors and Organize
+
 ### 🔍 File Name Search
 - Index a specific folder (or several) or your whole PC — or drop a folder on the window
 - Instant, debounced search as you type; the matched part of each name is highlighted
@@ -150,7 +167,8 @@ and follow the exe if it moves. On Windows 11 they appear under
 **Show more options**. Selecting many files launches one process per file;
 Grepdesk merges them into a single job.
 
-**Open with Grepdesk** works on files too: they open in the viewer and editor.
+**Open with Grepdesk** on a folder opens it on the Files page; on a file, in
+the viewer and editor.
 Grepdesk is also added to Explorer's **Open with** list for the file types it
 shows, so you can make it the default app for, say, `.txt` or `.md` files.
 

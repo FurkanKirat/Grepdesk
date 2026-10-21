@@ -58,7 +58,7 @@ public sealed class WindowsShellPreview : IShellPreview
         }
     }
 
-    private static ShellThumbnail? ReadPixels(IntPtr hbitmap)
+    internal static ShellThumbnail? ReadPixels(IntPtr hbitmap)
     {
         if (GetObject(hbitmap, Marshal.SizeOf<NativeBitmap>(), out var bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
             return null;
@@ -166,14 +166,14 @@ public sealed class WindowsShellPreview : IShellPreview
     private const int SIIGBF_THUMBNAILONLY = 0x08;
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeSize
+    internal struct NativeSize
     {
         public int cx;
         public int cy;
     }
 
     [ComImport, Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellItemImageFactory
+    internal interface IShellItemImageFactory
     {
         [PreserveSig] int GetImage(NativeSize size, int flags, out IntPtr phbm);
     }
@@ -203,7 +203,7 @@ public sealed class WindowsShellPreview : IShellPreview
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern int SHCreateItemFromParsingName(
+    internal static extern int SHCreateItemFromParsingName(
         string pszPath, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
         [MarshalAs(UnmanagedType.Interface)] out object ppv);
 
@@ -246,7 +246,7 @@ public sealed class WindowsShellPreview : IShellPreview
     private static extern int GetDIBits(IntPtr hdc, IntPtr hbm, uint start, uint cLines, byte[] lpvBits, ref BitmapInfoHeader lpbmi, uint usage);
 
     [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr ho);
+    internal static extern bool DeleteObject(IntPtr ho);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr hWnd);

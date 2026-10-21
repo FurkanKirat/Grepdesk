@@ -26,6 +26,15 @@ internal sealed class AppSettings
 
     public bool ShowPreview { get; set; } = true;
 
+    /// <summary>The folder browser lists hidden and system files too.</summary>
+    public bool ShowHiddenFiles { get; set; }
+
+    /// <summary>Where the folder browser was left, opened again on the next start.</summary>
+    public string? LastBrowseFolder { get; set; }
+
+    public Core.Browse.FolderSortColumn BrowseSortColumn { get; set; }
+    public bool BrowseSortDescending { get; set; }
+
     /// <summary>Extensions "Open with Grepdesk" registers for, or null for the defaults.</summary>
     public List<string>? OpenWithFileTypes { get; set; }
 

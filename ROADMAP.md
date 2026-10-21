@@ -46,6 +46,75 @@ order within each section.
   and drop, delete / move / undo flows, Organize, Free Up Space. These have
   no automated UI tests.
 
+## Explorer replacement
+
+Goal: Grepdesk as the everyday file manager and file opener, with search,
+disk usage, cleanup and the fast engines one click away. The folder browser
+becomes the first page; search runs in the folder being browsed. Phases in
+order; each one is usable on its own.
+
+### Phase 0: groundwork
+- [ ] **Resident process.** `SingleInstanceHost` also takes plain starts
+  (`OpenFolder`, `OpenFile` commands): a second launch hands its path over the
+  pipe and exits, the primary opens the window. Needed before Grepdesk opens
+  folders for Explorer: a cold Avalonia start is too slow for that.
+- [ ] **Tray icon and global hotkey** on top of the resident process.
+- [ ] **Split `MainWindow.axaml.cs`** (see Code health).
+- [ ] **Persisted index kept current from the NTFS USN journal**, so search
+  in the browsed folder is instant after a restart.
+
+### Phase 1: folder browser
+- [x] `FolderListing`, `NavigationHistory`, `AddressResolver` in Core, with tests.
+- [x] Browse page: back / forward / up / refresh, breadcrumb address bar that
+  turns into a text box (Ctrl+L), places sidebar (user folders, drives with
+  free space).
+- [x] Details list sorted by name / date / type / size, folders first;
+  filter the folder as you type (Ctrl+F); live updates from a file watcher.
+- [x] Keyboard: Enter, Backspace, Alt+←/→/↑, F5, type-ahead; Space opens
+  the viewer; the preview pane follows the selection.
+- [x] Opening a folder with Grepdesk (Explorer menu, command line) opens it
+  in the browser.
+- [x] Explorer's icons (`IShellItemImageFactory` on one STA thread), cached per
+  extension, per item for apps, shortcuts and folders; only for rows on screen.
+- [x] Remember the last folder and the sort order.
+- [ ] Resizable columns, remembered.
+- [ ] `.lnk` shortcuts to folders open in the browser instead of Explorer.
+
+### Phase 2: file operations
+- [x] Rename (F2), new folder (Ctrl+Shift+N), Recycle Bin (Delete), on a
+  multiple selection where it makes sense.
+- [x] Copy / cut / paste (Ctrl+C / X / V) through the system clipboard, so it
+  works both ways with Explorer; pastes run as the existing transfer job.
+- [ ] Ctrl+Z for rename, new folder, move and trash.
+- [ ] Drag and drop between folders and to / from Explorer.
+- [ ] **The system context menu** (`IContextMenu` hosting) so third-party
+  entries (7-Zip, Git, editors) show up. The hardest item in this phase.
+- [ ] Properties dialog (`SHObjectProperties`), "Open with" submenu.
+
+### Phase 3: better than Explorer
+- [ ] Tabs and a dual pane; restore them on start.
+- [ ] Search below the current folder from the index; folder size column.
+- [ ] Grid / thumbnail view, grouping.
+- [ ] Viewer: previous / next file in the folder with ←/→.
+- [ ] Browse into `.zip` (and later `.7z`, `.rar`, `.tar`) like a folder.
+
+### Phase 4: default file manager and opener
+- [ ] **"Use as default file manager"** setting: HKCU `open` verbs for
+  `Directory`, `Drive`, `Folder`, and Win+E. Virtual locations (`shell:`,
+  `::{CLSID}`, Control Panel, network, phones) are passed on to
+  `explorer.exe`. Turned off by the setting, `--unregister` and the
+  uninstaller; a start-up check restores Explorer if Grepdesk's entry points
+  at a missing exe.
+- [ ] Register under `RegisteredApplications` with `Capabilities`, so Grepdesk
+  shows in Settings → Default apps with all its types; a button that opens
+  that page (Windows only lets the user pick a default app).
+
+### Phase 5: polish and trust
+- [ ] Light theme / follow the system theme, Mica.
+- [ ] Cloud file states (OneDrive placeholders) in the list.
+- [ ] Code signing (see Before release): an unsigned default handler is
+  worse than an unsigned tool.
+
 ## Features
 
 - [ ] **Copy speed to another drive.** Copying 10,000 small files from C: to

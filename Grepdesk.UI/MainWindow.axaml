@@ -4,6 +4,7 @@
         xmlns:disk="using:Grepdesk.UI.DiskUsage"
         xmlns:cleanup="using:Grepdesk.UI.Cleanup"
         xmlns:organize="using:Grepdesk.UI.Organize"
+        xmlns:browse="using:Grepdesk.UI.Browse"
         x:Class="Grepdesk.UI.MainWindow"
         Title="Grepdesk"
         Icon="avares://Grepdesk.UI/Assets/icon.ico"
@@ -290,6 +291,12 @@
                 <ListBox x:Name="FeatureNav" Classes="nav">
                     <ListBoxItem>
                         <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconFolder}"/>
+                            <TextBlock x:Name="NavBrowseText" Classes="navText" Text="Files"/>
+                        </StackPanel>
+                    </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
                             <PathIcon Classes="navIcon" Data="{StaticResource IconSearch}"/>
                             <TextBlock x:Name="NavNameSearchText" Classes="navText" Text="File Name Search"/>
                         </StackPanel>
@@ -325,8 +332,11 @@
         <!-- ============================= PAGES ============================= -->
         <Panel x:Name="PageHost" Grid.Column="1" Margin="20,16,20,14">
 
+            <!-- ================ PAGE : FILES (folder browser) ================ -->
+            <browse:BrowseView x:Name="BrowsePage"/>
+
             <!-- ================ PAGE : FILE NAME SEARCH ================ -->
-            <DockPanel x:Name="NameSearchPage" DragDrop.AllowDrop="True" Background="Transparent">
+            <DockPanel x:Name="NameSearchPage" IsVisible="False" DragDrop.AllowDrop="True" Background="Transparent">
                 <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
                     <TextBlock x:Name="NameSearchTitle" Classes="pageTitle" Text="File Name Search"/>
                     <TextBlock x:Name="NameSearchSubtitle" Classes="pageSubtitle"/>

@@ -41,6 +41,13 @@ and work only inside it for anything that deletes or moves.
       the copy finished; cancel halfway leaves the source intact
 - [ ] Paste onto existing files: conflict dialog only when data would be lost;
       Skip / Overwrite / Keep both do what they say
+- [ ] Files → select several → `Delete` → one confirmation with the count;
+      they go to the Recycle Bin and the row after them is selected
+- [ ] Files → `F2` → only the name is selected, not the extension; Enter
+      renames, Esc keeps the old name; a taken name or `con.txt` is refused
+      with a message; changing only the case (`readme` → `README`) works
+- [ ] Files → `Ctrl+X` a file (row fades) → another folder → `Ctrl+V`: moved;
+      `Ctrl+C` in Grepdesk → paste in Explorer, and the other way round
 
 ## 4. Jobs from Explorer
 
@@ -48,7 +55,7 @@ and work only inside it for anything that deletes or moves.
 - [ ] Extract here / Extract to folder on a zip, including one with non-ASCII names
 - [ ] Copy a large folder: progress, speed and time left move; Pause and Resume
       work; Cancel stops it
-- [ ] Open with Grepdesk on a folder and on a folder background: search opens there
+- [ ] Open with Grepdesk on a folder and on a folder background: the Files page opens there
 
 ## 5. Search
 
@@ -61,7 +68,9 @@ and work only inside it for anything that deletes or moves.
 
 ## 6. Keyboard (Settings shows the full table)
 
-- [ ] `Ctrl+F` focuses search from any page; `Ctrl+1` … `Ctrl+5` switch pages; `Ctrl+,` opens Settings
+- [ ] `Ctrl+F` focuses search from any page (the filter box on Files); `Ctrl+1` … `Ctrl+6` switch pages; `Ctrl+,` opens Settings
+- [ ] Files: `Enter` / double-click opens; `Backspace`, `Alt+←/→/↑` and the mouse's side buttons move around,
+      and keep working right after opening a folder; `Ctrl+L` → type a path → Enter
 - [ ] `↓` from the search box into results, `↑` at the top goes back; `Esc` returns to the box
 - [ ] `Enter` opens, `Ctrl+Enter` shows in Explorer
 - [ ] `Ctrl+C` copies the path, `Ctrl+Shift+C` the file (paste it in Explorer)

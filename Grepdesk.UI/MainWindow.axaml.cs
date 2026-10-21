@@ -28,8 +28,13 @@ public partial class MainWindow : Window
     // as a whole, so the first page really is the top of the chosen order.
     private const int PageSize = 500;
 
+    // Sidebar order (FeatureNav); Ctrl+1… follow it.
+    private const int PageNameSearch = 1;
+    private const int PageOrganize = 5;
+
     // Below this width the preview panel would squeeze the result list too much.
     private const double MinWidthForPreview = 760;
+    private const double MinWidthForBrowsePreview = 1000;
 
     private readonly IPlatformShell _shell = PlatformShellFactory.CreatePlatformShell();
     private readonly EditorDetector _editorDetector;
@@ -114,15 +119,13 @@ public partial class MainWindow : Window
         InitKeyboard();
         InitDragAndDrop();
         InitDiskPage();
+        InitBrowsePage(startFolder);
         InitLanguageSetting();
         InitExplorerMenuSettings();
         InitFileTypeSettings();
         InitAbout();
         InitUpdates();
         ApplyLanguage();
-
-        if (startFolder is not null)
-            Opened += async (_, _) => await OpenWithFolderAsync(startFolder);
     }
 
     // =====================================================================
@@ -135,7 +138,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void InitNavigation()
     {
-        Control[] featurePages = [NameSearchPage, ContentSearchPage, DiskPage, CleanupPage, OrganizePage];
+        Control[] featurePages = [BrowsePage, NameSearchPage, ContentSearchPage, DiskPage, CleanupPage, OrganizePage];
 
         FeatureNav.SelectionChanged += (_, _) =>
         {
@@ -156,6 +159,7 @@ public partial class MainWindow : Window
 
     private void ShowPage(Control page)
     {
+        BrowsePage.IsVisible = page == BrowsePage;
         NameSearchPage.IsVisible = page == NameSearchPage;
         ContentSearchPage.IsVisible = page == ContentSearchPage;
         DiskPage.IsVisible = page == DiskPage;
@@ -163,7 +167,8 @@ public partial class MainWindow : Window
         OrganizePage.IsVisible = page == OrganizePage;
         SettingsPage.IsVisible = page == SettingsPage;
 
-        if (page == NameSearchPage) SearchBox.Focus();
+        if (page == BrowsePage) Dispatcher.UIThread.Post(() => BrowsePage.FocusList(selectFirst: false), DispatcherPriority.Loaded);
+        else if (page == NameSearchPage) SearchBox.Focus();
         else if (page == ContentSearchPage) ContentSearchBox.Focus();
     }
 
@@ -178,7 +183,10 @@ public partial class MainWindow : Window
     }
 
     private TextBlock CurrentStatusText =>
-        ContentSearchPage.IsVisible ? ContentStatusText : DiskPage.IsVisible ? DiskPage.StatusLine : StatusText;
+        BrowsePage.IsVisible ? BrowsePage.StatusLine
+        : ContentSearchPage.IsVisible ? ContentStatusText
+        : DiskPage.IsVisible ? DiskPage.StatusLine
+        : StatusText;
 
     private void InitLanguageSetting()
     {
@@ -206,6 +214,7 @@ public partial class MainWindow : Window
         _updatingControls = true;
         try
         {
+            NavBrowseText.Text = Loc.Get("BrowseTab");
             NavNameSearchText.Text = NameSearchTitle.Text = Loc.Get("FileNameSearchTab");
             NavContentSearchText.Text = ContentSearchTitle.Text = Loc.Get("ContentSearchTab");
             NavDiskText.Text = Loc.Get("DiskTab");
@@ -312,6 +321,8 @@ public partial class MainWindow : Window
 
             NamePreview.ApplyLanguage();
             ContentPreview.ApplyLanguage();
+            BrowsePage.PreviewPanel.ApplyLanguage();
+            BrowsePage.ApplyLanguage();
             _viewer?.ApplyLanguage();
             DiskPage.ApplyLanguage();
             CleanupPage.ApplyLanguage();
@@ -421,7 +432,7 @@ public partial class MainWindow : Window
             FollowInViewer(ContentResultsList.SelectedItem as ResultItem, _contentQuery);
         };
 
-        foreach (var pane in new[] { NamePreview, ContentPreview })
+        foreach (var pane in new[] { NamePreview, ContentPreview, BrowsePage.PreviewPanel })
         {
             pane.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
             pane.ShowInFolderRequested += path => ReportShellResult(_shell.ShowInFileManager(path), Loc.Get("ShowInFolderFailed"));
@@ -475,6 +486,8 @@ public partial class MainWindow : Window
     {
         var visible = Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForPreview;
         NamePreview.IsVisible = ContentPreview.IsVisible = visible;
+        // The browser also has its places column, so it needs more room before the preview fits.
+        BrowsePage.PreviewPanel.IsVisible = Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForBrowsePreview;
     }
 
     /// <summary>
@@ -644,17 +657,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Launched with a folder (e.g. from Explorer's context menu): use it
-    /// as the root for both pages and start indexing right away.
+    /// Launched with a folder (e.g. from Explorer's context menu): browse it,
+    /// and have content search ready to look inside it.
     /// </summary>
-    private async Task OpenWithFolderAsync(string folder)
+    private void OpenWithFolder(string folder)
     {
         _contentSearchFolder = folder;
         ContentFolderText.Text = folder;
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
-        _selectedRoots = [folder];
-        await StartIndexingAsync();
+        _ = BrowsePage.NavigateAsync(folder);
     }
 
     private void UpdateScopeText()
@@ -983,18 +995,8 @@ public partial class MainWindow : Window
 
     private void StartJob(string flag, string path)
     {
-        if (Environment.ProcessPath is not { } exe) return;
-        try
-        {
-            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
-            psi.ArgumentList.Add(flag);
-            psi.ArgumentList.Add(path);
-            Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
+        if (Jobs.JobLauncher.Start(flag, [path]) is { } ex)
             SetStatus(CurrentStatusText, () => $"{Loc.Get("JobStartFailed")}: {ex.Message}");
-        }
     }
 
     private async Task CopyPathAsync(ResultItem item)
@@ -1081,10 +1083,56 @@ public partial class MainWindow : Window
         DiskPage.OpenRequested += path => ReportShellResult(_shell.OpenPath(path), Loc.Get("FileOpenFailed"));
     }
 
+    // =====================================================================
+    // Files (folder browser)
+    // =====================================================================
+
+    private void InitBrowsePage(string? startFolder)
+    {
+        BrowsePage.Shell = _shell;
+        BrowsePage.Editors = _editorDetector.AvailableEditors;
+        BrowsePage.ViewRequested += item => ViewFile(item, null);
+        BrowsePage.SelectionFollowed += item => FollowInViewer(item, null);
+        BrowsePage.OrganizeRequested += async folder => await OpenOrganizeAsync(folder);
+        BrowsePage.SearchRequested += async (folder, query) =>
+        {
+            FeatureNav.SelectedIndex = PageNameSearch;
+            _selectedRoots = [folder];
+            _updatingControls = true; // the scan below runs the search; don't start one per keystroke
+            SearchBox.Text = query;
+            _lastQuery = query;
+            _updatingControls = false;
+            await StartIndexingAsync();
+        };
+        BrowsePage.Removed += paths =>
+        {
+            var gone = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in paths)
+            {
+                _index.Remove(path);
+                DiskPage.Remove(path);
+            }
+            _allMatches.RemoveAll(r => gone.Contains(r.FullPath));
+            foreach (var item in _results.Where(r => gone.Contains(r.FullPath)).ToList()) _results.Remove(item);
+            foreach (var item in _contentResults.Where(r => gone.Contains(r.FullPath)).ToList()) _contentResults.Remove(item);
+            UpdateShowMoreButton();
+        };
+
+        if (startFolder is not null)
+        {
+            OpenWithFolder(startFolder);
+            return;
+        }
+        var last = Settings.LastBrowseFolder;
+        _ = BrowsePage.NavigateAsync(last is not null && Directory.Exists(last)
+            ? last
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    }
+
     /// <summary>Switches to the Organize page showing <paramref name="folder"/>.</summary>
     private async Task OpenOrganizeAsync(string folder)
     {
-        FeatureNav.SelectedIndex = 4;
+        FeatureNav.SelectedIndex = PageOrganize;
         await OrganizePage.OpenFolderAsync(folder);
     }
 
@@ -1124,7 +1172,7 @@ public partial class MainWindow : Window
     private static readonly Shortcut[] Shortcuts =
     [
         new("Ctrl+F", "ShortcutFocusSearch"),
-        new("Ctrl+1 … Ctrl+5", "ShortcutPages"),
+        new("Ctrl+1 … Ctrl+6", "ShortcutPages"),
         new("Ctrl+,", "ShortcutSettings"),
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
@@ -1135,6 +1183,13 @@ public partial class MainWindow : Window
         new("Delete", "ShortcutTrash"),
         new("Esc", "ShortcutEscape"),
         new("F5", "ShortcutRescan"),
+        new("Backspace, Alt+← / → / ↑", "ShortcutBrowseBack"),
+        new("Ctrl+L", "ShortcutBrowseAddress"),
+        new("Ctrl+X / Ctrl+C / Ctrl+V", "ShortcutBrowseClipboard"),
+        new("Ctrl+Shift+C", "ShortcutBrowseCopyPath"),
+        new("F2", "ShortcutBrowseRename"),
+        new("Ctrl+Shift+N", "ShortcutBrowseNewFolder"),
+        new("Ctrl+H", "ShortcutBrowseHidden"),
     ];
 
     private void FillShortcutsTable()
@@ -1198,25 +1253,16 @@ public partial class MainWindow : Window
 
         switch (e.Key)
         {
+            case Key.F when ctrl && BrowsePage.IsVisible:
+                BrowsePage.FocusFilter();
+                break;
             case Key.F when ctrl:
-                if (ActiveSearchBox is null) FeatureNav.SelectedIndex = 0;
+                if (ActiveSearchBox is null) FeatureNav.SelectedIndex = PageNameSearch;
                 ActiveSearchBox?.Focus();
                 ActiveSearchBox?.SelectAll();
                 break;
-            case Key.D1 when ctrl:
-                FeatureNav.SelectedIndex = 0;
-                break;
-            case Key.D2 when ctrl:
-                FeatureNav.SelectedIndex = 1;
-                break;
-            case Key.D3 when ctrl:
-                FeatureNav.SelectedIndex = 2;
-                break;
-            case Key.D4 when ctrl:
-                FeatureNav.SelectedIndex = 3;
-                break;
-            case Key.D5 when ctrl:
-                FeatureNav.SelectedIndex = 4;
+            case >= Key.D1 and <= Key.D6 when ctrl:
+                FeatureNav.SelectedIndex = e.Key - Key.D1;
                 break;
             case Key.OemComma when ctrl:
                 SettingsNav.SelectedIndex = 0;

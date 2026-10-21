@@ -29,3 +29,10 @@ public interface IShellPreview
 
     ShellMediaInfo GetMediaInfo(string path);
 }
+
+/// <summary>The icons the file manager shows for files and folders (an app's own icon, a folder's custom one…).</summary>
+public interface IShellIcons
+{
+    /// <summary>The icon of an existing file or folder, <paramref name="size"/> pixels square, or null.</summary>
+    Task<ShellThumbnail?> GetIconAsync(string path, int size, CancellationToken ct = default);
+}
