@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -21,6 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Grepdesk.Core\Grepdesk.Core.csproj" />
     <ProjectReference Include="..\Grepdesk.Windows\Grepdesk.Windows.csproj" />
+    <ProjectReference Include="..\Grepdesk.Linux\Grepdesk.Linux.csproj" />
+    <ProjectReference Include="..\Grepdesk.MacOS\Grepdesk.MacOS.csproj" />
     <ProjectReference Include="..\Grepdesk.UI\Grepdesk.UI.csproj" />
     <ProjectReference Include="..\Grepdesk.Benchmarks\Grepdesk.Benchmarks.csproj" />
   </ItemGroup>

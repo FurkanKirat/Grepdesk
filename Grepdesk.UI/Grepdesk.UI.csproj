@@ -32,22 +32,53 @@
     <InternalsVisibleTo Include="Grepdesk.Tests" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- Target platform resolution: from RuntimeIdentifier or host OS -->
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and '$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('win'))">windows</TargetPlatform>
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and '$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('linux'))">linux</TargetPlatform>
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and '$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('osx'))">macos</TargetPlatform>
+
+    <!-- Fallback to current host OS if no RuntimeIdentifier was specified -->
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">windows</TargetPlatform>
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux</TargetPlatform>
+    <TargetPlatform Condition="'$(TargetPlatform)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">macos</TargetPlatform>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Grepdesk.Core\Grepdesk.Core.csproj" />
-    <ProjectReference Include="..\Grepdesk.Linux\Grepdesk.Linux.csproj" />
-    <ProjectReference Include="..\Grepdesk.MacOS\Grepdesk.MacOS.csproj" />
+  </ItemGroup>
+
+  <!-- Platform-specific project references and compiler defines -->
+  <ItemGroup Condition="'$(TargetPlatform)' == 'windows'">
     <ProjectReference Include="..\Grepdesk.Windows\Grepdesk.Windows.csproj" />
   </ItemGroup>
+  <PropertyGroup Condition="'$(TargetPlatform)' == 'windows'">
+    <DefineConstants>$(DefineConstants);PLATFORM_WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetPlatform)' == 'linux'">
+    <ProjectReference Include="..\Grepdesk.Linux\Grepdesk.Linux.csproj" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(TargetPlatform)' == 'linux'">
+    <DefineConstants>$(DefineConstants);PLATFORM_LINUX</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetPlatform)' == 'macos'">
+    <ProjectReference Include="..\Grepdesk.MacOS\Grepdesk.MacOS.csproj" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(TargetPlatform)' == 'macos'">
+    <DefineConstants>$(DefineConstants);PLATFORM_MACOS</DefineConstants>
+  </PropertyGroup>
 
   <!-- Makes Assets/icon.ico loadable at runtime via avares://, for the window/title-bar icon. -->
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
   
-	<ItemGroup>
-		<None Include="Assets\Lang\*.json">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</None>
-	</ItemGroup>
+  <ItemGroup>
+    <None Include="Assets\Lang\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>
