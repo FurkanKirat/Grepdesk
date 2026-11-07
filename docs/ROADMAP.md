@@ -117,6 +117,10 @@ order; each one is usable on its own.
 
 ## Features
 
+- [ ] **Grepdesk CLI (`grepdesk`)**: Standalone console tool for terminal users
+  and AI coding agents ([docs/CLI.md](docs/CLI.md)). Fast search across code and
+  documents (PDF/Word), parallel zip/unzip, duplicate finding, and `--json`
+  output.
 - [ ] **Copy speed to another drive.** Copying 10,000 small files from C: to
   D: takes ~10 s whatever the worker count, while robocopy takes ~1.4 s.
   Found so far: not the engine (plain parallel `File.Copy` behaves the same);

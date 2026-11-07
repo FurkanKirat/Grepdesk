@@ -295,6 +295,8 @@ $env:GREPDESK_PERF = "1"; dotnet test -c Release --filter Category=Performance
 
 ## Build from source
 
+See [docs/BUILD.md](BUILD.md) for full instructions on building, running tests, compiling the installer, and packaging releases.
+
 ```bash
 git clone https://github.com/FurkanKirat/Grepdesk.git
 cd Grepdesk
