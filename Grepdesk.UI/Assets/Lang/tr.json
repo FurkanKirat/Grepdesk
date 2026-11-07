@@ -19,6 +19,7 @@
   "ReadyIndexed": "Hazır — {0:N0} öğe indekslendi",
   "StillIndexing": "Hâlâ taranıyor, lütfen bekleyin...",
   "SelectFolderOrScanAll": "Önce bir klasör seçin veya tüm PC'yi tarayın",
+  "HugeFolderReadyToScan": "Büyük klasör seçildi — taramak için Yeniden Tara'ya (F5) tıklayın veya Enter'a basın",
   "ResultsCount": "\"{1}\" için {0:N0} sonuç",
   "FileOpenFailed": "Dosya açılamadı",
   "ShowInFolderFailed": "Klasörde gösterilemedi",
@@ -540,6 +541,10 @@
   "BrowseColumnSize": "Boyut",
   "BrowseItemCount": "{0:N0} öğe",
   "BrowseSelectedCount": "{0:N0} seçili",
+  "BrowseTotalSize": "Toplam: {0}",
+  "BrowseTotalSizeLoading": "Yükleniyor... {0}",
+  "BrowseCalculateSizes": "Boyutları hesapla",
+  "BrowseCalculateSizesTip": "Tüm klasör boyutlarını hesapla (Ctrl+Shift+S)",
   "BrowseEmptyFolder": "Bu klasör boş.",
   "BrowseNoMatches": "Burada \"{0}\" ile eşleşen bir şey yok. Arama düğmesi alt klasörlere de bakar.",
   "BrowseAccessDenied": "Bu klasörü açma iznin yok.",
@@ -586,5 +591,6 @@
   "ShortcutBrowseCopyPath": "Dosyalar: seçili yolları kopyala",
   "ShortcutBrowseRename": "Dosyalar: yeniden adlandır",
   "ShortcutBrowseNewFolder": "Dosyalar: yeni klasör",
+  "ShortcutBrowseCalculateSizes": "Dosyalar: tüm klasör boyutlarını hesapla",
   "ShortcutBrowseHidden": "Dosyalar: gizli öğeleri göster ya da gizle"
 }

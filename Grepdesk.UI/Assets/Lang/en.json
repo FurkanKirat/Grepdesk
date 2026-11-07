@@ -19,6 +19,7 @@
   "ReadyIndexed": "Ready — {0:N0} items indexed",
   "StillIndexing": "Still indexing, please wait...",
   "SelectFolderOrScanAll": "Select a folder or scan the whole PC",
+  "HugeFolderReadyToScan": "Large folder selected — click Rescan (F5) or press Enter to scan",
   "ResultsCount": "{0:N0} results for \"{1}\"",
   "FileOpenFailed": "Could not open file",
   "ShowInFolderFailed": "Could not show in folder",
@@ -540,6 +541,10 @@
   "BrowseColumnSize": "Size",
   "BrowseItemCount": "{0:N0} items",
   "BrowseSelectedCount": "{0:N0} selected",
+  "BrowseTotalSize": "Total: {0}",
+  "BrowseTotalSizeLoading": "Loading... {0}",
+  "BrowseCalculateSizes": "Calculate sizes",
+  "BrowseCalculateSizesTip": "Calculate all folder sizes (Ctrl+Shift+S)",
   "BrowseEmptyFolder": "This folder is empty.",
   "BrowseNoMatches": "Nothing here matches \"{0}\". The search button looks in the subfolders too.",
   "BrowseAccessDenied": "You don't have permission to open this folder.",
@@ -586,5 +591,6 @@
   "ShortcutBrowseCopyPath": "Files: copy the selected paths",
   "ShortcutBrowseRename": "Files: rename",
   "ShortcutBrowseNewFolder": "Files: new folder",
+  "ShortcutBrowseCalculateSizes": "Files: calculate all folder sizes",
   "ShortcutBrowseHidden": "Files: show or hide hidden items"
 }

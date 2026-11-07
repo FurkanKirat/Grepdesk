@@ -658,7 +658,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Launched with a folder (e.g. from Explorer's context menu): browse it,
-    /// and have content search ready to look inside it.
+    /// and have both search pages ready to look inside it.
     /// </summary>
     private void OpenWithFolder(string folder)
     {
@@ -666,7 +666,23 @@ public partial class MainWindow : Window
         ContentFolderText.Text = folder;
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
+        _selectedRoots = [folder];
+        _scopeChosen = true;
+        UpdateScopeText();
+        ReindexButton.IsEnabled = true;
+        _ = StartIndexingIfSmallAsync(folder);
         _ = BrowsePage.NavigateAsync(folder);
+    }
+
+    private async Task StartIndexingIfSmallAsync(string folder)
+    {
+        var isHuge = await Task.Run(() => Grepdesk.Core.Browse.FolderListing.IsHugeFolder(folder));
+        if (isHuge)
+        {
+            SetStatus(StatusText, () => Loc.Get("HugeFolderReadyToScan"));
+            return;
+        }
+        await StartIndexingAsync();
     }
 
     private void UpdateScopeText()
@@ -753,10 +769,12 @@ public partial class MainWindow : Window
     }
 
     // ↓ into the results is handled with the other shortcuts (OnPreviewKeyDown).
-    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
+    private async void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape)
             SearchBox.Text = "";
+        else if (e.Key == Key.Enter && _scopeChosen && _index.Count == 0 && !_index.IsIndexing)
+            await StartIndexingAsync();
     }
 
     private void ClearNameResults()
@@ -778,7 +796,7 @@ public partial class MainWindow : Window
 
         if (_index.Count == 0)
         {
-            SetStatus(StatusText, () => Loc.Get(_scopeChosen ? "SelectFolderOrScanAll" : "StatusChooseOption"));
+            SetStatus(StatusText, () => Loc.Get(_scopeChosen && ReindexButton.IsEnabled ? "HugeFolderReadyToScan" : _scopeChosen ? "SelectFolderOrScanAll" : "StatusChooseOption"));
             return;
         }
 
@@ -1097,6 +1115,9 @@ public partial class MainWindow : Window
         BrowsePage.SearchRequested += async (folder, query) =>
         {
             FeatureNav.SelectedIndex = PageNameSearch;
+            _contentSearchFolder = folder;
+            ContentFolderText.Text = folder;
+            SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
             _selectedRoots = [folder];
             _updatingControls = true; // the scan below runs the search; don't start one per keystroke
             SearchBox.Text = query;
@@ -1189,6 +1210,7 @@ public partial class MainWindow : Window
         new("Ctrl+Shift+C", "ShortcutBrowseCopyPath"),
         new("F2", "ShortcutBrowseRename"),
         new("Ctrl+Shift+N", "ShortcutBrowseNewFolder"),
+        new("Ctrl+Shift+S", "ShortcutBrowseCalculateSizes"),
         new("Ctrl+H", "ShortcutBrowseHidden"),
     ];
 

@@ -35,8 +35,10 @@ public partial class BrowseView : UserControl
 
     private ObservableCollection<BrowseRow> _rows = [];
     private Dictionary<string, BrowseRow> _rowsByPath = new(PathUtil.Comparer);
-    private IReadOnlyList<FolderEntry> _entries = [];
+    private readonly Dictionary<string, long> _folderSizes = new(PathUtil.Comparer);
+    private List<FolderEntry> _entries = [];
     private FolderListingError _error;
+    private bool _calculatingSizes;
     private FolderSort _sort = new(Settings.BrowseSortColumn, Settings.BrowseSortDescending);
     private CancellationTokenSource _loadCts = new();
     private FileSystemWatcher? _watcher;
@@ -85,6 +87,7 @@ public partial class BrowseView : UserControl
         RefreshButton.Click += async (_, _) => await ReloadAsync();
         NewFolderButton.Click += (_, _) => NewFolder();
         SearchBelowButton.Click += (_, _) => RequestSearch();
+        CalculateSizesButton.Click += async (_, _) => await CalculateFolderSizesAsync(forceFull: true);
         HiddenToggle.IsChecked = Settings.ShowHiddenFiles;
         HiddenToggle.IsCheckedChanged += async (_, _) => await SetShowHiddenAsync(HiddenToggle.IsChecked == true);
 
@@ -143,6 +146,8 @@ public partial class BrowseView : UserControl
         ToolTip.SetTip(NewFolderButton, Loc.Get("BrowseNewFolder"));
         ToolTip.SetTip(SearchBelowButton, Loc.Get("BrowseSearchBelow"));
         ToolTip.SetTip(HiddenToggle, Loc.Get("BrowseShowHidden"));
+        CalculateSizesButton.Content = Loc.Get("BrowseCalculateSizes");
+        ToolTip.SetTip(CalculateSizesButton, Loc.Get("BrowseCalculateSizesTip"));
         FilterBox.Watermark = Loc.Get("BrowseFilterWatermark");
         UpdateColumnHeaders();
         FillPlaces();
@@ -244,12 +249,115 @@ public partial class BrowseView : UserControl
             return;
         }
 
-        _entries = contents.Entries;
+        _entries = contents.Entries
+            .Select(e => e.IsDirectory && e.Size < 0 && _folderSizes.TryGetValue(e.FullPath, out var known) ? e with { Size = known } : e)
+            .ToList();
+        var hasUncalculated = folder != ThisPc && _entries.Any(e => e.IsDirectory && e.Size < 0);
+        _calculatingSizes = hasUncalculated;
         _error = contents.Error;
         RefreshCutMarks();
         Render(reset: folderChanged);
+        if (hasUncalculated)
+            _ = ComputeFolderSizesAsync(_entries.Where(e => e.IsDirectory && e.Size < 0).ToList(), forceFull: false, ct);
         if (refocus && IsEffectivelyVisible)
             Dispatcher.UIThread.Post(() => FocusList(selectFirst: false), DispatcherPriority.Loaded);
+    }
+
+    private Task CalculateFolderSizesAsync(bool forceFull, IReadOnlyList<FolderEntry>? targets = null)
+    {
+        if (!InFolder) return Task.CompletedTask;
+        var folders = targets?.Where(e => e.IsDirectory).ToList()
+            ?? _entries.Where(e => e.IsDirectory && e.Size < 0).ToList();
+        if (folders.Count == 0)
+            folders = _entries.Where(e => e.IsDirectory).ToList();
+        if (folders.Count == 0) return Task.CompletedTask;
+
+        _calculatingSizes = true;
+        UpdateStatus();
+        return ComputeFolderSizesAsync(folders, forceFull, _loadCts.Token);
+    }
+
+    private async Task ComputeFolderSizesAsync(IReadOnlyList<FolderEntry> folders, bool forceFull, CancellationToken ct)
+    {
+        if (folders.Count == 0)
+        {
+            _calculatingSizes = false;
+            UpdateStatus();
+            return;
+        }
+
+        var maxBytes = forceFull ? long.MaxValue : FolderListing.DefaultMaxAutoBytes;
+        var maxEntries = forceFull ? int.MaxValue : FolderListing.DefaultMaxAutoEntries;
+        var parallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+        try
+        {
+            await Parallel.ForEachAsync(folders, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, async (folder, token) =>
+            {
+                var result = await Task.Run(() => FolderListing.TryGetFolderSize(
+                    folder.FullPath,
+                    maxBytes,
+                    maxEntries,
+                    token,
+                    forceFull
+                        ? partial =>
+                        {
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                if (!token.IsCancellationRequested)
+                                    ApplyFolderSize(folder.FullPath, partial, complete: false);
+                            });
+                        }
+                        : null), token);
+                if (token.IsCancellationRequested || !result.Complete) return;
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!token.IsCancellationRequested)
+                        ApplyFolderSize(folder.FullPath, result.Size, complete: true);
+                });
+            });
+
+            if (!ct.IsCancellationRequested)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (ct.IsCancellationRequested) return;
+                    _calculatingSizes = false;
+                    UpdateStatus();
+                });
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void ApplyFolderSize(string path, long size, bool complete)
+    {
+        if (complete)
+            _folderSizes[path] = size;
+
+        var index = _entries.FindIndex(e => PathUtil.Comparer.Equals(e.FullPath, path));
+        if (index < 0) return;
+
+        var updated = _entries[index] with { Size = size };
+        _entries[index] = updated;
+
+        if (_rowsByPath.TryGetValue(path, out var row))
+        {
+            var changed = row.Entry.Size != size;
+            row.Entry = updated;
+            if (!changed && !complete) return;
+
+            if (complete && _sort.Column == FolderSortColumn.Size)
+                Render(reset: false);
+
+            UpdateStatus();
+            if (complete && SingleSelected == row)
+                Preview.Show(row.ToResultItem());
+        }
+        else
+        {
+            UpdateStatus();
+        }
     }
 
     private void UpdateNavigationButtons()
@@ -386,7 +494,9 @@ public partial class BrowseView : UserControl
         for (var i = 0; i < desired.Count; i++)
         {
             if (i < rows.Count && ReferenceEquals(rows[i], desired[i])) continue;
-            rows.Insert(i, desired[i]);
+            var existing = rows.IndexOf(desired[i]);
+            if (existing > i) rows.Move(existing, i);
+            else rows.Insert(i, desired[i]);
         }
         while (rows.Count > desired.Count) rows.RemoveAt(rows.Count - 1);
     }
@@ -410,6 +520,19 @@ public partial class BrowseView : UserControl
 
     private void UpdateStatus()
     {
+        if (InFolder && _error == FolderListingError.None)
+        {
+            var hasUncalculated = _entries.Any(e => e.IsDirectory && e.Size < 0);
+            CalculateSizesButton.IsVisible = hasUncalculated && !_calculatingSizes;
+            var totalBytes = _entries.Where(e => e.Size >= 0).Sum(e => e.Size);
+            TotalSizeText.Text = Loc.Get(_calculatingSizes ? "BrowseTotalSizeLoading" : "BrowseTotalSize", Format.Size(totalBytes));
+        }
+        else
+        {
+            CalculateSizesButton.IsVisible = false;
+            TotalSizeText.Text = "";
+        }
+
         if (_message is { } message)
         {
             StatusText.Text = message();
@@ -424,8 +547,8 @@ public partial class BrowseView : UserControl
             return;
         }
 
-        var files = selected.Where(r => !r.IsDirectory).ToList();
-        var size = files.Count > 0 ? "  ·  " + Format.Size(files.Sum(r => r.Entry.Size)) : "";
+        var sized = selected.Where(r => r.Entry.Size >= 0).ToList();
+        var size = sized.Count > 0 ? "  ·  " + Format.Size(sized.Sum(r => r.Entry.Size)) : "";
         StatusText.Text = $"{count}  ·  {Loc.Get("BrowseSelectedCount", selected.Count)}{size}";
     }
 
@@ -810,6 +933,7 @@ public partial class BrowseView : UserControl
             Key.F4 when mods == KeyModifiers.None => Do(BeginEditAddress),
             Key.H when ctrl => () => SetShowHiddenAsync(!Settings.ShowHiddenFiles),
             Key.N when ctrl && shift => Do(NewFolder),
+            Key.S when ctrl && shift && InFolder => () => CalculateFolderSizesAsync(forceFull: true),
             Key.Enter when mods == KeyModifiers.None && hasSelection => OpenSelectionAsync,
             Key.Space when mods == KeyModifiers.None && inList && SingleSelected is { IsDirectory: false } file =>
                 Do(() => ViewRequested?.Invoke(file.ToResultItem())),
@@ -891,6 +1015,8 @@ public partial class BrowseView : UserControl
         if (single is { IsDirectory: true } && ClipboardHasFiles())
             menu.Add(Item("BrowsePasteInto", () => Paste(single.FullPath)));
         menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
+        if (selection.Any(r => r.IsDirectory))
+            menu.Add(Item("BrowseCalculateSizes", () => _ = CalculateFolderSizesAsync(forceFull: true, selection.Where(r => r.IsDirectory).Select(r => r.Entry).ToList()), new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift)));
 
         menu.Add(new Separator());
         menu.Add(Item("ContextMenuCompress", () => StartJob("--compress", paths)));
@@ -937,6 +1063,8 @@ public partial class BrowseView : UserControl
 
         menu.Add(new Separator());
         menu.Add(Item("BrowseSearchBelow", RequestSearch));
+        if (_entries.Any(e => e.IsDirectory))
+            menu.Add(Item("BrowseCalculateSizes", () => _ = CalculateFolderSizesAsync(forceFull: true), new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift)));
         menu.Add(Item("ContextMenuOrganize", () => OrganizeRequested?.Invoke(folder)));
         menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
 

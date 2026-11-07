@@ -15,28 +15,44 @@ public sealed class BrowseRow : INotifyPropertyChanged
 {
     private static LocalizationService Loc => LocalizationService.Instance;
 
+    private FolderEntry _entry;
     private Bitmap? _icon;
     private bool _isRenaming;
     private bool _isCut;
 
     public BrowseRow(FolderEntry entry, string? typeText = null)
     {
-        Entry = entry;
-        Result = new SearchResult(entry.FullPath, entry.IsDirectory, entry.Size, entry.Modified, entry.Name);
+        _entry = entry;
+        Result = new SearchResult(entry.FullPath, entry.IsDirectory, Math.Max(0, entry.Size), entry.Modified, entry.Name);
         Kind = FileKind.For(Result);
         TypeText = typeText ?? (entry.IsDirectory ? Loc.Get("BrowseTypeFolder")
             : entry.Extension.Length > 0 ? Loc.Get("BrowseTypeFile", entry.Extension) : Loc.Get("BrowseTypeFileNoExtension"));
     }
 
-    public FolderEntry Entry { get; }
-    public SearchResult Result { get; }
-    public string FullPath => Entry.FullPath;
-    public string Name => Entry.Name;
-    public bool IsDirectory => Entry.IsDirectory;
+    public FolderEntry Entry
+    {
+        get => _entry;
+        set
+        {
+            if (_entry == value) return;
+            var sizeChanged = _entry.Size != value.Size;
+            var modifiedChanged = _entry.Modified != value.Modified;
+            _entry = value;
+            Result = new SearchResult(value.FullPath, value.IsDirectory, Math.Max(0, value.Size), value.Modified, value.Name);
+            Changed();
+            if (sizeChanged) Changed(nameof(SizeText));
+            if (modifiedChanged) Changed(nameof(ModifiedText));
+        }
+    }
 
-    public string ModifiedText => Entry.Modified == default ? "" : Entry.Modified.ToString("g");
+    public SearchResult Result { get; private set; }
+    public string FullPath => _entry.FullPath;
+    public string Name => _entry.Name;
+    public bool IsDirectory => _entry.IsDirectory;
+
+    public string ModifiedText => _entry.Modified == default ? "" : _entry.Modified.ToString("g");
     public string TypeText { get; }
-    public string SizeText => IsDirectory ? "" : Format.Size(Entry.Size);
+    public string SizeText => _entry.Size < 0 ? "" : Format.Size(_entry.Size);
 
     public FileKind Kind { get; }
 

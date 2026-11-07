@@ -31,6 +31,36 @@ public class BrowseTests
     }
 
     [Fact]
+    public void Computes_folder_size_recursively()
+    {
+        using var dir = new TempDir();
+        dir.WriteFile(Path.Combine("sub", "a.txt"), "hello");
+        dir.WriteFile(Path.Combine("sub", "nested", "b.txt"), "world!");
+        Directory.CreateDirectory(dir.Combine("empty"));
+
+        Assert.Equal(11, FolderListing.GetFolderSize(dir.Combine("sub")));
+        Assert.Equal(0, FolderListing.GetFolderSize(dir.Combine("empty")));
+        Assert.Equal(0, FolderListing.GetFolderSize(dir.Combine("missing")));
+    }
+
+    [Fact]
+    public void Bounded_folder_size_stops_early_when_budget_exceeded()
+    {
+        using var dir = new TempDir();
+        dir.WriteFile(Path.Combine("sub", "a.txt"), "hello");
+        dir.WriteFile(Path.Combine("sub", "nested", "b.txt"), "world!");
+
+        var sub = dir.Combine("sub");
+        Assert.Equal(new FolderSizeResult(11, Complete: true), FolderListing.TryGetFolderSize(sub, maxBytes: 100, maxEntries: 10));
+        Assert.False(FolderListing.TryGetFolderSize(sub, maxBytes: 4, maxEntries: 10).Complete);
+        Assert.False(FolderListing.TryGetFolderSize(sub, maxBytes: 100, maxEntries: 1).Complete);
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(profile))
+            Assert.True(FolderListing.IsKnownHugeFolder(profile));
+    }
+
+    [Fact]
     public void Hidden_files_are_listed_only_when_asked()
     {
         if (!OperatingSystem.IsWindows()) return; // "hidden" is an attribute on Windows, a leading dot elsewhere
