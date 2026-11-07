@@ -24,6 +24,7 @@
     <ProjectReference Include="..\Grepdesk.Linux\Grepdesk.Linux.csproj" />
     <ProjectReference Include="..\Grepdesk.MacOS\Grepdesk.MacOS.csproj" />
     <ProjectReference Include="..\Grepdesk.UI\Grepdesk.UI.csproj" />
+    <ProjectReference Include="..\Grepdesk.Cli\Grepdesk.Cli.csproj" />
     <ProjectReference Include="..\Grepdesk.Benchmarks\Grepdesk.Benchmarks.csproj" />
   </ItemGroup>
 

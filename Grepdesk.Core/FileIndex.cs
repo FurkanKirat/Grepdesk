@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Grepdesk.Core;
 
-public class FileIndex
+public class FileIndex : IDisposable
 {
     // path → lowercase name (for fast search) plus the metadata needed to sort
     // every match, not just the ones that end up on screen.
@@ -33,7 +33,7 @@ public class FileIndex
         "CDRom", "Network" // can add more if needed
     ];
 
-    public async Task BuildIndexAsync(IEnumerable<string>? roots = null, CancellationToken ct = default)
+    public async Task BuildIndexAsync(IEnumerable<string>? roots = null, CancellationToken ct = default, bool watch = true)
     {
         if (Interlocked.Exchange(ref _isIndexing, 1) == 1) return;
 
@@ -63,7 +63,8 @@ public class FileIndex
 
             if (!ct.IsCancellationRequested)
             {
-                StartWatchers(rootList);
+                if (watch)
+                    StartWatchers(rootList);
                 IndexingComplete?.Invoke();
             }
         }
@@ -359,6 +360,8 @@ public class FileIndex
         foreach (var w in _watchers) w.Dispose();
         _watchers.Clear();
     }
+
+    public void Dispose() => StopWatchers();
 }
 
 // Kept small on purpose: a whole-disk scan holds millions of these. The name

@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="grepdesk" />
     <InternalsVisibleTo Include="Grepdesk.Tests" />
   </ItemGroup>
 

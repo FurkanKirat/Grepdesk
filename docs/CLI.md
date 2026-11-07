@@ -151,16 +151,16 @@ grepdesk grep "API_SECRET" --path ./docs --ext pdf,docx,md --json
 
 ## 5. Implementation Phases
 
-- [ ] **Phase 1: Project Setup & CLI Shell**
+- [x] **Phase 1: Project Setup & CLI Shell**
   - Create `Grepdesk.Cli` project in `Grepdesk.sln`.
   - Implement command routing and argument parsing.
-- [ ] **Phase 2: Search Subcommands (`find` & `grep`)**
+- [x] **Phase 2: Search Subcommands (`find` & `grep`)**
   - Expose `FileIndex` and `ContentSearcher` with plain text & `--json` formatters.
   - Enable PDF (`PdfPig`) and Word (`.docx`) extractors in headless mode.
-- [ ] **Phase 3: Archive Subcommands (`zip` & `unzip`)**
+- [x] **Phase 3: Archive Subcommands (`zip` & `unzip`)**
   - Expose `ZipCompressor` and `ZipExtractor` with terminal progress bar.
-- [ ] **Phase 4: Maintenance Subcommands (`duplicates` & `du`)**
+- [x] **Phase 4: Maintenance Subcommands (`duplicates` & `du`)**
   - Implement duplicate and disk space reporting.
-- [ ] **Phase 5: Packaging & Installer Integration**
+- [x] **Phase 5: Packaging & Installer Integration**
   - Include `grepdesk.exe` in `setup.iss` and portable zip scripts.
   - Add optional "Add to PATH" task in installer.

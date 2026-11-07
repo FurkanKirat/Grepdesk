@@ -42,7 +42,7 @@ order within each section.
 - [ ] **Memory and startup of the index.** A full-disk scan holds ~2 GB for
   ~3.5M entries and is redone on every start. Persist the index to disk and
   use a more compact layout (e.g. interned parent folders, struct arrays).
-- [x] **Manual test checklist** ([docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)) for each release: keyboard shortcuts, drag
+- [x] **Manual test checklist** ([RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)) for each release: keyboard shortcuts, drag
   and drop, delete / move / undo flows, Organize, Free Up Space. These have
   no automated UI tests.
 
@@ -118,7 +118,7 @@ order; each one is usable on its own.
 ## Features
 
 - [ ] **Grepdesk CLI (`grepdesk`)**: Standalone console tool for terminal users
-  and AI coding agents ([docs/CLI.md](docs/CLI.md)). Fast search across code and
+  and AI coding agents ([CLI.md](CLI.md)). Fast search across code and
   documents (PDF/Word), parallel zip/unzip, duplicate finding, and `--json`
   output.
 - [ ] **Copy speed to another drive.** Copying 10,000 small files from C: to

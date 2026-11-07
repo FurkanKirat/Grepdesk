@@ -15,7 +15,7 @@ Explorer's right-click menu.
 -->
 
 **[Download for Windows](https://github.com/FurkanKirat/Grepdesk/releases/latest)** ·
-[Features](#features) · [Benchmarks](#benchmarks) · [Build from source](#build-from-source)
+[Features](#features) · [Benchmarks](#benchmarks) · [Build from source](#build-from-source) · [Documentation](#documentation)
 
 ## Download
 
@@ -63,7 +63,7 @@ Free, no ads, no telemetry; the only network request is the optional update chec
 
 ### 📁 Files
 A folder browser, the first page, so Grepdesk can be where you work with files
-rather than a tool you visit ([roadmap](ROADMAP.md#explorer-replacement)):
+rather than a tool you visit ([roadmap](docs/ROADMAP.md#explorer-replacement)):
 - Back / forward / up (`Alt+←/→/↑`, `Backspace`, the mouse's side buttons), a
   breadcrumb address bar you can type a path into (`Ctrl+L`), and a sidebar
   with your user folders and drives (with free space)
@@ -295,7 +295,7 @@ $env:GREPDESK_PERF = "1"; dotnet test -c Release --filter Category=Performance
 
 ## Build from source
 
-See [docs/BUILD.md](BUILD.md) for full instructions on building, running tests, compiling the installer, and packaging releases.
+See [docs/BUILD.md](docs/BUILD.md) for full instructions on building, running tests, compiling the installer, and packaging releases.
 
 ```bash
 git clone https://github.com/FurkanKirat/Grepdesk.git
@@ -370,6 +370,17 @@ Testing on Linux from Windows (needs Docker):
 docker run --rm -v "${PWD}:/src:ro" mcr.microsoft.com/dotnet/sdk:10.0 bash -c `
   "cp -r /src /work && cd /work && find . -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} + && dotnet test Grepdesk.Tests"
 ```
+
+## Documentation
+
+Detailed guides and specifications are in the [`docs/`](docs/README.md) directory:
+
+- **[User Guide](docs/USER_GUIDE.md)** — Complete walkthrough of all pages, the file viewer/editor, Explorer context menus, CLI flags, and keyboard shortcuts.
+- **[Architecture & Developer Guide](docs/ARCHITECTURE.md)** — Project structure, core engines, concurrency models, single-instance IPC, platform abstractions, and crash diagnostics.
+- **[Build & Packaging Guide](docs/BUILD.md)** — Building, testing, self-contained publishing, `build.py` / `build.ps1` CLI, and Inno Setup packaging.
+- **[CLI Specification](docs/CLI.md)** — Design and command specification for the `grepdesk` command-line tool.
+- **[Roadmap](docs/ROADMAP.md)** — Planned features, Explorer-replacement phases, and code health goals.
+- **[Release Checklist](docs/RELEASE_CHECKLIST.md)** — Manual QA checklist run before every release.
 
 ## License
 

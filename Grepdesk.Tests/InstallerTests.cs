@@ -31,6 +31,16 @@ public class InstallerTests
         Assert.Contains("Filename: \"{app}\\Grepdesk.UI.exe\"; Parameters: \"--unregister\"", script);
     }
 
+    [Fact]
+    public void Installer_and_build_script_include_cli_and_path_task()
+    {
+        var iss = File.ReadAllText(FindRepoFile("setup.iss"));
+        Assert.Contains("Name: \"addtopath\"", iss);
+
+        var buildPy = File.ReadAllText(FindRepoFile("build.py"));
+        Assert.Contains("Grepdesk.Cli", buildPy);
+    }
+
     private static string FindRepoFile(string name)
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)

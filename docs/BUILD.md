@@ -6,7 +6,7 @@ This guide explains how to build, test, publish, and package Grepdesk from sourc
 
 ## Prerequisites
 
-- **[.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** or newer (configured in [`global.json`](global.json))
+- **[.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** or newer (configured in [`global.json`](../global.json))
 - **Windows 10 / 11 (64-bit)** for full Windows shell integration and testing
 - **[Inno Setup 6 or 7](https://jrsoftware.org/isinfo.php)** (required to build the installer `.exe`)
 - **[Python 3.8+](https://www.python.org/)** (optional, to use the `build.py` CLI tool)
@@ -15,7 +15,7 @@ This guide explains how to build, test, publish, and package Grepdesk from sourc
 
 ## ⚡ Quick Packaging with the Build CLI Tool
 
-Grepdesk includes an automated build CLI tool ([`build.py`](build.py) and [`build.ps1`](build.ps1)) that handles building, testing, publishing, and packaging for your target OS in a single command:
+Grepdesk includes an automated build CLI tool ([`build.py`](../build.py) and [`build.ps1`](../build.ps1)) that handles building, testing, publishing, and packaging for your target OS in a single command:
 
 ```powershell
 # Full release package for the current OS (Windows: build, test, publish, installer & portable zip)
@@ -95,7 +95,7 @@ dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
 - ReadyToRun enabled: Precompiles code for fast startup.
 
 > [!NOTE]
-> The version number is defined centrally in [`Directory.Build.props`](Directory.Build.props). The published executable embeds this version, and [`setup.iss`](setup.iss) reads it automatically.
+> The version number is defined centrally in [`Directory.Build.props`](../Directory.Build.props). The published executable embeds this version, and [`setup.iss`](../setup.iss) reads it automatically.
 
 ---
 
@@ -115,7 +115,7 @@ Or invoke `ISCC.exe` directly (e.g., Inno Setup 7 default install path):
 ```
 
 #### Option B: Inno Setup Compiler GUI
-1. Right-click [`setup.iss`](setup.iss) and select **Compile**, or open it in the Inno Setup IDE.
+1. Right-click [`setup.iss`](../setup.iss) and select **Compile**, or open it in the Inno Setup IDE.
 2. Press <kbd>Ctrl</kbd> + <kbd>F9</kbd> (or click **Build** → **Compile**).
 
 The compiled installer will be created in:
@@ -140,7 +140,7 @@ The resulting zip will be saved in `Output\`.
 
 ## 3. Versioning & Release Checklist
 
-Version numbers are defined in a single place: [`Directory.Build.props`](Directory.Build.props).
+Version numbers are defined in a single place: [`Directory.Build.props`](../Directory.Build.props).
 
 ```xml
 <PropertyGroup>
@@ -151,7 +151,7 @@ Version numbers are defined in a single place: [`Directory.Build.props`](Directo
 When preparing a release:
 1. Update `<Version>` in `Directory.Build.props`.
 2. Update [`ROADMAP.md`](ROADMAP.md) / changelog.
-3. Follow the steps in [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
+3. Follow the steps in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
 ---
 

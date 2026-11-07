@@ -155,7 +155,7 @@ def action_test(config: str) -> None:
 
 def action_publish(target_os: str, config: str) -> Path:
     rid = get_rid(target_os)
-    print_step(f"Publishing Grepdesk.UI for {target_os.upper()} ({rid}, {config})")
+    print_step(f"Publishing Grepdesk.UI and Grepdesk.Cli for {target_os.upper()} ({rid}, {config})")
     out_dir = PUBLISH_DIR / rid
 
     if target_os == "windows":
@@ -165,26 +165,22 @@ def action_publish(target_os: str, config: str) -> Path:
             "-c", config,
             "-p:PublishProfile=win-x64"
         ])
-    elif target_os == "linux":
-        out_dir.mkdir(parents=True, exist_ok=True)
         run_command([
-            "dotnet", "publish", "Grepdesk.UI",
+            "dotnet", "publish", "Grepdesk.Cli",
             "-c", config,
-            "-r", rid,
-            "--self-contained", "true",
-            "-p:PublishReadyToRun=true",
-            "-o", str(out_dir)
+            "-p:PublishProfile=win-x64"
         ])
-    elif target_os == "macos":
+    elif target_os in ("linux", "macos"):
         out_dir.mkdir(parents=True, exist_ok=True)
-        run_command([
-            "dotnet", "publish", "Grepdesk.UI",
-            "-c", config,
-            "-r", rid,
-            "--self-contained", "true",
-            "-p:PublishReadyToRun=true",
-            "-o", str(out_dir)
-        ])
+        for project in ("Grepdesk.UI", "Grepdesk.Cli"):
+            run_command([
+                "dotnet", "publish", project,
+                "-c", config,
+                "-r", rid,
+                "--self-contained", "true",
+                "-p:PublishReadyToRun=true",
+                "-o", str(out_dir)
+            ])
     else:
         print_error(f"Unsupported OS for publish: {target_os}")
         sys.exit(1)

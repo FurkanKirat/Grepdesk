@@ -1,4 +1,4 @@
-﻿; =======================================================
+; =======================================================
 ; Grepdesk Inno Setup Script
 ; =======================================================
 
@@ -30,16 +30,23 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Yönetici izni gerekmeden de kurulabilsin (tercihen Program Files için yönetici ister)
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+ChangesEnvironment=yes
 
 [Languages]
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+turkish.AddToPath=Grepdesk CLI (grepdesk.exe) için kurulum klasörünü PATH ortam değişkenine ekle
+english.AddToPath=Add installation directory to PATH for Grepdesk CLI (grepdesk.exe)
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "addtopath"; Description: "{cm:AddToPath}"; Flags: unchecked
 
 [Files]
 ; Önce: dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
+;       dotnet publish Grepdesk.Cli -p:PublishProfile=win-x64
 ; Self-contained: .NET runtime'ı içinde, makinede .NET kurulu olması gerekmez.
 Source: "publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -82,3 +89,66 @@ Filename: "{app}\Grepdesk.UI.exe"; Description: "{cm:LaunchProgram,Grepdesk}"; F
 ; uzantılara eklenen "Birlikte aç" kayıtlarını temizler. Yoksa o dosyalar silinmiş
 ; exe'yi açmaya çalışır ve çift tıklayınca hiçbir şey olmaz.
 Filename: "{app}\Grepdesk.UI.exe"; Parameters: "--unregister"; Flags: runhidden waituntilterminated; RunOnceId: "Unregister"
+
+[Code]
+const
+  EnvironmentKey = 'Environment';
+
+procedure AddDirToUserPath(Dir: string);
+var
+  Paths: string;
+begin
+  if not RegQueryStringValue(HKCU, EnvironmentKey, 'Path', Paths) then
+    Paths := '';
+  if Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';') > 0 then
+    exit;
+  if (Paths <> '') and (Paths[Length(Paths)] <> ';') then
+    Paths := Paths + ';';
+  Paths := Paths + Dir;
+  RegWriteExpandStringValue(HKCU, EnvironmentKey, 'Path', Paths);
+end;
+
+procedure RemoveDirFromUserPath(Dir: string);
+var
+  Paths, Remaining, Token, ResultPaths: string;
+  SepPos: Integer;
+begin
+  if not RegQueryStringValue(HKCU, EnvironmentKey, 'Path', Paths) then
+    exit;
+  Remaining := Paths;
+  ResultPaths := '';
+  while Remaining <> '' do
+  begin
+    SepPos := Pos(';', Remaining);
+    if SepPos > 0 then
+    begin
+      Token := Copy(Remaining, 1, SepPos - 1);
+      Delete(Remaining, 1, SepPos);
+    end
+    else
+    begin
+      Token := Remaining;
+      Remaining := '';
+    end;
+    if (Token <> '') and (CompareText(Token, Dir) <> 0) then
+    begin
+      if ResultPaths <> '' then
+        ResultPaths := ResultPaths + ';';
+      ResultPaths := ResultPaths + Token;
+    end;
+  end;
+  if ResultPaths <> Paths then
+    RegWriteExpandStringValue(HKCU, EnvironmentKey, 'Path', ResultPaths);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
+    AddDirToUserPath(ExpandConstant('{app}'));
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    RemoveDirFromUserPath(ExpandConstant('{app}'));
+end;
