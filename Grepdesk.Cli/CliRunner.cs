@@ -41,6 +41,7 @@ public static class CliRunner
                 "-v" or "--version" or "version" => PrintVersionAndReturn(stdout),
                 "find" => await FindCommand.ExecuteAsync(subArgs, stdout, stderr, ct),
                 "grep" => await GrepCommand.ExecuteAsync(subArgs, stdout, stderr, ct),
+                "open" or "cat" or "read" or "view" => await OpenCommand.ExecuteAsync(subArgs, stdout, stderr, platformShell, ct),
                 "zip" => await ZipCommand.ExecuteAsync(subArgs, stdout, stderr, driveKindProvider, showProgress, ct),
                 "unzip" => await UnzipCommand.ExecuteAsync(subArgs, stdout, stderr, stdin, driveKindProvider, showProgress, interactive, ct),
                 "duplicates" or "dup" or "dups" => await DuplicatesCommand.ExecuteAsync(subArgs, stdout, stderr, stdin, platformShell, ct),
@@ -102,6 +103,7 @@ public static class CliRunner
             Commands:
               find <pattern>                Instant file and directory name search
               grep <query>                  Deep content search (.txt, code, .md, .docx, .xlsx, .pdf)
+              open <path>                   Read file/folder content in CLI, or open in Grepdesk/OS app
               zip <output.zip> <inputs...>  Multi-core parallel zip compression
               unzip <archive.zip>           Multi-core parallel zip extraction
               duplicates [path]             Identify duplicate files by size and content hash

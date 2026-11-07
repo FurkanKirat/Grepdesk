@@ -76,7 +76,35 @@ grepdesk grep <query> [options]
 
 ---
 
-### 3.3 `grepdesk zip` & `grepdesk unzip` (High-Speed Archiving)
+### 3.3 `grepdesk open` (Read Content in CLI or Open in GUI/OS App)
+Outputs the contents of a file (including extracted text from `.pdf`, `.docx`, and `.xlsx`) or directory listing directly to the terminal by default, or opens the path in the Grepdesk Desktop UI or OS default application. Also available under aliases `cat`, `read`, and `view`.
+
+```bash
+# Print file or document content to stdout
+grepdesk open <path> [--lines <start-end>] [--page <n|start-end>] [-n] [--json]
+
+# Open in Grepdesk Desktop UI (standalone viewer or folder browser)
+grepdesk open <path> --gui
+
+# Open with the OS default application or reveal in file manager
+grepdesk open <path> --default
+grepdesk open <path> --reveal
+```
+
+#### Options:
+- `-n, --line-numbers`: Prefix output lines with 1-based line numbers.
+- `-l, --lines <start-end>`: Output only lines within the specified 1-based range (e.g. `10-50` or `25`).
+- `--head <n>` / `--tail <n>`: Output the first or last $N$ lines.
+- `-P, --page <n|start-end>`: Extract a specific PDF page or range (e.g. `2` or `1-3`).
+- `--hidden`: Include hidden and system entries when `<path>` is a directory.
+- `--json`: Output structured JSON with metadata, content, and per-page PDF text.
+- `-g, --gui`: Open `<path>` in the Grepdesk Desktop UI.
+- `-d, --default`: Open `<path>` with the OS default application.
+- `-r, --reveal`: Reveal `<path>` in the OS file manager.
+
+---
+
+### 3.4 `grepdesk zip` & `grepdesk unzip` (High-Speed Archiving)
 Parallel multi-core zip engine powered by `ZipCompressor` and `ZipExtractor`.
 
 ```bash

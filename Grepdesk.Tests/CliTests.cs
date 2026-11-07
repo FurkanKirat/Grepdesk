@@ -201,6 +201,60 @@ public class CliTests : IDisposable
         Assert.True(doc.RootElement.GetProperty("top_entries").GetArrayLength() >= 2);
     }
 
+    [Fact]
+    public async Task Open_reads_text_pdf_docx_directory_and_supports_gui_and_default_launch()
+    {
+        var txtPath = Path.Combine(_tempDir, "sample.txt");
+        await File.WriteAllTextAsync(txtPath, "alpha\nbeta\ngamma\ndelta\n");
+
+        // Line range + line numbers
+        var (txtCode, txtOut, _) = await RunCliAsync(["open", txtPath, "--lines", "2-3", "-n"]);
+        Assert.Equal(0, txtCode);
+        Assert.Contains("   2: beta", txtOut);
+        Assert.Contains("   3: gamma", txtOut);
+        Assert.DoesNotContain("alpha", txtOut);
+        Assert.DoesNotContain("delta", txtOut);
+
+        // PDF page filtering + JSON output
+        var pdfPath = Path.Combine(_tempDir, "doc.pdf");
+        CreateSamplePdf(pdfPath, "Page one content", "Page two secret content");
+        var (pdfCode, pdfOut, _) = await RunCliAsync(["open", pdfPath, "--page", "2", "--json"]);
+        Assert.Equal(0, pdfCode);
+        using var pdfJson = JsonDocument.Parse(pdfOut);
+        Assert.Equal(2, pdfJson.RootElement.GetProperty("total_pages").GetInt32());
+        Assert.Contains("Page two secret content", pdfJson.RootElement.GetProperty("content").GetString());
+        Assert.DoesNotContain("Page one content", pdfJson.RootElement.GetProperty("content").GetString());
+
+        // DOCX content via 'cat' alias
+        var docxPath = Path.Combine(_tempDir, "memo.docx");
+        CreateSampleDocx(docxPath, "First paragraph", "Second paragraph");
+        var (docxCode, docxOut, _) = await RunCliAsync(["cat", docxPath]);
+        Assert.Equal(0, docxCode);
+        Assert.Contains("First paragraph", docxOut);
+        Assert.Contains("Second paragraph", docxOut);
+
+        // Directory listing via 'open'
+        var (dirCode, dirOut, _) = await RunCliAsync(["open", _tempDir, "--json"]);
+        Assert.Equal(0, dirCode);
+        using var dirJson = JsonDocument.Parse(dirOut);
+        Assert.Equal("directory", dirJson.RootElement.GetProperty("kind").GetString());
+        Assert.True(dirJson.RootElement.GetProperty("total_entries").GetInt32() >= 3);
+
+        // Launch modes (--default, --gui, --reveal)
+        var fakeShell = new RecordingPlatformShell();
+        var (defCode, _, _) = await RunCliAsync(["open", txtPath, "--default"], shell: fakeShell);
+        Assert.Equal(0, defCode);
+        Assert.Contains(txtPath, fakeShell.OpenedPaths);
+
+        var (guiCode, _, _) = await RunCliAsync(["open", txtPath, "--gui"], shell: fakeShell);
+        Assert.Equal(0, guiCode);
+        Assert.Contains(txtPath, fakeShell.EditorOpenedPaths);
+
+        var (revCode, _, _) = await RunCliAsync(["open", txtPath, "--reveal"], shell: fakeShell);
+        Assert.Equal(0, revCode);
+        Assert.Contains(txtPath, fakeShell.RevealedPaths);
+    }
+
     private static void CreateSampleDocx(string path, params string[] paragraphs)
     {
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
@@ -229,11 +283,29 @@ public class CliTests : IDisposable
     private sealed class RecordingPlatformShell : IPlatformShell
     {
         public List<string> TrashedPaths { get; } = [];
+        public List<string> OpenedPaths { get; } = [];
+        public List<string> RevealedPaths { get; } = [];
+        public List<string> EditorOpenedPaths { get; } = [];
 
-        public ShellActionResult OpenPath(string path) => ShellActionResult.Success(null);
-        public ShellActionResult ShowInFileManager(string path) => ShellActionResult.Success(null);
+        public ShellActionResult OpenPath(string path)
+        {
+            OpenedPaths.Add(path);
+            return ShellActionResult.Success(null);
+        }
+
+        public ShellActionResult ShowInFileManager(string path)
+        {
+            RevealedPaths.Add(path);
+            return ShellActionResult.Success(null);
+        }
+
         public ShellActionResult OpenInTerminal(string directoryPath) => ShellActionResult.Success(null);
-        public ShellActionResult OpenInEditor(Grepdesk.Core.Editor.AvailableEditor editor, string resultPath) => ShellActionResult.Success(null);
+
+        public ShellActionResult OpenInEditor(Grepdesk.Core.Editor.AvailableEditor editor, string resultPath)
+        {
+            EditorOpenedPaths.Add(resultPath);
+            return ShellActionResult.Success(null);
+        }
         public string? FindExecutableOnPath(string exeName) => null;
         public long? GetTrashSize() => 0;
         public ShellActionResult EmptyTrash() => ShellActionResult.Success(null);
