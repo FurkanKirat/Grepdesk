@@ -32,6 +32,12 @@ internal sealed class AppSettings
     /// <summary>Where the folder browser was left, opened again on the next start.</summary>
     public string? LastBrowseFolder { get; set; }
 
+    /// <summary>Folders pinned to the Favorites section in the folder browser.</summary>
+    public List<string> FavoriteFolders { get; set; } = [];
+
+    /// <summary>Recently visited folders in the folder browser, most recent first.</summary>
+    public List<string> RecentFolders { get; set; } = [];
+
     public Core.Browse.FolderSortColumn BrowseSortColumn { get; set; }
     public bool BrowseSortDescending { get; set; }
 

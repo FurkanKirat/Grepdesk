@@ -92,8 +92,8 @@ public sealed class BrowseRow : INotifyPropertyChanged
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-/// <summary>A place in the browser's sidebar: a user folder or a drive.</summary>
-public sealed record PlaceRow(string Label, string Path, Geometry Icon, string Detail = "", double UsedFraction = -1)
+/// <summary>A place in the browser's sidebar: a favorite, recent folder, user folder, or drive.</summary>
+public sealed record PlaceRow(string Label, string Path, Geometry Icon, string Detail = "", double UsedFraction = -1, string ActionTip = "")
 {
     public bool HasDetail => Detail.Length > 0;
     public bool HasUsage => UsedFraction >= 0;

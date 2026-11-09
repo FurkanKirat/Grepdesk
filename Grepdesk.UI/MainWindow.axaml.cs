@@ -1206,6 +1206,7 @@ public partial class MainWindow : Window
         new("F5", "ShortcutRescan"),
         new("Backspace, Alt+← / → / ↑", "ShortcutBrowseBack"),
         new("Ctrl+L", "ShortcutBrowseAddress"),
+        new("Ctrl+D", "ShortcutBrowseFavorite"),
         new("Ctrl+X / Ctrl+C / Ctrl+V", "ShortcutBrowseClipboard"),
         new("Ctrl+Shift+C", "ShortcutBrowseCopyPath"),
         new("F2", "ShortcutBrowseRename"),

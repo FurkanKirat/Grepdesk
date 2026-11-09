@@ -179,6 +179,92 @@ public class BrowseTests
         Assert.Equal(@"C:\b", history.Current);
     }
 
+    // ---- favorites and recent folder history ----
+
+    [Fact]
+    public void Recent_folders_keep_most_recent_first_and_cap_length()
+    {
+        using var dir = new TempDir();
+        var a = dir.Combine("a");
+        var b = dir.Combine("b");
+        var c = dir.Combine("c");
+        var d = dir.Combine("d");
+
+        var bookmarks = new FolderBookmarks(maxRecent: 3);
+        bookmarks.RecordVisit(a);
+        bookmarks.RecordVisit(b);
+        bookmarks.RecordVisit(c);
+        Assert.Equal([c, b, a], bookmarks.Recent);
+
+        // Revisiting an older folder moves it to the top without duplicating.
+        bookmarks.RecordVisit(a + Path.DirectorySeparatorChar);
+        Assert.Equal([a, c, b], bookmarks.Recent);
+
+        // Visiting a 4th folder drops the oldest.
+        bookmarks.RecordVisit(d);
+        Assert.Equal([d, a, c], bookmarks.Recent);
+
+        Assert.True(bookmarks.RemoveRecent(a));
+        Assert.Equal([d, c], bookmarks.Recent);
+
+        bookmarks.ClearRecent();
+        Assert.Empty(bookmarks.Recent);
+    }
+
+    [Fact]
+    public void Favorites_can_be_toggled_and_deduplicated()
+    {
+        using var dir = new TempDir();
+        var a = dir.Combine("alpha");
+        var b = dir.Combine("beta");
+
+        var bookmarks = new FolderBookmarks([a, a]);
+        Assert.Equal([a], bookmarks.Favorites);
+        Assert.True(bookmarks.IsFavorite(a));
+        Assert.False(bookmarks.IsFavorite(b));
+
+        Assert.True(bookmarks.ToggleFavorite(b));
+        Assert.Equal([a, b], bookmarks.Favorites);
+
+        Assert.False(bookmarks.ToggleFavorite(a));
+        Assert.Equal([b], bookmarks.Favorites);
+    }
+
+    [Fact]
+    public void Bookmarks_forget_deleted_folders_and_update_renamed_ones()
+    {
+        using var dir = new TempDir();
+        var keep = dir.Combine("keep");
+        var oldFolder = dir.Combine("old");
+        var oldChild = Path.Combine(oldFolder, "sub");
+        var newFolder = dir.Combine("new");
+        var newChild = Path.Combine(newFolder, "sub");
+
+        var bookmarks = new FolderBookmarks(
+            favorites: [keep, oldFolder, oldChild],
+            recent: [oldChild, oldFolder, keep]);
+
+        bookmarks.Rename(oldFolder, newFolder);
+        Assert.Equal([keep, newFolder, newChild], bookmarks.Favorites);
+        Assert.Equal([newChild, newFolder, keep], bookmarks.Recent);
+
+        bookmarks.Forget(newFolder);
+        Assert.Equal([keep], bookmarks.Favorites);
+        Assert.Equal([keep], bookmarks.Recent);
+    }
+
+    [Fact]
+    public void Disambiguates_duplicate_folder_names_with_parent()
+    {
+        using var dir = new TempDir();
+        var first = Path.Combine(dir.Path, "AppA", "src");
+        var second = Path.Combine(dir.Path, "AppB", "src");
+        var unique = Path.Combine(dir.Path, "docs");
+
+        var labeled = FolderBookmarks.LabelItems([first, second, unique]);
+        Assert.Equal(["src (AppA)", "src (AppB)", "docs"], labeled.Select(x => x.Label));
+    }
+
     // ---- address bar ----
 
     [Fact]

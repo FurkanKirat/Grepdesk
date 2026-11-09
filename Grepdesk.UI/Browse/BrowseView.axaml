@@ -20,6 +20,9 @@
             <Setter Property="Height" Value="16"/>
             <Setter Property="Foreground" Value="#cdd6f4"/>
         </Style>
+        <Style Selector="Button.tool.favorited PathIcon">
+            <Setter Property="Foreground" Value="#f9e2af"/>
+        </Style>
         <Style Selector="Button.tool:disabled /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
@@ -79,6 +82,47 @@
         </Style>
 
         <!-- Places sidebar -->
+        <Style Selector="TextBlock.placeSection">
+            <Setter Property="Foreground" Value="#7f849c"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.placeEmpty">
+            <Setter Property="Foreground" Value="#585b70"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Margin" Value="8,2,4,4"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style Selector="Button.placeAction">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#6c7086"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="5,1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="MinHeight" Value="0"/>
+        </Style>
+        <Style Selector="Button.placeAction:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="Button.placeRemove">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#6c7086"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="IsVisible" Value="False"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="4,0,0,0"/>
+        </Style>
+        <Style Selector="ListBox.places ListBoxItem:pointerover Button.placeRemove">
+            <Setter Property="IsVisible" Value="True"/>
+        </Style>
+        <Style Selector="Button.placeRemove:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
         <Style Selector="ListBox.places">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
@@ -161,10 +205,16 @@
                 <Button x:Name="RefreshButton" Classes="tool">
                     <PathIcon Data="{StaticResource IconRefresh}"/>
                 </Button>
+                <Button x:Name="HistoryButton" Classes="tool" IsEnabled="False">
+                    <PathIcon Data="{StaticResource IconHistory}"/>
+                </Button>
             </StackPanel>
 
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" Margin="8,0,0,0">
-                <TextBox x:Name="FilterBox" Classes="filter" Width="220" Margin="0,0,4,0"/>
+                <Button x:Name="FavoriteButton" Classes="tool" IsEnabled="False">
+                    <PathIcon x:Name="FavoriteIcon" Data="{StaticResource IconStarOutline}"/>
+                </Button>
+                <TextBox x:Name="FilterBox" Classes="filter" Width="220" Margin="4,0,4,0"/>
                 <Button x:Name="SearchBelowButton" Classes="tool">
                     <PathIcon Data="{StaticResource IconSearch}"/>
                 </Button>
@@ -196,39 +246,93 @@
             <TextBlock x:Name="StatusText" Classes="label" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
 
-        <Grid ColumnDefinitions="190,*,Auto">
-            <!-- ===== Places ===== -->
+        <Grid ColumnDefinitions="200,*,Auto">
+            <!-- ===== Places, Favorites, History, Drives ===== -->
             <ScrollViewer Grid.Column="0" Margin="0,0,10,0" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="10">
-                    <ListBox x:Name="PlacesList" Classes="places">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="b:PlaceRow">
-                                <StackPanel Orientation="Horizontal" Spacing="9">
-                                    <PathIcon Data="{Binding Icon}" Width="15" Height="15" Foreground="#89b4fa"/>
-                                    <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <ListBox x:Name="DrivesList" Classes="places">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="b:PlaceRow">
-                                <DockPanel>
-                                    <PathIcon DockPanel.Dock="Left" Data="{Binding Icon}" Width="15" Height="15"
-                                              Foreground="#94e2d5" Margin="0,0,9,0" VerticalAlignment="Top"/>
-                                    <StackPanel Spacing="3">
-                                        <TextBlock Text="{Binding Label}" FontSize="13" TextTrimming="CharacterEllipsis"/>
-                                        <ProgressBar IsVisible="{Binding HasUsage}" Value="{Binding UsedPercent}"
-                                                     Minimum="0" Maximum="100" Height="4" MinHeight="4"
-                                                     Foreground="#89b4fa" Background="#313244"/>
-                                        <TextBlock IsVisible="{Binding HasDetail}" Text="{Binding Detail}"
-                                                   FontSize="10" Foreground="#6c7086" TextTrimming="CharacterEllipsis"/>
+                    <!-- Favorites -->
+                    <StackPanel Spacing="2">
+                        <TextBlock x:Name="FavoritesHeader" Classes="placeSection" Margin="8,0,4,2"/>
+                        <ListBox x:Name="FavoritesList" Classes="places">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="b:PlaceRow">
+                                    <DockPanel Background="Transparent" ToolTip.Tip="{Binding Path}">
+                                        <Button DockPanel.Dock="Right" Classes="placeRemove" Tag="{Binding Path}" ToolTip.Tip="{Binding ActionTip}">
+                                            <PathIcon Data="{StaticResource IconClose}" Width="11" Height="11"/>
+                                        </Button>
+                                        <PathIcon DockPanel.Dock="Left" Data="{Binding Icon}" Width="15" Height="15"
+                                                  Foreground="#f9e2af" Margin="0,0,9,0"/>
+                                        <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="FavoritesEmptyText" Classes="placeEmpty"/>
+                    </StackPanel>
+
+                    <!-- History (Recent folders) -->
+                    <StackPanel Spacing="2">
+                        <DockPanel Margin="8,0,4,2">
+                            <Button x:Name="ClearHistoryButton" DockPanel.Dock="Right" Classes="placeAction" IsVisible="False"/>
+                            <TextBlock x:Name="HistoryHeader" Classes="placeSection"/>
+                        </DockPanel>
+                        <ListBox x:Name="HistoryList" Classes="places">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="b:PlaceRow">
+                                    <DockPanel Background="Transparent" ToolTip.Tip="{Binding Path}">
+                                        <Button DockPanel.Dock="Right" Classes="placeRemove" Tag="{Binding Path}" ToolTip.Tip="{Binding ActionTip}">
+                                            <PathIcon Data="{StaticResource IconClose}" Width="11" Height="11"/>
+                                        </Button>
+                                        <PathIcon DockPanel.Dock="Left" Data="{Binding Icon}" Width="15" Height="15"
+                                                  Foreground="#cba6f7" Margin="0,0,9,0"/>
+                                        <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="HistoryEmptyText" Classes="placeEmpty"/>
+                    </StackPanel>
+
+                    <!-- Standard Places -->
+                    <StackPanel Spacing="2">
+                        <TextBlock x:Name="PlacesHeader" Classes="placeSection" Margin="8,0,4,2"/>
+                        <ListBox x:Name="PlacesList" Classes="places">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="b:PlaceRow">
+                                    <StackPanel Orientation="Horizontal" Spacing="9" Background="Transparent" ToolTip.Tip="{Binding Path}">
+                                        <PathIcon Data="{Binding Icon}" Width="15" Height="15" Foreground="#89b4fa"/>
+                                        <TextBlock Text="{Binding Label}" FontSize="13" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
-                                </DockPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+
+                    <!-- Drives -->
+                    <StackPanel Spacing="2">
+                        <TextBlock x:Name="DrivesHeader" Classes="placeSection" Margin="8,0,4,2"/>
+                        <ListBox x:Name="DrivesList" Classes="places">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="b:PlaceRow">
+                                    <DockPanel Background="Transparent" ToolTip.Tip="{Binding Path}">
+                                        <PathIcon DockPanel.Dock="Left" Data="{Binding Icon}" Width="15" Height="15"
+                                                  Foreground="#94e2d5" Margin="0,0,9,0" VerticalAlignment="Top"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding Label}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                            <ProgressBar IsVisible="{Binding HasUsage}" Value="{Binding UsedPercent}"
+                                                         Minimum="0" Maximum="100" Height="4" MinHeight="4"
+                                                         Foreground="#89b4fa" Background="#313244"/>
+                                            <TextBlock IsVisible="{Binding HasDetail}" Text="{Binding Detail}"
+                                                       FontSize="10" Foreground="#6c7086" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 

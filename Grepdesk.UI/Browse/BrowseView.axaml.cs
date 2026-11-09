@@ -27,8 +27,10 @@ public partial class BrowseView : UserControl
 
     /// <summary>"This PC", the list of drives. Not a path, so it never collides with one.</summary>
     internal const string ThisPc = "";
+    private const int SidebarHistoryLimit = 8;
 
     private readonly NavigationHistory _history = new();
+    private readonly FolderBookmarks _bookmarks = new(Settings.FavoriteFolders, Settings.RecentFolders);
     private readonly IFileClipboard? _clipboard = PlatformShellFactory.CreateFileClipboard();
     private readonly ShellIconCache? _icons = PlatformShellFactory.CreateShellIcons() is { } icons ? new ShellIconCache(icons) : null;
     private readonly DispatcherTimer _reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -85,6 +87,9 @@ public partial class BrowseView : UserControl
         ForwardButton.Click += async (_, _) => await GoForwardAsync();
         UpButton.Click += async (_, _) => await GoUpAsync();
         RefreshButton.Click += async (_, _) => await ReloadAsync();
+        HistoryButton.Click += (_, _) => ShowHistoryMenu();
+        FavoriteButton.Click += (_, _) => ToggleFavorite(CurrentFolder);
+        ClearHistoryButton.Click += (_, _) => ClearHistory();
         NewFolderButton.Click += (_, _) => NewFolder();
         SearchBelowButton.Click += (_, _) => RequestSearch();
         CalculateSizesButton.Click += async (_, _) => await CalculateFolderSizesAsync(forceFull: true);
@@ -114,8 +119,14 @@ public partial class BrowseView : UserControl
                 CrumbScroller.Offset = new Vector(Math.Max(0, CrumbScroller.Extent.Width - CrumbScroller.Viewport.Width), 0);
         };
 
+        FavoritesList.SelectionChanged += async (_, _) => await OnPlacePickedAsync(FavoritesList);
+        HistoryList.SelectionChanged += async (_, _) => await OnPlacePickedAsync(HistoryList);
         PlacesList.SelectionChanged += async (_, _) => await OnPlacePickedAsync(PlacesList);
         DrivesList.SelectionChanged += async (_, _) => await OnPlacePickedAsync(DrivesList);
+        FavoritesList.AddHandler(Button.ClickEvent, OnRemoveFavoriteClick, RoutingStrategies.Bubble);
+        HistoryList.AddHandler(Button.ClickEvent, OnRemoveHistoryClick, RoutingStrategies.Bubble);
+        foreach (var list in new[] { FavoritesList, HistoryList, PlacesList, DrivesList })
+            list.AddHandler(PointerReleasedEvent, OnSidebarPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
 
         _reloadTimer.Tick += async (_, _) =>
         {
@@ -143,13 +154,24 @@ public partial class BrowseView : UserControl
         ToolTip.SetTip(ForwardButton, Loc.Get("BrowseForward"));
         ToolTip.SetTip(UpButton, Loc.Get("BrowseUp"));
         ToolTip.SetTip(RefreshButton, Loc.Get("BrowseRefresh"));
+        ToolTip.SetTip(HistoryButton, Loc.Get("BrowseHistory"));
         ToolTip.SetTip(NewFolderButton, Loc.Get("BrowseNewFolder"));
         ToolTip.SetTip(SearchBelowButton, Loc.Get("BrowseSearchBelow"));
         ToolTip.SetTip(HiddenToggle, Loc.Get("BrowseShowHidden"));
         CalculateSizesButton.Content = Loc.Get("BrowseCalculateSizes");
         ToolTip.SetTip(CalculateSizesButton, Loc.Get("BrowseCalculateSizesTip"));
         FilterBox.Watermark = Loc.Get("BrowseFilterWatermark");
+        FavoritesHeader.Text = Loc.Get("PlaceFavorites");
+        FavoritesEmptyText.Text = Loc.Get("BrowseFavoritesEmpty");
+        HistoryHeader.Text = Loc.Get("PlaceHistory");
+        HistoryEmptyText.Text = Loc.Get("BrowseHistoryEmpty");
+        ClearHistoryButton.Content = Loc.Get("BrowseClearHistoryShort");
+        ToolTip.SetTip(ClearHistoryButton, Loc.Get("BrowseClearHistory"));
+        PlacesHeader.Text = Loc.Get("PlaceSectionPlaces");
+        DrivesHeader.Text = Loc.Get("PlaceSectionDrives");
+        UpdateFavoriteButton();
         UpdateColumnHeaders();
+        FillBookmarks();
         FillPlaces();
         if (CurrentFolder is { } folder) ShowCrumbs(folder);
         // Type names ("TXT file") are made with the rows; a full render remakes them.
@@ -243,10 +265,22 @@ public partial class BrowseView : UserControl
         if (contents.Error == FolderListingError.NotFound && !folderChanged)
         {
             _history.Forget(folder);
+            _bookmarks.Forget(folder);
+            SaveBookmarks();
+            FillBookmarks();
             var existing = PathUtil.Parent(folder);
             while (existing is not null && !Directory.Exists(existing)) existing = PathUtil.Parent(existing);
             await NavigateAsync(existing ?? ThisPc);
             return;
+        }
+
+        if (folderChanged && folder != ThisPc && contents.Error != FolderListingError.NotFound)
+        {
+            _bookmarks.RecordVisit(folder);
+            SaveBookmarks();
+            FillBookmarks();
+            SelectPlace(folder);
+            UpdateNavigationButtons();
         }
 
         _entries = contents.Entries
@@ -365,8 +399,19 @@ public partial class BrowseView : UserControl
         BackButton.IsEnabled = _history.CanGoBack;
         ForwardButton.IsEnabled = _history.CanGoForward;
         UpButton.IsEnabled = InFolder;
+        HistoryButton.IsEnabled = _bookmarks.Recent.Count > 0;
+        FavoriteButton.IsEnabled = InFolder;
         NewFolderButton.IsEnabled = SearchBelowButton.IsEnabled = InFolder;
         FilterBox.IsEnabled = true;
+        UpdateFavoriteButton();
+    }
+
+    private void UpdateFavoriteButton()
+    {
+        var isFavorite = InFolder && _bookmarks.IsFavorite(CurrentFolder);
+        FavoriteButton.Classes.Set("favorited", isFavorite);
+        FavoriteIcon.Data = Icon(isFavorite ? "IconStar" : "IconStarOutline");
+        ToolTip.SetTip(FavoriteButton, Loc.Get(isFavorite ? "BrowseRemoveFavoriteTip" : "BrowseAddFavoriteTip"));
     }
 
     /// <summary>The drives as entries; runs off the UI thread (a sleeping network drive can take seconds to answer).</summary>
@@ -727,6 +772,158 @@ public partial class BrowseView : UserControl
         }
     }
 
+    private void FillBookmarks()
+    {
+        _updatingPlaces = true;
+        try
+        {
+            var starIcon = Icon("IconStar");
+            var removeFavTip = Loc.Get("BrowseRemoveFavorite");
+            var favorites = FolderBookmarks.LabelItems(_bookmarks.Favorites)
+                .Select(f => new PlaceRow(f.Label, f.Path, starIcon, ActionTip: removeFavTip))
+                .ToList();
+            FavoritesList.ItemsSource = favorites;
+            FavoritesList.IsVisible = favorites.Count > 0;
+            FavoritesEmptyText.IsVisible = favorites.Count == 0;
+
+            var historyIcon = Icon("IconHistory");
+            var removeHistTip = Loc.Get("BrowseRemoveFromHistory");
+            var recentPaths = _bookmarks.Recent.Take(SidebarHistoryLimit).ToList();
+            var recent = FolderBookmarks.LabelItems(recentPaths)
+                .Select(r => new PlaceRow(r.Label, r.Path, historyIcon, ActionTip: removeHistTip))
+                .ToList();
+            HistoryList.ItemsSource = recent;
+            HistoryList.IsVisible = recent.Count > 0;
+            HistoryEmptyText.IsVisible = recent.Count == 0;
+            ClearHistoryButton.IsVisible = recent.Count > 0;
+            HistoryButton.IsEnabled = _bookmarks.Recent.Count > 0;
+        }
+        finally
+        {
+            _updatingPlaces = false;
+        }
+    }
+
+    private void SaveBookmarks()
+    {
+        Settings.FavoriteFolders = _bookmarks.Favorites.ToList();
+        Settings.RecentFolders = _bookmarks.Recent.ToList();
+        Settings.Save();
+    }
+
+    private void ToggleFavorite(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var added = _bookmarks.ToggleFavorite(path);
+        SaveBookmarks();
+        FillBookmarks();
+        if (CurrentFolder is { } current) SelectPlace(current);
+        UpdateFavoriteButton();
+
+        var name = FolderBookmarks.DisplayName(path);
+        SetMessage(() => Loc.Get(added ? "BrowseFavoriteAdded" : "BrowseFavoriteRemoved", name));
+    }
+
+    private void RemoveFromHistory(string path)
+    {
+        if (!_bookmarks.RemoveRecent(path)) return;
+        SaveBookmarks();
+        FillBookmarks();
+        if (CurrentFolder is { } current) SelectPlace(current);
+    }
+
+    private void ClearHistory()
+    {
+        if (_bookmarks.Recent.Count == 0) return;
+        _bookmarks.ClearRecent();
+        SaveBookmarks();
+        FillBookmarks();
+        SetMessage(() => Loc.Get("BrowseHistoryCleared"));
+    }
+
+    private void ShowHistoryMenu()
+    {
+        if (_bookmarks.Recent.Count == 0) return;
+
+        var items = new List<Control>();
+        foreach (var (path, label) in FolderBookmarks.LabelItems(_bookmarks.Recent))
+        {
+            var isCurrent = InFolder && PathUtil.Comparer.Equals(PathUtil.Normalize(CurrentFolder!), path);
+            var item = new MenuItem
+            {
+                Header = label,
+                ToggleType = isCurrent ? MenuItemToggleType.CheckBox : MenuItemToggleType.None,
+                IsChecked = isCurrent
+            };
+            ToolTip.SetTip(item, path);
+            var target = path;
+            item.Click += async (_, _) => await NavigateAsync(target);
+            items.Add(item);
+        }
+
+        items.Add(new Separator());
+        items.Add(Item("BrowseClearHistory", ClearHistory));
+        new ContextMenu { ItemsSource = items }.Open(HistoryButton);
+    }
+
+    private void OnRemoveFavoriteClick(object? sender, RoutedEventArgs e)
+    {
+        if (e.Source is not Button { Tag: string path }) return;
+        e.Handled = true;
+        ToggleFavorite(path);
+    }
+
+    private void OnRemoveHistoryClick(object? sender, RoutedEventArgs e)
+    {
+        if (e.Source is not Button { Tag: string path }) return;
+        e.Handled = true;
+        RemoveFromHistory(path);
+    }
+
+    private void OnSidebarPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (e.InitialPressMouseButton != MouseButton.Right || sender is not ListBox list) return;
+        var row = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as PlaceRow;
+        if (row is null || string.IsNullOrEmpty(row.Path)) return;
+
+        var path = row.Path;
+        var menu = new List<Control>
+        {
+            Item("ContextMenuOpen", () => _ = NavigateAsync(path))
+        };
+
+        if (list == FavoritesList)
+        {
+            menu.Add(Item("BrowseRemoveFavorite", () => ToggleFavorite(path)));
+        }
+        else
+        {
+            var favKey = _bookmarks.IsFavorite(path) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
+            menu.Add(Item(favKey, () => ToggleFavorite(path)));
+        }
+
+        if (list == HistoryList)
+        {
+            menu.Add(Item("BrowseRemoveFromHistory", () => RemoveFromHistory(path)));
+            menu.Add(Item("BrowseClearHistory", ClearHistory));
+        }
+
+        menu.Add(new Separator());
+        menu.Add(Item("BrowseCopyPath", () => _ = CopySinglePathAsync(path)));
+        menu.Add(Item("BrowseOpenInExplorer", () => Report(Shell?.OpenPath(path), "FileOpenFailed")));
+
+        new ContextMenu { ItemsSource = menu }.Open(list);
+        e.Handled = true;
+    }
+
+    private async Task CopySinglePathAsync(string path)
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is null) return;
+        await clipboard.SetTextAsync($"\"{path}\"");
+        SetMessage(() => Loc.Get("PathCopied"));
+    }
+
     private void FillPlaces()
     {
         _updatingPlaces = true;
@@ -797,6 +994,8 @@ public partial class BrowseView : UserControl
                 list.ItemsSource?.OfType<PlaceRow>().FirstOrDefault(p => string.Equals(PathUtil.Normalize(p.Path), path, PathUtil.Comparison));
 
             var normalized = folder == ThisPc ? ThisPc : PathUtil.Normalize(folder);
+            FavoritesList.SelectedItem = normalized == ThisPc ? null : Find(FavoritesList, normalized);
+            HistoryList.SelectedItem = normalized == ThisPc ? null : Find(HistoryList, normalized);
             PlacesList.SelectedItem = Find(PlacesList, normalized);
             DrivesList.SelectedItem = normalized == ThisPc ? null : Find(DrivesList, normalized);
         }
@@ -929,6 +1128,8 @@ public partial class BrowseView : UserControl
             Key.Up when alt => GoUpAsync,
             Key.F5 or Key.BrowserRefresh => ReloadAsync,
             Key.L when ctrl => Do(BeginEditAddress),
+            Key.D when ctrl && (SingleSelected is { IsDirectory: true } || InFolder) =>
+                Do(() => ToggleFavorite(SingleSelected is { IsDirectory: true } dir ? dir.FullPath : CurrentFolder)),
             Key.D when alt => Do(BeginEditAddress),
             Key.F4 when mods == KeyModifiers.None => Do(BeginEditAddress),
             Key.H when ctrl => () => SetShowHiddenAsync(!Settings.ShowHiddenFiles),
@@ -1004,8 +1205,15 @@ public partial class BrowseView : UserControl
         if (single is not null)
         {
             menu.Add(Item("ContextMenuOpen", () => _ = OpenAsync(single), new KeyGesture(Key.Enter)));
-            if (!single.IsDirectory)
+            if (single.IsDirectory)
+            {
+                var favKey = _bookmarks.IsFavorite(single.FullPath) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
+                menu.Add(Item(favKey, () => ToggleFavorite(single.FullPath), new KeyGesture(Key.D, KeyModifiers.Control)));
+            }
+            else
+            {
                 menu.Add(Item("ContextMenuView", () => ViewRequested?.Invoke(single.ToResultItem()), new KeyGesture(Key.Space)));
+            }
         }
         if (!InFolder) return menu; // drives in This PC: just open them
 
@@ -1062,6 +1270,8 @@ public partial class BrowseView : UserControl
         menu.Add(Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5)));
 
         menu.Add(new Separator());
+        var favKey = _bookmarks.IsFavorite(folder) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
+        menu.Add(Item(favKey, () => ToggleFavorite(folder), new KeyGesture(Key.D, KeyModifiers.Control)));
         menu.Add(Item("BrowseSearchBelow", RequestSearch));
         if (_entries.Any(e => e.IsDirectory))
             menu.Add(Item("BrowseCalculateSizes", () => _ = CalculateFolderSizesAsync(forceFull: true), new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift)));
@@ -1194,6 +1404,11 @@ public partial class BrowseView : UserControl
         }
         if (removed.Count == 0) return;
 
+        foreach (var path in removed) _bookmarks.Forget(path);
+        SaveBookmarks();
+        FillBookmarks();
+        if (CurrentFolder is { } cur) SelectPlace(cur);
+
         Removed?.Invoke(removed);
         var count = removed.Count;
         var name = first.Name;
@@ -1271,7 +1486,13 @@ public partial class BrowseView : UserControl
         switch (result.Outcome)
         {
             case RenameOutcome.Renamed:
-                if (row.IsDirectory) _history.Forget(row.FullPath);
+                if (row.IsDirectory)
+                {
+                    _history.Forget(row.FullPath);
+                    _bookmarks.Rename(row.FullPath, result.Path);
+                    SaveBookmarks();
+                    FillBookmarks();
+                }
                 Removed?.Invoke([row.FullPath]);
                 _selectAfterLoad = result.Path;
                 _ = ReloadAsync();
