@@ -88,6 +88,35 @@ public sealed class PdfRenderer : IDisposable
         }
     }
 
+    /// <summary>The page's characters and their boxes in points, for text selection; null once disposed.</summary>
+    public PdfPageText? GetText(int index)
+    {
+        lock (Gate)
+        {
+            if (_disposed || _reader is null) return null;
+            var (pointsWidth, pointsHeight) = PageSizes[index];
+
+            using var page = _reader.GetPageReader(index);
+            // Docnet reports boxes in pixels of a page drawn at the reader's scale.
+            double pixelWidth = page.GetPageWidth(), pixelHeight = page.GetPageHeight();
+            if (pixelWidth <= 0 || pixelHeight <= 0) return PdfPageText.Empty;
+            var sx = pointsWidth / pixelWidth;
+            var sy = pointsHeight / pixelHeight;
+
+            var text = new System.Text.StringBuilder();
+            var boxes = new List<PdfCharBox>();
+            foreach (var c in page.GetCharacters())
+            {
+                var b = c.Box;
+                text.Append(c.Char);
+                boxes.Add(new PdfCharBox(
+                    Math.Min(b.Left, b.Right) * sx, Math.Min(b.Top, b.Bottom) * sy,
+                    Math.Max(b.Left, b.Right) * sx, Math.Max(b.Top, b.Bottom) * sy));
+            }
+            return new PdfPageText(text.ToString(), boxes.ToArray());
+        }
+    }
+
     public void Dispose()
     {
         lock (Gate)

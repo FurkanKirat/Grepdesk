@@ -226,6 +226,8 @@
   "ViewerPage": "Sayfa {0:N0} / {1:N0}",
   "ViewerPdfFirstPages": "{1:N0} sayfanın ilk {0:N0} sayfası gösteriliyor",
   "ViewerPdfFailed": "Bu PDF açılamadı. Bozuk ya da parola korumalı olabilir.",
+  "PdfCopy": "Kopyala",
+  "PdfSelectAll": "Tümünü seç",
   "ViewerImageFailed": "Bu resim okunamadı.",
   "ViewerMediaFailed": "Windows bu dosyayı oynatamıyor: codec'i kurulu olmayabilir ({0}). Kendi uygulamasında açabilirsin.",
   "ViewerMediaUnsupported": "Video ve ses oynatma şimdilik yalnızca Windows'ta var.",

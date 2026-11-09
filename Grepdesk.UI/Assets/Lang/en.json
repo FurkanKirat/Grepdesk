@@ -226,6 +226,8 @@
   "ViewerPage": "Page {0:N0} / {1:N0}",
   "ViewerPdfFirstPages": "Showing the first {0:N0} of {1:N0} pages",
   "ViewerPdfFailed": "This PDF couldn't be opened. It may be damaged or password protected.",
+  "PdfCopy": "Copy",
+  "PdfSelectAll": "Select all",
   "ViewerImageFailed": "This image couldn't be read.",
   "ViewerMediaFailed": "Windows can't play this file: its codec may not be installed ({0}). Open it in its own app instead.",
   "ViewerMediaUnsupported": "Video and audio playback is only available on Windows for now.",
