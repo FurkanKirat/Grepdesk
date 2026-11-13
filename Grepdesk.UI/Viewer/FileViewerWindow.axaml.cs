@@ -2,12 +2,14 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
+using AvaloniaEdit.Folding;
 using AvaloniaEdit.TextMate;
 using Grepdesk.Core.ContentSearch;
 using Grepdesk.Core.Preview;
@@ -38,6 +40,10 @@ public partial class FileViewerWindow : Window
     /// <summary>Highlighting tokenizes every line; past this, big logs and dumps stay plain.</summary>
     private const int MaxHighlightedChars = 4_000_000;
 
+    private const double DefaultEditorFontSize = 12.5;
+    private const double MinEditorFontSize = 8.0;
+    private const double MaxEditorFontSize = 32.0;
+
     private const long MaxImageBytes = 200 * 1024 * 1024;
     private const long MaxDocumentBytes = 50 * 1024 * 1024;
     private const int ShellImageSize = 2048;
@@ -59,6 +65,9 @@ public partial class FileViewerWindow : Window
 
     private readonly bool _standalone;
     private readonly TextMate.Installation _textMate;
+    private readonly CodeEditorHighlighter _highlighter = new();
+    private readonly DispatcherTimer _structureTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
+    private FoldingManager? _foldingManager;
     private CancellationTokenSource _cts = new();
     private string? _highlight;
     private MarkdownPreview? _markdown;
@@ -69,9 +78,19 @@ public partial class FileViewerWindow : Window
     private IViewerBody? _body;
     /// <summary>The file is a Word document: Edit switches between its pages and the Word editor.</summary>
     private bool _word;
+    private bool _excel;
+    private bool _powerPoint;
     private DocxEditor? _docx;
+    private XlsxEditDocument? _xlsxEdit;
+    private PptxEditDocument? _pptxEdit;
     private FileEncoding? _encoding;
+    private bool _encodingChanged;
     private CancellationTokenSource? _statusCts;
+    private string _cachedText = "";
+    private bool _cachedTextDirty;
+    private IReadOnlyList<CodeSymbol> _symbols = [];
+    private IReadOnlyList<TextSpan> _searchMatches = [];
+    private int _activeMatchIndex = -1;
 
     /// <summary>Raised with the full path when the user clicks Open / Show in folder (or a link in Markdown).</summary>
     public event Action<string>? OpenRequested;
@@ -81,7 +100,10 @@ public partial class FileViewerWindow : Window
 
     /// <summary>The editor holds edits that aren't saved yet.</summary>
     public bool HasUnsavedChanges =>
-        (_encoding is not null && !Editor.Document.UndoStack.IsOriginalFile) || _docx?.IsDirty == true;
+        (_encoding is not null && (!Editor.Document.UndoStack.IsOriginalFile || _encodingChanged))
+        || _docx?.IsDirty == true
+        || _xlsxEdit?.IsDirty == true
+        || _pptxEdit?.IsDirty == true;
 
     private bool IsEditing => EditToggle.IsVisible && EditToggle.IsChecked == true;
 
@@ -105,6 +127,7 @@ public partial class FileViewerWindow : Window
         // The theme brings its own current-line colours; ours match the window.
         _textMate.AppliedTheme += (_, _) => ApplyCurrentLineColors();
         ApplyCurrentLineColors();
+        SetupEditorFeatures();
 
         WrapToggle.IsCheckedChanged += (_, _) => Editor.WordWrap = WrapToggle.IsChecked == true;
         RenderedToggle.IsCheckedChanged += (_, _) =>
@@ -122,16 +145,35 @@ public partial class FileViewerWindow : Window
                 if (!_loading) await SwitchWordEditingAsync(IsEditing);
                 return;
             }
+            if (_excel)
+            {
+                SaveButton.IsVisible = IsEditing;
+                if (!_loading) await SwitchExcelEditingAsync(IsEditing);
+                return;
+            }
+            if (_powerPoint)
+            {
+                SaveButton.IsVisible = IsEditing;
+                if (!_loading) await SwitchPowerPointEditingAsync(IsEditing);
+                return;
+            }
             Editor.IsReadOnly = !IsEditing;
             SaveButton.IsVisible = IsEditing;
+            ReplaceButton.IsEnabled = IsEditing;
+            ReplaceAllButton.IsEnabled = IsEditing;
+            UpdateEditorStatusBar();
             if (_loading) return;
             if (IsEditing && RenderedToggle.IsChecked == true) RenderedToggle.IsChecked = false; // edit the source
             else if (IsEditing) Editor.TextArea.Focus();
         };
         SaveButton.Click += async (_, _) => await SaveAsync();
+        PrevFileButton.Click += async (_, _) => await ShowNeighborAsync(-1);
+        NextFileButton.Click += async (_, _) => await ShowNeighborAsync(+1);
         OpenButton.Click += (_, _) => { if (FilePath is not null) OpenRequested?.Invoke(FilePath); };
         ShowInFolderButton.Click += (_, _) => { if (FilePath is not null) ShowInFolderRequested?.Invoke(FilePath); };
 
+        // Tunnel catches IDE shortcuts (Ctrl+F/H/G, Ctrl+/, F3, Esc in find bar) before AvaloniaEdit.
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         // Bubble, not tunnel: Esc in the Ctrl+F box closes the search box first.
         KeyDown += OnKeyDown;
         ApplyLanguage();
@@ -145,12 +187,40 @@ public partial class FileViewerWindow : Window
 
     public void ApplyLanguage()
     {
+        FindButton.Content = Loc.Get("ViewerFind");
+        OutlineButton.Content = Loc.Get("ViewerOutline");
+        FormatButton.Content = Loc.Get("ViewerFormat");
         RenderedToggle.Content = Loc.Get("ViewerRendered");
         WrapToggle.Content = Loc.Get("ViewerWrap");
         EditToggle.Content = Loc.Get("ViewerEdit");
         SaveButton.Content = Loc.Get("ViewerSave");
+
+        FindBox.Watermark = Loc.Get("ViewerFindWatermark");
+        ReplaceBox.Watermark = Loc.Get("ViewerReplaceWatermark");
+        ReplaceButton.Content = Loc.Get("ViewerReplace");
+        ReplaceAllButton.Content = Loc.Get("ViewerReplaceAll");
+        GoToLineBox.Watermark = Loc.Get("ViewerGoToLineWatermark");
+        GoToLineButton.Content = Loc.Get("ViewerGoToLineGo");
+
+        ToolTip.SetTip(FindButton, "Ctrl+F");
+        ToolTip.SetTip(OutlineButton, "Ctrl+Shift+O");
+        ToolTip.SetTip(FormatButton, "Shift+Alt+F");
         ToolTip.SetTip(SaveButton, "Ctrl+S");
         ToolTip.SetTip(EditToggle, "Ctrl+E");
+        ToolTip.SetTip(PrevFileButton, Loc.Get("ViewerPrevFile"));
+        ToolTip.SetTip(NextFileButton, Loc.Get("ViewerNextFile"));
+        ToolTip.SetTip(MatchCaseToggle, Loc.Get("ViewerMatchCase"));
+        ToolTip.SetTip(WholeWordToggle, Loc.Get("ViewerWholeWord"));
+        ToolTip.SetTip(RegexToggle, Loc.Get("ViewerRegex"));
+        ToolTip.SetTip(FindPrevButton, Loc.Get("ViewerFindPrev"));
+        ToolTip.SetTip(FindNextButton, Loc.Get("ViewerFindNext"));
+        ToolTip.SetTip(WhitespaceToggle, Loc.Get("ViewerWhitespace"));
+        ToolTip.SetTip(CursorPosButton, Loc.Get("ViewerGoToLine"));
+        ToolTip.SetTip(SymbolCrumbButton, Loc.Get("ViewerOutline"));
+        ToolTip.SetTip(LineEndingButton, Loc.Get("ViewerLineEndingTip"));
+        ToolTip.SetTip(EncodingButton, Loc.Get("ViewerEncodingTip"));
+        ToolTip.SetTip(EditorZoomButton, Loc.Get("ViewerZoomResetTip"));
+
         OpenButton.Content = Loc.Get("ContextMenuOpen");
         ShowInFolderButton.Content = Loc.Get("ContextMenuShowInFolder");
     }
@@ -193,6 +263,12 @@ public partial class FileViewerWindow : Window
                     break;
                 case ViewerKind.Word:
                     await LoadWordAsync(path, token, editIfStandalone: true);
+                    break;
+                case ViewerKind.Excel:
+                    await LoadExcelAsync(path, token, editIfStandalone: true);
+                    break;
+                case ViewerKind.PowerPoint:
+                    await LoadPowerPointAsync(path, token, editIfStandalone: true);
                     break;
                 case ViewerKind.Document:
                     await LoadDocumentAsync(path, token);
@@ -383,6 +459,192 @@ public partial class FileViewerWindow : Window
         UpdateTitle();
     }
 
+    /// <summary>Excel workbooks as a spreadsheet grid with sheet tabs and formula bar.</summary>
+    private async Task LoadExcelAsync(string path, CancellationToken token, bool editIfStandalone)
+    {
+        var size = new FileInfo(path).Length;
+        if (size > MaxDocumentBytes)
+        {
+            await ShowCardAsync(path, Loc.Get("ViewerTooLarge", Format.Size(MaxDocumentBytes)), token);
+            return;
+        }
+
+        XlsxDocument document;
+        try
+        {
+            document = await Task.Run(() => XlsxDocument.Load(path, token), token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            ErrorLog.Write("xlsx viewer", e.ToString());
+            if (!token.IsCancellationRequested) await LoadDocumentAsync(path, token);
+            return;
+        }
+
+        if (token.IsCancellationRequested) return;
+        SetInfo(Loc.Get("ViewerSheets", document.Sheets.Count), Format.Size(size));
+        ShowBody(new XlsxView(document, _highlight));
+
+        _excel = true;
+        SetEditToggle(false);
+        EditToggle.IsVisible = true;
+        if (_standalone && editIfStandalone) EditToggle.IsChecked = true;
+    }
+
+    private async Task SwitchExcelEditingAsync(bool editing)
+    {
+        if (FilePath is not { } path) return;
+        var token = _cts.Token;
+
+        if (!editing)
+        {
+            if (_xlsxEdit is { IsDirty: true } && !await ConfirmLeaveAsync())
+            {
+                SetEditToggle(true);
+                return;
+            }
+            DisposeBody();
+            ShowMessage(Loc.Get("PreviewLoading"));
+            await LoadExcelAsync(path, token, editIfStandalone: false);
+            UpdateTitle();
+            return;
+        }
+
+        XlsxEditDocument editDoc;
+        XlsxDocument layout;
+        try
+        {
+            (editDoc, layout) = await Task.Run(() =>
+            {
+                var opened = XlsxEditDocument.Open(path, token);
+                var laid = opened.Layout(token);
+                return (opened, laid);
+            }, token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            ErrorLog.Write("xlsx editor", e.ToString());
+            if (FilePath == path) ShowStatus(Loc.Get("DocxEditFailed", e.Message), ok: false);
+            SetEditToggle(false);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || FilePath != path || !IsEditing) return;
+
+        DisposeBody();
+        var view = new XlsxView(layout, _highlight, editDoc);
+        view.Changed += UpdateTitle;
+        ShowBody(view);
+        _xlsxEdit = editDoc;
+        SaveButton.IsVisible = true;
+        UpdateTitle();
+    }
+
+    /// <summary>PowerPoint presentations as slides with outline sidebar and speaker notes.</summary>
+    private async Task LoadPowerPointAsync(string path, CancellationToken token, bool editIfStandalone)
+    {
+        var size = new FileInfo(path).Length;
+        if (size > MaxDocumentBytes)
+        {
+            await ShowCardAsync(path, Loc.Get("ViewerTooLarge", Format.Size(MaxDocumentBytes)), token);
+            return;
+        }
+
+        PptxPreview preview;
+        try
+        {
+            preview = await Task.Run(() => PptxPreview.Load(path, token), token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            ErrorLog.Write("pptx viewer", e.ToString());
+            if (!token.IsCancellationRequested) await LoadDocumentAsync(path, token);
+            return;
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            preview.Dispose();
+            return;
+        }
+
+        SetInfo(Loc.Get("ViewerSlides", preview.Document.Slides.Count), Format.Size(size));
+        ShowBody(new PptxView(preview, _highlight));
+
+        var canEdit = PptxDocument.CanEdit(path);
+        _powerPoint = true;
+        SetEditToggle(false);
+        EditToggle.IsVisible = canEdit;
+        if (canEdit && _standalone && editIfStandalone) EditToggle.IsChecked = true;
+    }
+
+    private async Task SwitchPowerPointEditingAsync(bool editing)
+    {
+        if (FilePath is not { } path) return;
+        if (editing && !PptxDocument.CanEdit(path))
+        {
+            SetEditToggle(false);
+            return;
+        }
+        var token = _cts.Token;
+
+        if (!editing)
+        {
+            if (_pptxEdit is { IsDirty: true } && !await ConfirmLeaveAsync())
+            {
+                SetEditToggle(true);
+                return;
+            }
+            DisposeBody();
+            ShowMessage(Loc.Get("PreviewLoading"));
+            await LoadPowerPointAsync(path, token, editIfStandalone: false);
+            UpdateTitle();
+            return;
+        }
+
+        PptxEditDocument editDoc;
+        PptxPreview preview;
+        try
+        {
+            (editDoc, preview) = await Task.Run(() =>
+            {
+                var opened = PptxEditDocument.Open(path, token);
+                var laid = opened.Layout(token);
+                var images = new Dictionary<byte[], Bitmap>(ReferenceEqualityComparer.Instance);
+                return (opened, PptxPreview.From(laid, images, token, ownsImages: true));
+            }, token);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            ErrorLog.Write("pptx editor", e.ToString());
+            if (FilePath == path) ShowStatus(Loc.Get("DocxEditFailed", e.Message), ok: false);
+            SetEditToggle(false);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || FilePath != path || !IsEditing)
+        {
+            preview.Dispose();
+            return;
+        }
+
+        DisposeBody();
+        var view = new PptxView(preview, _highlight, editDoc);
+        view.Changed += UpdateTitle;
+        ShowBody(view);
+        _pptxEdit = editDoc;
+        SaveButton.IsVisible = true;
+        UpdateTitle();
+    }
+
     /// <summary>Excel and other documents: their text, read-only.</summary>
     private async Task LoadDocumentAsync(string path, CancellationToken token)
     {
@@ -412,11 +674,24 @@ public partial class FileViewerWindow : Window
     private void ShowText(string text, string? grammar)
     {
         // A fresh document starts a fresh undo history, marked as "saved".
+        _cachedText = text;
+        _cachedTextDirty = false;
+        _encodingChanged = false;
         Editor.Document = new TextDocument(text);
         Editor.Document.UndoStack.PropertyChanged += (_, _) => UpdateTitle();
-        Editor.Document.TextChanged += (_, _) => _markdownStale = true;
+        Editor.Document.TextChanged += (_, _) =>
+        {
+            _markdownStale = true;
+            _cachedTextDirty = true;
+            _structureTimer.Stop();
+            _structureTimer.Start();
+            UpdateEditorStatusBar();
+        };
         _markdownStale = false;
         _textMate.SetGrammar(grammar);
+        ReinstallFoldingManager();
+        RefreshCodeStructure();
+        UpdateEditorStatusBar();
         WrapToggle.IsVisible = true;
         UpdateTitle();
     }
@@ -469,7 +744,10 @@ public partial class FileViewerWindow : Window
             : null;
         MarkdownScroll.IsVisible = rendered;
         MarkdownScroll.Offset = default;
-        Editor.IsVisible = !rendered;
+        EditorContainer.IsVisible = !rendered;
+        FindButton.IsVisible = true;
+        OutlineButton.IsVisible = _symbols.Count > 0;
+        FormatButton.IsVisible = !rendered && _encoding is not null && CodeFormatter.CanFormat(FilePath);
         WrapToggle.IsVisible = !rendered;
         MessagePanel.IsVisible = false;
 
@@ -490,7 +768,7 @@ public partial class FileViewerWindow : Window
 
         Editor.Select(index, _highlight.Length);
         var location = Editor.Document.GetLocation(index);
-        Editor.ScrollTo(location.Line, location.Column);
+        ScrollEditorTo(location.Line, location.Column, _highlight.Length);
     }
 
     private void SetMarkdown(MarkdownPreview? markdown)
@@ -519,6 +797,36 @@ public partial class FileViewerWindow : Window
                 return false;
             }
         }
+        if (_xlsxEdit is { } xlsxEdit && FilePath is { } xlsxPath)
+        {
+            try
+            {
+                xlsxEdit.Save(xlsxPath);
+                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                UpdateTitle();
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                return false;
+            }
+        }
+        if (_pptxEdit is { } pptxEdit && FilePath is { } pptxPath)
+        {
+            try
+            {
+                pptxEdit.Save(pptxPath);
+                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                UpdateTitle();
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                return false;
+            }
+        }
         if (FilePath is null || _encoding is null || !IsEditing) return false;
         var path = FilePath;
         var text = Editor.Text;
@@ -529,7 +837,10 @@ public partial class FileViewerWindow : Window
             if (path != FilePath) return true;
 
             _encoding = used;
+            _encodingChanged = false;
             Editor.Document.UndoStack.MarkAsOriginalFile();
+            UpdateTitle();
+            UpdateEditorStatusBar();
             var size = new FileInfo(path).Length;
             SetInfo(Loc.Get("ViewerLines", Editor.Document.LineCount), Format.Size(size), used.Name);
             ShowStatus(used == encoding ? Loc.Get("ViewerSaved") : Loc.Get("ViewerSavedAsUtf8", encoding.Name), ok: true);
@@ -677,6 +988,8 @@ public partial class FileViewerWindow : Window
     private void DisposeBody()
     {
         _docx = null;
+        _xlsxEdit = null;
+        _pptxEdit = null;
         BodyHost.Content = null;
         BodyHost.IsVisible = false;
         _body?.Dispose();
@@ -770,29 +1083,672 @@ public partial class FileViewerWindow : Window
     private void Reset()
     {
         _word = false;
+        _excel = false;
+        _powerPoint = false;
+        _structureTimer.Stop();
         DisposeBody();
         SetMarkdown(null);
         SetMessageImage(null);
         _encoding = null;
+        _encodingChanged = false;
+        _cachedText = "";
+        _cachedTextDirty = false;
+        _symbols = [];
+        _searchMatches = [];
+        _activeMatchIndex = -1;
         _textMate.SetGrammar(null);
         Editor.Document = new TextDocument();
+        _foldingManager?.UpdateFoldings([], -1);
+        _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+        _highlighter.SetBrackets(Editor.TextArea.TextView, null);
         StatusText.IsVisible = false;
         _loading = true;
         EditToggle.IsChecked = false;
         _loading = false;
         Editor.IsReadOnly = true;
-        Editor.IsVisible = MarkdownScroll.IsVisible = RenderedToggle.IsVisible = WrapToggle.IsVisible = false;
+        EditorFindBar.IsVisible = false;
+        SymbolCrumbButton.IsVisible = false;
+        EditorContainer.IsVisible = MarkdownScroll.IsVisible = RenderedToggle.IsVisible = WrapToggle.IsVisible = false;
+        FindButton.IsVisible = OutlineButton.IsVisible = FormatButton.IsVisible = false;
         EditToggle.IsVisible = SaveButton.IsVisible = false;
         MessageDetails.ItemsSource = null;
+    }
+
+    // =====================================================================
+    // IDE features: Find/Replace, Go to Line, Folding, Outline, Format, Status
+    // =====================================================================
+
+    private void SetupEditorFeatures()
+    {
+        Editor.TextArea.TextView.BackgroundRenderers.Add(_highlighter);
+        ReinstallFoldingManager();
+
+        _structureTimer.Tick += (_, _) =>
+        {
+            _structureTimer.Stop();
+            RefreshCodeStructure();
+            if (EditorFindBar.IsVisible && FindRow.IsVisible)
+                UpdateFindMatches(jumpToNearest: false);
+        };
+
+        Editor.TextArea.Caret.PositionChanged += (_, _) => OnEditorCaretOrSelectionChanged();
+        Editor.TextArea.SelectionChanged += (_, _) => OnEditorCaretOrSelectionChanged();
+        Editor.AddHandler(PointerWheelChangedEvent, OnEditorPointerWheelChanged, RoutingStrategies.Tunnel);
+
+        FindButton.Click += (_, _) => OpenFindBar(replace: false, goToLine: false);
+        OutlineButton.Click += (_, _) => ShowOutlineMenu(OutlineButton);
+        FormatButton.Click += (_, _) => FormatDocument();
+
+        FindBox.TextChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
+        MatchCaseToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
+        WholeWordToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
+        RegexToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
+        FindPrevButton.Click += (_, _) => StepSearchMatch(backward: true);
+        FindNextButton.Click += (_, _) => StepSearchMatch(backward: false);
+        CloseFindButton.Click += (_, _) => CloseFindBar();
+        CloseGoToLineButton.Click += (_, _) => CloseFindBar();
+
+        FindBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            StepSearchMatch(backward: e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            e.Handled = true;
+        };
+        ReplaceBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            ReplaceCurrentMatch();
+            e.Handled = true;
+        };
+        ReplaceButton.Click += (_, _) => ReplaceCurrentMatch();
+        ReplaceAllButton.Click += (_, _) => ReplaceAllMatches();
+
+        GoToLineBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            ExecuteGoToLine();
+            e.Handled = true;
+        };
+        GoToLineButton.Click += (_, _) => ExecuteGoToLine();
+
+        CursorPosButton.Click += (_, _) => OpenFindBar(replace: false, goToLine: true);
+        SymbolCrumbButton.Click += (_, _) => ShowOutlineMenu(SymbolCrumbButton);
+        WhitespaceToggle.IsCheckedChanged += (_, _) =>
+        {
+            var show = WhitespaceToggle.IsChecked == true;
+            Editor.Options.ShowSpaces = show;
+            Editor.Options.ShowTabs = show;
+        };
+        LineEndingButton.Click += (_, _) => ToggleLineEnding();
+        EncodingButton.Click += (_, _) => ShowEncodingMenu();
+        EditorZoomButton.Click += (_, _) => SetEditorFontSize(DefaultEditorFontSize);
+    }
+
+    private void ReinstallFoldingManager()
+    {
+        if (_foldingManager is not null)
+        {
+            FoldingManager.Uninstall(_foldingManager);
+            _foldingManager = null;
+        }
+        _foldingManager = FoldingManager.Install(Editor.TextArea);
+        StyleFoldingMargin();
+    }
+
+    private void StyleFoldingMargin()
+    {
+        foreach (var margin in Editor.TextArea.LeftMargins.OfType<FoldingMargin>())
+        {
+            margin.FoldingMarkerBrush = new SolidColorBrush(Color.Parse("#585b70"));
+            margin.FoldingMarkerBackgroundBrush = new SolidColorBrush(Color.Parse("#11111b"));
+            margin.SelectedFoldingMarkerBrush = new SolidColorBrush(Color.Parse("#89b4fa"));
+            margin.SelectedFoldingMarkerBackgroundBrush = new SolidColorBrush(Color.Parse("#1e1e2e"));
+        }
+    }
+
+    private string GetEditorText()
+    {
+        if (_cachedTextDirty)
+        {
+            _cachedText = Editor.Document.Text;
+            _cachedTextDirty = false;
+        }
+        return _cachedText;
+    }
+
+    private void RefreshCodeStructure()
+    {
+        if (FilePath is null) return;
+        var text = GetEditorText();
+        var ext = Path.GetExtension(FilePath);
+
+        if (_foldingManager is not null && text.Length <= MaxHighlightedChars)
+        {
+            var foldSpans = CodeFolder.GetFoldings(text, ext);
+            var foldings = new List<NewFolding>(foldSpans.Count);
+            foreach (var f in foldSpans)
+                foldings.Add(new NewFolding(f.StartOffset, f.EndOffset) { Name = f.Title });
+            _foldingManager.UpdateFoldings(foldings, -1);
+        }
+        else
+        {
+            _foldingManager?.UpdateFoldings([], -1);
+        }
+
+        _symbols = CodeSymbolExtractor.ExtractSymbols(text, ext);
+        OutlineButton.IsVisible = _symbols.Count > 0;
+        UpdateSymbolCrumb();
+    }
+
+    private void UpdateEditorStatusBar()
+    {
+        var caret = Editor.TextArea.Caret;
+        var selLen = Editor.SelectionLength;
+        CursorPosButton.Content = selLen > 0
+            ? Loc.Get("ViewerStatusLnColSel", caret.Line, caret.Column, selLen)
+            : Loc.Get("ViewerStatusLnCol", caret.Line, caret.Column);
+
+        var text = GetEditorText();
+        IndentText.Text = CodeFormatter.DetectIndentation(text);
+        LineEndingButton.Content = CodeFormatter.DetectLineEnding(text);
+        EncodingButton.Content = _encoding?.Name ?? "";
+        EncodingButton.IsVisible = _encoding is not null;
+        EditorZoomButton.Content = $"{Math.Round(Editor.FontSize / DefaultEditorFontSize * 100)}%";
+        UpdateSymbolCrumb();
+    }
+
+    private void UpdateSymbolCrumb()
+    {
+        var current = CodeSymbolExtractor.FindEnclosingSymbol(_symbols, Editor.TextArea.Caret.Line);
+        if (current is null)
+        {
+            SymbolCrumbButton.IsVisible = false;
+            return;
+        }
+        SymbolCrumbButton.Content = $"{current.Kind}: {current.Name}";
+        SymbolCrumbButton.IsVisible = true;
+    }
+
+    private void OnEditorCaretOrSelectionChanged()
+    {
+        var caret = Editor.TextArea.Caret;
+        var selLen = Editor.SelectionLength;
+        CursorPosButton.Content = selLen > 0
+            ? Loc.Get("ViewerStatusLnColSel", caret.Line, caret.Column, selLen)
+            : Loc.Get("ViewerStatusLnCol", caret.Line, caret.Column);
+
+        UpdateSymbolCrumb();
+
+        var text = GetEditorText();
+        var brackets = text.Length <= MaxHighlightedChars
+            ? BracketMatcher.FindMatchingBracket(text, Editor.CaretOffset)
+            : null;
+        _highlighter.SetBrackets(Editor.TextArea.TextView, brackets);
+    }
+
+    private void OnEditorPointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
+        SetEditorFontSize(Editor.FontSize + (e.Delta.Y > 0 ? 1.5 : -1.5));
+        e.Handled = true;
+    }
+
+    private void SetEditorFontSize(double size)
+    {
+        Editor.FontSize = Math.Clamp(size, MinEditorFontSize, MaxEditorFontSize);
+        EditorZoomButton.Content = $"{Math.Round(Editor.FontSize / DefaultEditorFontSize * 100)}%";
+    }
+
+    private void OpenFindBar(bool replace, bool goToLine)
+    {
+        if (_markdown is not null && RenderedToggle.IsChecked == true)
+            RenderedToggle.IsChecked = false;
+        if (!EditorContainer.IsVisible) return;
+
+        if (replace && EditToggle.IsVisible && !IsEditing)
+            EditToggle.IsChecked = true;
+
+        EditorFindBar.IsVisible = true;
+        GoToLineRow.IsVisible = goToLine;
+        FindRow.IsVisible = !goToLine;
+        ReplaceRow.IsVisible = !goToLine && replace && EditToggle.IsVisible;
+        ReplaceButton.IsEnabled = IsEditing;
+        ReplaceAllButton.IsEnabled = IsEditing;
+
+        if (goToLine)
+        {
+            GoToLineBox.Text = Editor.TextArea.Caret.Line.ToString(CultureInfo.InvariantCulture);
+            Dispatcher.UIThread.Post(() =>
+            {
+                GoToLineBox.Focus();
+                GoToLineBox.SelectAll();
+            }, DispatcherPriority.Loaded);
+            return;
+        }
+
+        if (Editor.SelectionLength is > 0 and <= 200)
+        {
+            var selected = Editor.SelectedText;
+            if (!selected.Contains('\n') && !selected.Contains('\r'))
+                FindBox.Text = selected;
+        }
+
+        UpdateFindMatches(jumpToNearest: true);
+        Dispatcher.UIThread.Post(() =>
+        {
+            FindBox.Focus();
+            FindBox.SelectAll();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void CloseFindBar()
+    {
+        EditorFindBar.IsVisible = false;
+        _searchMatches = [];
+        _activeMatchIndex = -1;
+        FindCountText.Text = "";
+        FindBox.Classes.Set("invalid", false);
+        _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+        Editor.TextArea.Focus();
+    }
+
+    private void UpdateFindMatches(bool jumpToNearest)
+    {
+        var query = FindBox.Text ?? "";
+        var matchCase = MatchCaseToggle.IsChecked == true;
+        var wholeWord = WholeWordToggle.IsChecked == true;
+        var useRegex = RegexToggle.IsChecked == true;
+
+        _searchMatches = CodeEditorSearch.FindMatches(
+            GetEditorText(), query, matchCase, wholeWord, useRegex, out var validRegex);
+
+        FindBox.Classes.Set("invalid", !validRegex);
+
+        if (query.Length == 0 || !validRegex)
+        {
+            _activeMatchIndex = -1;
+            FindCountText.Text = "";
+            _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+            return;
+        }
+
+        if (_searchMatches.Count == 0)
+        {
+            _activeMatchIndex = -1;
+            FindCountText.Text = Loc.Get("ViewerFindNoMatches");
+            _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+            return;
+        }
+
+        if (jumpToNearest)
+            _activeMatchIndex = CodeEditorSearch.FindMatchIndex(_searchMatches, Editor.SelectionStart, backward: false);
+        else if (_activeMatchIndex >= _searchMatches.Count || _activeMatchIndex < 0)
+            _activeMatchIndex = 0;
+
+        FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _searchMatches.Count);
+        _highlighter.SetMatches(Editor.TextArea.TextView, _searchMatches, _activeMatchIndex);
+        if (jumpToNearest) SelectSearchMatch(_activeMatchIndex);
+    }
+
+    private void StepSearchMatch(bool backward)
+    {
+        if (_searchMatches.Count == 0) return;
+        var caretOffset = backward ? Editor.SelectionStart : Editor.SelectionStart + Editor.SelectionLength;
+        _activeMatchIndex = CodeEditorSearch.FindMatchIndex(_searchMatches, caretOffset, backward);
+        if (_activeMatchIndex < 0) return;
+
+        FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _searchMatches.Count);
+        _highlighter.SetMatches(Editor.TextArea.TextView, _searchMatches, _activeMatchIndex);
+        SelectSearchMatch(_activeMatchIndex);
+    }
+
+    private void SelectSearchMatch(int index)
+    {
+        if (index < 0 || index >= _searchMatches.Count) return;
+        var span = _searchMatches[index];
+        if (span.Offset + span.Length > Editor.Document.TextLength) return;
+
+        Editor.Select(span.Offset, span.Length);
+        var loc = Editor.Document.GetLocation(span.Offset);
+        ScrollEditorTo(loc.Line, loc.Column, span.Length);
+    }
+
+    /// <summary>
+    /// Scrolls vertically and horizontally to the target location.
+    /// AvaloniaEdit's ScrollTo resets the horizontal offset to 0, so horizontal
+    /// scrolling is adjusted explicitly when horizontal scrolling is enabled.
+    /// </summary>
+    private void ScrollEditorTo(int line, int column, int selectionLength = 0)
+    {
+        var textView = Editor.TextArea.TextView;
+        var scrollable = textView as Avalonia.Controls.Primitives.ILogicalScrollable;
+        var prevX = scrollable?.Offset.X ?? 0;
+
+        Editor.ScrollTo(line, column);
+
+        if (scrollable is not { CanHorizontallyScroll: true }) return;
+        var viewportWidth = Editor.ViewportWidth;
+        if (viewportWidth <= 0) return;
+
+        var startPos = textView.GetVisualPosition(
+            new AvaloniaEdit.TextViewPosition(line, Math.Max(1, column)),
+            AvaloniaEdit.Rendering.VisualYPosition.LineMiddle);
+        var endX = startPos.X;
+        if (selectionLength > 0)
+        {
+            var docLine = Editor.Document.GetLineByNumber(Math.Clamp(line, 1, Math.Max(1, Editor.Document.LineCount)));
+            var endColumn = Math.Min(column + selectionLength, docLine.Length + 1);
+            var endPos = textView.GetVisualPosition(
+                new AvaloniaEdit.TextViewPosition(line, Math.Max(1, endColumn)),
+                AvaloniaEdit.Rendering.VisualYPosition.LineMiddle);
+            endX = Math.Max(startPos.X, endPos.X);
+        }
+
+        const double margin = 24;
+        double ComputeTargetX()
+        {
+            if (startPos.X >= prevX + margin && endX <= prevX + viewportWidth - margin)
+                return prevX;
+            if (endX - startPos.X < viewportWidth - margin * 2)
+                return Math.Max(0, (startPos.X + endX - viewportWidth) / 2);
+            return Math.Max(0, startPos.X - viewportWidth * 0.25);
+        }
+
+        var rawTargetX = ComputeTargetX();
+        var clampedX = Math.Clamp(rawTargetX, 0, Math.Max(0, Editor.ExtentWidth - viewportWidth));
+        if (Math.Abs(scrollable.Offset.X - clampedX) > 0.5)
+            scrollable.Offset = new Vector(clampedX, scrollable.Offset.Y);
+
+        if (endX > Editor.ExtentWidth)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (scrollable is not { CanHorizontallyScroll: true }) return;
+                var vw = Editor.ViewportWidth;
+                if (vw <= 0) return;
+                var x = Math.Clamp(rawTargetX, 0, Math.Max(0, Editor.ExtentWidth - vw));
+                if (Math.Abs(scrollable.Offset.X - x) > 0.5)
+                    scrollable.Offset = new Vector(x, scrollable.Offset.Y);
+            }, DispatcherPriority.Loaded);
+        }
+    }
+
+    private void ReplaceCurrentMatch()
+    {
+        if (!IsEditing || Editor.IsReadOnly || _searchMatches.Count == 0) return;
+
+        if (_activeMatchIndex < 0 || _activeMatchIndex >= _searchMatches.Count)
+        {
+            StepSearchMatch(backward: false);
+            return;
+        }
+
+        var span = _searchMatches[_activeMatchIndex];
+        if (Editor.SelectionStart != span.Offset || Editor.SelectionLength != span.Length)
+        {
+            SelectSearchMatch(_activeMatchIndex);
+            return;
+        }
+
+        var replacement = CodeEditorSearch.ReplaceSingle(
+            Editor.SelectedText,
+            FindBox.Text ?? "",
+            ReplaceBox.Text ?? "",
+            MatchCaseToggle.IsChecked == true,
+            RegexToggle.IsChecked == true);
+
+        Editor.Document.Replace(span.Offset, span.Length, replacement);
+        Editor.CaretOffset = span.Offset + replacement.Length;
+        UpdateFindMatches(jumpToNearest: true);
+    }
+
+    private void ReplaceAllMatches()
+    {
+        if (!IsEditing || Editor.IsReadOnly) return;
+        var query = FindBox.Text ?? "";
+        if (query.Length == 0) return;
+
+        var replaced = CodeEditorSearch.ReplaceAll(
+            GetEditorText(),
+            query,
+            ReplaceBox.Text ?? "",
+            MatchCaseToggle.IsChecked == true,
+            WholeWordToggle.IsChecked == true,
+            RegexToggle.IsChecked == true,
+            out var count);
+
+        if (count == 0) return;
+
+        Editor.Document.Replace(0, Editor.Document.TextLength, replaced);
+        UpdateFindMatches(jumpToNearest: false);
+        ShowStatus(Loc.Get("ViewerReplacedCount", count), ok: true);
+    }
+
+    private void ExecuteGoToLine()
+    {
+        if (!CodeEditorSearch.TryParseGoToLine(GoToLineBox.Text ?? "", Editor.Document.LineCount, out var line, out var col))
+            return;
+        GoToLine(line, col);
+        CloseFindBar();
+    }
+
+    private void GoToLine(int line, int column)
+    {
+        line = Math.Clamp(line, 1, Math.Max(1, Editor.Document.LineCount));
+        var docLine = Editor.Document.GetLineByNumber(line);
+        column = Math.Clamp(column, 1, docLine.Length + 1);
+        var offset = docLine.Offset + column - 1;
+        Editor.CaretOffset = offset;
+        Editor.Select(offset, 0);
+        ScrollEditorTo(line, column);
+        Editor.TextArea.Focus();
+    }
+
+    private void ShowOutlineMenu(Control anchor)
+    {
+        var items = new List<Control>();
+        if (_symbols.Count == 0)
+        {
+            items.Add(new MenuItem { Header = Loc.Get("ViewerOutlineEmpty"), IsEnabled = false });
+        }
+        else
+        {
+            foreach (var sym in _symbols)
+            {
+                var s = sym;
+                var item = new MenuItem { Header = $"{s.Kind}  {s.Name}  (:{s.Line})" };
+                item.Click += (_, _) =>
+                {
+                    if (_markdown is not null && RenderedToggle.IsChecked == true)
+                        RenderedToggle.IsChecked = false;
+                    GoToLine(s.Line, 1);
+                };
+                items.Add(item);
+            }
+        }
+        new ContextMenu { ItemsSource = items }.Open(anchor);
+    }
+
+    private void FormatDocument()
+    {
+        if (FilePath is null || !CodeFormatter.CanFormat(FilePath) || _encoding is null) return;
+        if (!IsEditing && EditToggle.IsVisible)
+            EditToggle.IsChecked = true;
+
+        var current = GetEditorText();
+        var result = CodeFormatter.TryFormat(current, FilePath);
+        if (result.Success && result.FormattedText is not null)
+        {
+            if (result.FormattedText != current)
+                Editor.Document.Replace(0, Editor.Document.TextLength, result.FormattedText);
+            ShowStatus(Loc.Get("ViewerFormatted"), ok: true);
+        }
+        else
+        {
+            if (result.ErrorLine > 0) GoToLine(result.ErrorLine, 1);
+            ShowStatus(Loc.Get("ViewerFormatInvalid", result.ErrorLine, result.ErrorMessage ?? ""), ok: false);
+        }
+    }
+
+    private void ToggleLineComment()
+    {
+        if (!EditorContainer.IsVisible || !IsEditing || Editor.IsReadOnly) return;
+        var (replaced, segStart, segLen, newSelStart, newSelLen) = CodeFormatter.ToggleLineComment(
+            GetEditorText(), Editor.SelectionStart, Editor.SelectionLength, FilePath);
+        Editor.Document.Replace(segStart, segLen, replaced);
+        Editor.Select(newSelStart, newSelLen);
+    }
+
+    private void ToggleLineEnding()
+    {
+        if (!IsEditing || Editor.IsReadOnly) return;
+        var text = GetEditorText();
+        var toCrlf = CodeFormatter.DetectLineEnding(text) == "LF";
+        var converted = CodeFormatter.ConvertLineEndings(text, toCrlf);
+        if (converted != text)
+            Editor.Document.Replace(0, Editor.Document.TextLength, converted);
+        UpdateEditorStatusBar();
+    }
+
+    private void ShowEncodingMenu()
+    {
+        if (!IsEditing || _encoding is null) return;
+        FileEncoding[] options = [FileEncoding.Utf8, FileEncoding.Utf8Bom, FileEncoding.Utf16Le, FileEncoding.Utf16Be];
+        var items = new List<Control>(options.Length);
+        foreach (var enc in options)
+        {
+            var target = enc;
+            var isCurrent = _encoding.Name == target.Name;
+            var item = new MenuItem
+            {
+                Header = target.Name,
+                ToggleType = MenuItemToggleType.CheckBox,
+                IsChecked = isCurrent,
+            };
+            item.Click += (_, _) =>
+            {
+                if (_encoding?.Name == target.Name) return;
+                _encoding = target;
+                _encodingChanged = true;
+                UpdateEditorStatusBar();
+                UpdateTitle();
+                if (FilePath is not null)
+                    SetInfo(Loc.Get("ViewerLines", Editor.Document.LineCount), Format.Size(new FileInfo(FilePath).Length), target.Name);
+            };
+            items.Add(item);
+        }
+        new ContextMenu { ItemsSource = items }.Open(EncodingButton);
     }
 
     // =====================================================================
     // Keyboard and closing
     // =====================================================================
 
+    /// <summary>Shows the file before / after this one in its folder (natural name order).</summary>
+    private async Task ShowNeighborAsync(int step)
+    {
+        if (FilePath is not { } current) return;
+        var next = await Task.Run(() => SiblingFiles.Neighbor(current, step));
+        if (FilePath != current) return; // the viewer moved on while the folder was read
+        if (next is null)
+        {
+            ShowStatus(Loc.Get(step < 0 ? "ViewerFirstFile" : "ViewerLastFile"), ok: false);
+            return;
+        }
+        await LoadAsync(next, null);
+    }
+
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (EditorFindBar.IsVisible && e.Key == Key.Escape)
+        {
+            CloseFindBar();
+            e.Handled = true;
+            return;
+        }
+
+        if (!EditorContainer.IsVisible && !MarkdownScroll.IsVisible) return;
+
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+
+        if (ctrl && !alt && !shift && e.Key == Key.F)
+        {
+            OpenFindBar(replace: false, goToLine: false);
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !alt && !shift && e.Key == Key.H && EditToggle.IsVisible)
+        {
+            OpenFindBar(replace: true, goToLine: false);
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !alt && !shift && e.Key == Key.G)
+        {
+            OpenFindBar(replace: false, goToLine: true);
+            e.Handled = true;
+            return;
+        }
+        if (!ctrl && !alt && e.Key == Key.F3 && EditorContainer.IsVisible)
+        {
+            if (_searchMatches.Count > 0) StepSearchMatch(backward: shift);
+            else OpenFindBar(replace: false, goToLine: false);
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && shift && !alt && e.Key == Key.O)
+        {
+            ShowOutlineMenu(OutlineButton.IsVisible ? OutlineButton : SymbolCrumbButton);
+            e.Handled = true;
+            return;
+        }
+        if (shift && alt && !ctrl && e.Key == Key.F && EditorContainer.IsVisible && _encoding is not null && CodeFormatter.CanFormat(FilePath))
+        {
+            FormatDocument();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !alt && e.Key is Key.OemQuestion or Key.Divide && EditorContainer.IsVisible && IsEditing)
+        {
+            ToggleLineComment();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !alt && EditorContainer.IsVisible)
+        {
+            if (e.Key is Key.OemPlus or Key.Add)
+            {
+                SetEditorFontSize(Editor.FontSize + 1.5);
+                e.Handled = true;
+                return;
+            }
+            if (e.Key is Key.OemMinus or Key.Subtract)
+            {
+                SetEditorFontSize(Editor.FontSize - 1.5);
+                e.Handled = true;
+                return;
+            }
+            if (!shift && e.Key is Key.D0 or Key.NumPad0)
+            {
+                SetEditorFontSize(DefaultEditorFontSize);
+                e.Handled = true;
+                return;
+            }
+        }
+    }
+
     private async void OnKeyDown(object? sender, KeyEventArgs e)
     {
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        // Alt+←/→ always steps through the folder, even where plain arrows turn pages or seek.
+        if (e.KeyModifiers == KeyModifiers.Alt && e.Key is Key.Left or Key.Right)
+        {
+            e.Handled = true;
+            await ShowNeighborAsync(e.Key == Key.Left ? -1 : +1);
+            return;
+        }
         if (ctrl && e.Key == Key.S && IsEditing)
         {
             e.Handled = true;
@@ -807,10 +1763,20 @@ public partial class FileViewerWindow : Window
         }
 
         var typing = FocusManager?.GetFocusedElement() is TextBox || (IsEditing && Editor.IsKeyboardFocusWithin) ||
-                     _body is DocxView { IsEditing: true, IsKeyboardFocusWithin: true };
+                     _body is DocxView { IsEditing: true, IsKeyboardFocusWithin: true } ||
+                     _body is XlsxView { IsEditing: true, IsKeyboardFocusWithin: true } ||
+                     _body is PptxView { IsEditing: true, IsKeyboardFocusWithin: true };
         if (!typing && !ctrl && _body?.HandleKey(e) == true)
         {
             e.Handled = true;
+            return;
+        }
+
+        // Where the body has no use for the arrows (images, text, unknown files), they step through the folder.
+        if (!typing && e.KeyModifiers == KeyModifiers.None && e.Key is Key.Left or Key.Right)
+        {
+            e.Handled = true;
+            await ShowNeighborAsync(e.Key == Key.Left ? -1 : +1);
             return;
         }
 
@@ -837,6 +1803,12 @@ public partial class FileViewerWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _cts.Cancel();
+        _structureTimer.Stop();
+        if (_foldingManager is not null)
+        {
+            FoldingManager.Uninstall(_foldingManager);
+            _foldingManager = null;
+        }
         DisposeBody();
         SetMarkdown(null);
         SetMessageImage(null);

@@ -20,7 +20,7 @@ public sealed class WindowsShellIcons : IShellIcons
 {
     private const int SIIGBF_ICONONLY = 0x04;
 
-    private sealed record Request(string Path, int Size, TaskCompletionSource<ShellThumbnail?> Result, CancellationToken Ct);
+    private sealed record Request(string Path, int Size, bool Thumbnail, TaskCompletionSource<ShellThumbnail?> Result, CancellationToken Ct);
 
     private readonly BlockingCollection<Request> _queue = new();
 
@@ -31,9 +31,15 @@ public sealed class WindowsShellIcons : IShellIcons
         thread.Start();
     }
 
-    public Task<ShellThumbnail?> GetIconAsync(string path, int size, CancellationToken ct = default)
+    public Task<ShellThumbnail?> GetIconAsync(string path, int size, CancellationToken ct = default) =>
+        Enqueue(path, size, thumbnail: false, ct);
+
+    public Task<ShellThumbnail?> GetThumbnailAsync(string path, int size, CancellationToken ct = default) =>
+        Enqueue(path, size, thumbnail: true, ct);
+
+    private Task<ShellThumbnail?> Enqueue(string path, int size, bool thumbnail, CancellationToken ct)
     {
-        var request = new Request(path, size, new TaskCompletionSource<ShellThumbnail?>(TaskCreationOptions.RunContinuationsAsynchronously), ct);
+        var request = new Request(path, size, thumbnail, new TaskCompletionSource<ShellThumbnail?>(TaskCreationOptions.RunContinuationsAsynchronously), ct);
         _queue.Add(request, CancellationToken.None);
         return request.Result.Task;
     }
@@ -50,7 +56,7 @@ public sealed class WindowsShellIcons : IShellIcons
             }
 
             ShellThumbnail? icon = null;
-            try { icon = Load(Path.GetFullPath(request.Path), request.Size); }
+            try { icon = Load(Path.GetFullPath(request.Path), request.Size, request.Thumbnail); }
             catch (COMException) { }
             catch (InvalidCastException) { }
             catch (ArgumentException) { }
@@ -58,7 +64,7 @@ public sealed class WindowsShellIcons : IShellIcons
         }
     }
 
-    private static ShellThumbnail? Load(string path, int size)
+    private static ShellThumbnail? Load(string path, int size, bool thumbnail)
     {
         if (SHCreateItemFromParsingName(path, IntPtr.Zero, typeof(IShellItemImageFactory).GUID, out var obj) != 0)
             return null;
@@ -67,7 +73,8 @@ public sealed class WindowsShellIcons : IShellIcons
         try
         {
             var factory = (IShellItemImageFactory)obj;
-            if (factory.GetImage(new NativeSize { cx = size, cy = size }, SIIGBF_ICONONLY, out hbitmap) != 0)
+            if (// Flags 0: the thumbnail when the shell has one, the icon when it has not.
+            factory.GetImage(new NativeSize { cx = size, cy = size }, thumbnail ? 0 : SIIGBF_ICONONLY, out hbitmap) != 0)
                 return null;
             return ReadPixels(hbitmap);
         }

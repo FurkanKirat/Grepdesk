@@ -4,12 +4,20 @@ namespace Grepdesk.UI.Startup;
 
 public enum CommandKind
 {
-    /// <summary>The search window, optionally rooted at a folder (no flag, or just a path).</summary>
+    /// <summary>The search/browser window with no target path (restore/activate or open).</summary>
     OpenSearch,
+    /// <summary>Open the folder browser at the given folder.</summary>
+    OpenFolder,
+    /// <summary>Open the file in the standalone viewer.</summary>
+    OpenFile,
     ExtractHere,
     ExtractTo,
     Compress,
-    Paste
+    Paste,
+    /// <summary>Copy the paths (all but the last) into the folder given last: a drag and drop.</summary>
+    Copy,
+    /// <summary>Move the paths (all but the last) into the folder given last: a drag and drop.</summary>
+    Move
 }
 
 /// <summary>
@@ -19,12 +27,13 @@ public enum CommandKind
 /// </summary>
 public sealed record AppCommand(CommandKind Kind, IReadOnlyList<string> Paths, bool Benchmark = false)
 {
-    /// <summary>Jobs run in a progress window and go through the single-instance host.</summary>
-    public bool IsJob => Kind != CommandKind.OpenSearch;
+    /// <summary>Jobs run in a progress window and are batched by <see cref="JobDispatcher"/>.</summary>
+    public bool IsJob => Kind is not (CommandKind.OpenSearch or CommandKind.OpenFolder or CommandKind.OpenFile);
 
     public static AppCommand Parse(IReadOnlyList<string> args)
     {
         var kind = CommandKind.OpenSearch;
+        var hasJobFlag = false;
         var benchmark = false;
         var paths = new List<string>();
 
@@ -32,16 +41,26 @@ public sealed record AppCommand(CommandKind Kind, IReadOnlyList<string> Paths, b
         {
             switch (arg)
             {
-                case "--extract-here": kind = CommandKind.ExtractHere; break;
-                case "--extract-to": kind = CommandKind.ExtractTo; break;
-                case "--compress": kind = CommandKind.Compress; break;
-                case "--paste": kind = CommandKind.Paste; break;
+                case "--extract-here": kind = CommandKind.ExtractHere; hasJobFlag = true; break;
+                case "--extract-to": kind = CommandKind.ExtractTo; hasJobFlag = true; break;
+                case "--compress": kind = CommandKind.Compress; hasJobFlag = true; break;
+                case "--paste": kind = CommandKind.Paste; hasJobFlag = true; break;
+                case "--copy-to": kind = CommandKind.Copy; hasJobFlag = true; break;
+                case "--move-to": kind = CommandKind.Move; hasJobFlag = true; break;
                 case "--benchmark": benchmark = true; break;
                 default:
                     if (CleanPath(arg) is { } path)
                         paths.Add(path);
                     break;
             }
+        }
+
+        if (!hasJobFlag)
+        {
+            if (paths.Any(File.Exists))
+                kind = CommandKind.OpenFile;
+            else if (paths.Any(Directory.Exists))
+                kind = CommandKind.OpenFolder;
         }
 
         return new AppCommand(kind, paths, benchmark);

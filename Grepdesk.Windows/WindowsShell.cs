@@ -43,14 +43,87 @@ public class WindowsShell : IPlatformShell
         }
     }
 
+    public bool SupportsNativeDialogs => true;
+
+    /// <summary>
+    /// Explorer's Properties dialog. It belongs to the calling thread, so this must be called from
+    /// the UI thread (which pumps messages); from a thread without a message loop it would vanish.
+    /// </summary>
+    public ShellActionResult ShowProperties(string path)
+    {
+        if (!Directory.Exists(path) && !File.Exists(path))
+            return ShellActionResult.Failure(ShellActionStatus.PathNotFound);
+
+        var info = new ShellExecuteInfo
+        {
+            cbSize = Marshal.SizeOf<ShellExecuteInfo>(),
+            fMask = SeeMaskInvokeIdList,
+            lpVerb = "properties",
+            lpFile = path,
+            nShow = SwShow,
+        };
+        return ShellExecuteEx(ref info)
+            ? ShellActionResult.Success(null)
+            : ShellActionResult.Failure(ShellActionStatus.OperationFailed, new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+    }
+
+    /// <summary>The "How do you want to open this file?" dialog.</summary>
+    public ShellActionResult OpenWithDialog(string path)
+    {
+        if (!File.Exists(path)) return ShellActionResult.Failure(ShellActionStatus.PathNotFound);
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "rundll32.exe",
+                ArgumentList = { "shell32.dll,OpenAs_RunDLL", path },
+                UseShellExecute = false,
+            });
+            return ShellActionResult.Success(process);
+        }
+        catch (Exception ex)
+        {
+            return ShellActionResult.Failure(ShellActionStatus.ProcessStartFailed, ex);
+        }
+    }
+
+    private const uint SeeMaskInvokeIdList = 0x0000000C;
+    private const int SwShow = 5;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ShellExecuteInfo
+    {
+        public int cbSize;
+        public uint fMask;
+        public IntPtr hwnd;
+        public string? lpVerb;
+        public string? lpFile;
+        public string? lpParameters;
+        public string? lpDirectory;
+        public int nShow;
+        public IntPtr hInstApp;
+        public IntPtr lpIDList;
+        public string? lpClass;
+        public IntPtr hkeyClass;
+        public uint dwHotKey;
+        public IntPtr hIcon;
+        public IntPtr hProcess;
+    }
+
+    [DllImport("shell32.dll", EntryPoint = "ShellExecuteExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ShellExecuteEx(ref ShellExecuteInfo info);
+
     public ShellActionResult OpenInTerminal(string directoryPath)
     {
         try
         {
             var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/K cd /d \"{directoryPath}\"",
+                // Windows PowerShell ships with every Windows install. The folder is the working
+                // directory, so no quoting of the path is needed.
+                FileName = "powershell.exe",
+                Arguments = "-NoExit",
+                WorkingDirectory = directoryPath,
                 UseShellExecute = true
             });
             return ShellActionResult.Success(process);

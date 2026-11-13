@@ -5,6 +5,72 @@
              x:Class="Grepdesk.UI.Browse.BrowseView"
              Background="Transparent">
 
+    <UserControl.Resources>
+        <!-- Icon views: a cell with a thumbnail above the name -->
+        <DataTemplate x:Key="MediumIconsTemplate" x:DataType="b:BrowseRow">
+            <StackPanel Width="92" Spacing="3" Opacity="{Binding Opacity}" Background="Transparent"
+                        ToolTip.Tip="{Binding FullPath}" ToolTip.ShowDelay="900">
+                <Panel Width="64" Height="64" HorizontalAlignment="Center">
+                    <b:ThumbnailImage HardPixels="{Binding HardPixels}" Source="{Binding Icon}" Width="64" Height="64"/>
+                    <ContentControl Content="{Binding FallbackRow}">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate x:DataType="b:BrowseRow">
+                                <Panel>
+                                    <PathIcon Data="{StaticResource IconFolder}" Width="56" Height="56" Foreground="#f9e2af" IsVisible="{Binding ShowFolderIcon}"/>
+                                    <Border IsVisible="{Binding ShowBadge}" Width="44" Height="44" Background="{Binding Kind.Background}"
+                                            BorderBrush="{Binding Kind.Foreground}" BorderThickness="1" CornerRadius="6">
+                                        <TextBlock Text="{Binding Kind.Label}" Foreground="{Binding Kind.Foreground}" FontSize="12" FontWeight="Bold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Panel>
+                            </DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Panel>
+                <Panel>
+                    <TextBlock Text="{Binding Name}" IsVisible="{Binding IsNotRenaming}" Foreground="#cdd6f4" FontSize="12"
+                               TextWrapping="Wrap" MaxLines="2" TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <ContentControl Content="{Binding RenamingRow}" HorizontalContentAlignment="Stretch">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate x:DataType="b:BrowseRow"><TextBox Classes="rename" TextAlignment="Center"/></DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Panel>
+            </StackPanel>
+        </DataTemplate>
+        <DataTemplate x:Key="LargeIconsTemplate" x:DataType="b:BrowseRow">
+            <StackPanel Width="148" Spacing="4" Opacity="{Binding Opacity}" Background="Transparent"
+                        ToolTip.Tip="{Binding FullPath}" ToolTip.ShowDelay="900">
+                <Panel Width="128" Height="128" HorizontalAlignment="Center">
+                    <b:ThumbnailImage HardPixels="{Binding HardPixels}" Source="{Binding Icon}" Width="128" Height="128"/>
+                    <ContentControl Content="{Binding FallbackRow}">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate x:DataType="b:BrowseRow">
+                                <Panel>
+                                    <PathIcon Data="{StaticResource IconFolder}" Width="104" Height="104" Foreground="#f9e2af" IsVisible="{Binding ShowFolderIcon}"/>
+                                    <Border IsVisible="{Binding ShowBadge}" Width="80" Height="80" Background="{Binding Kind.Background}"
+                                            BorderBrush="{Binding Kind.Foreground}" BorderThickness="1" CornerRadius="8">
+                                        <TextBlock Text="{Binding Kind.Label}" Foreground="{Binding Kind.Foreground}" FontSize="20" FontWeight="Bold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Panel>
+                            </DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Panel>
+                <Panel>
+                    <TextBlock Text="{Binding Name}" IsVisible="{Binding IsNotRenaming}" Foreground="#cdd6f4" FontSize="12"
+                               TextWrapping="Wrap" MaxLines="2" TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <ContentControl Content="{Binding RenamingRow}" HorizontalContentAlignment="Stretch">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate x:DataType="b:BrowseRow"><TextBox Classes="rename" TextAlignment="Center"/></DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Panel>
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <UserControl.Styles>
         <!-- Toolbar: icon-only buttons -->
         <Style Selector="Button.tool">
@@ -151,6 +217,12 @@
             <Setter Property="Padding" Value="10,3"/>
             <Setter Property="MinHeight" Value="0"/>
         </Style>
+        <Style Selector="ListBox.files.icons ListBoxItem">
+            <Setter Property="Padding" Value="6"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+        </Style>
         <Style Selector="ListBox.files ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="#232334"/>
         </Style>
@@ -182,6 +254,22 @@
             <Setter Property="HorizontalAlignment" Value="Stretch"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Setter Property="CornerRadius" Value="0"/>
+        </Style>
+        <!-- Column resize handle: a thin strip on a column's left edge -->
+        <Style Selector="Border.grip">
+            <Setter Property="Width" Value="7"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Margin" Value="-3,4,0,4"/>
+            <Setter Property="Padding" Value="3,0"/>
+            <Setter Property="Cursor" Value="SizeWestEast"/>
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Border.grip > Border">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Background" Value="#45475a"/>
+        </Style>
+        <Style Selector="Border.grip:pointerover > Border">
+            <Setter Property="Background" Value="#89b4fa"/>
         </Style>
         <Style Selector="Button.column:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="Transparent"/>
@@ -220,6 +308,9 @@
                 </Button>
                 <Button x:Name="NewFolderButton" Classes="tool">
                     <PathIcon Data="{StaticResource IconFolderPlus}"/>
+                </Button>
+                <Button x:Name="ViewButton" Classes="tool">
+                    <PathIcon Data="M4 11h5V5H4v6zm0 7h5v-6H4v6zm6 0h5v-6h-5v6zm6 0h5v-6h-5v6zm-6-7h5V5h-5v6zm6-6v6h5V5h-5z"/>
                 </Button>
                 <ToggleButton x:Name="HiddenToggle" Classes="tool">
                     <PathIcon Data="{StaticResource IconEye}"/>
@@ -339,20 +430,35 @@
             <!-- ===== Files ===== -->
             <Border Grid.Column="1" Classes="card" Padding="0">
                 <DockPanel>
-                    <Border DockPanel.Dock="Top" BorderBrush="#313244" BorderThickness="0,0,0,1" Padding="11,0,14,0">
-                        <Grid ColumnDefinitions="*,140,120,90">
+                    <Border x:Name="DetailsHeader" DockPanel.Dock="Top" BorderBrush="#313244" BorderThickness="0,0,0,1" Padding="11,0,14,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="{Binding ModifiedWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                                <ColumnDefinition Width="{Binding TypeWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                                <ColumnDefinition Width="{Binding SizeWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                            </Grid.ColumnDefinitions>
                             <Button x:Name="NameColumn" Grid.Column="0" Classes="column" Padding="28,6,0,6"/>
                             <Button x:Name="ModifiedColumn" Grid.Column="1" Classes="column"/>
                             <Button x:Name="TypeColumn" Grid.Column="2" Classes="column"/>
                             <Button x:Name="SizeColumn" Grid.Column="3" Classes="column" HorizontalContentAlignment="Right"/>
+                            <Border x:Name="ModifiedGrip" Grid.Column="1" Classes="grip" Tag="Modified"><Border/></Border>
+                            <Border x:Name="TypeGrip" Grid.Column="2" Classes="grip" Tag="Type"><Border/></Border>
+                            <Border x:Name="SizeGrip" Grid.Column="3" Classes="grip" Tag="Size"><Border/></Border>
                         </Grid>
                     </Border>
                     <Panel>
-                        <ListBox x:Name="FileList" Classes="files" SelectionMode="Multiple" IsTextSearchEnabled="True" Focusable="True">
+                        <ListBox x:Name="FileList" Classes="files" SelectionMode="Multiple" IsTextSearchEnabled="False" Focusable="True">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="b:BrowseRow">
-                                    <Grid ColumnDefinitions="*,140,120,90" Opacity="{Binding Opacity}" Background="Transparent"
+                                    <Grid Opacity="{Binding Opacity}" Background="Transparent"
                                           ToolTip.Tip="{Binding FullPath}" ToolTip.ShowDelay="900">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="{Binding ModifiedWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                                            <ColumnDefinition Width="{Binding TypeWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                                            <ColumnDefinition Width="{Binding SizeWidth, Source={x:Static b:BrowseColumnsModel.Instance}}"/>
+                                        </Grid.ColumnDefinitions>
                                         <DockPanel Grid.Column="0" Margin="0,0,10,0">
                                             <Panel DockPanel.Dock="Left" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Center">
                                                 <Image Source="{Binding Icon}" Width="18" Height="18"
@@ -371,7 +477,11 @@
                                                            Foreground="#cdd6f4" FontSize="13" VerticalAlignment="Center"
                                                            TextTrimming="CharacterEllipsis"/>
                                                 <!-- Negative margin: the box is taller than the text it covers, and the row shouldn't grow -->
-                                                <TextBox Classes="rename" IsVisible="{Binding IsRenaming}" Margin="-5,-4,0,-4"/>
+                                                <ContentControl Content="{Binding RenamingRow}" HorizontalContentAlignment="Stretch" Margin="-5,-4,0,-4">
+                                                    <ContentControl.ContentTemplate>
+                                                        <DataTemplate x:DataType="b:BrowseRow"><TextBox Classes="rename"/></DataTemplate>
+                                                    </ContentControl.ContentTemplate>
+                                                </ContentControl>
                                             </Panel>
                                         </DockPanel>
                                         <TextBlock Grid.Column="1" Classes="cell" Text="{Binding ModifiedText}"/>

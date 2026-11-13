@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Grepdesk.Core.Preview;
 using Grepdesk.UI.Jobs;
 using Grepdesk.UI.Preview;
 
@@ -208,6 +209,16 @@ public partial class PreviewPane : UserControl
     {
         ImagePreview.Source = bitmap;
         ImagePreview.IsVisible = bitmap is not null;
+        if (bitmap is not null)
+        {
+            // Small pictures are shown at their own size, which the screen scaling then enlarges.
+            var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+            var small = Math.Max(bitmap.PixelSize.Width, bitmap.PixelSize.Height) <= ImageScaling.SmallImageSide;
+            RenderOptions.SetBitmapInterpolationMode(ImagePreview,
+                small && ImageScaling.UseNearestNeighbor(bitmap.PixelSize.Width, bitmap.PixelSize.Height, scale)
+                    ? BitmapInterpolationMode.None
+                    : BitmapInterpolationMode.HighQuality);
+        }
         _bitmap?.Dispose();
         _bitmap = bitmap;
     }

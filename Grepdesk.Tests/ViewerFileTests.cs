@@ -16,6 +16,7 @@ public class ViewerFileTests
     [InlineData("Dockerfile", true)]
     [InlineData("photo.png", false)]
     [InlineData("slides.pptx", false)]
+    [InlineData("slides.ppt", false)]
     [InlineData("noextension", false)]
     public void Only_text_files_open_in_the_editor(string name, bool expected) =>
         Assert.Equal(expected, ViewerFileLoader.CanView(Path.Combine("C:", "x", name)));
@@ -29,7 +30,9 @@ public class ViewerFileTests
     [InlineData("clip.mkv", ViewerKind.Video)]
     [InlineData("song.flac", ViewerKind.Audio)]
     [InlineData("report.docx", ViewerKind.Word)]
-    [InlineData("sheet.xlsx", ViewerKind.Document)]
+    [InlineData("sheet.xlsx", ViewerKind.Excel)]
+    [InlineData("slides.pptx", ViewerKind.PowerPoint)]
+    [InlineData("slides.ppt", ViewerKind.PowerPoint)]
     [InlineData("setup.exe", ViewerKind.Other)]
     [InlineData("noextension", ViewerKind.Other)]
     public void Every_file_gets_a_way_to_be_shown(string name, ViewerKind expected) =>
@@ -69,8 +72,10 @@ public class ViewerFileTests
         var defaults = ViewerFormats.OpenWithExtensions.ToList();
 
         Assert.DoesNotContain(".heic", defaults);
-        Assert.DoesNotContain(".xlsx", defaults);
         Assert.Contains(".docx", defaults);
+        Assert.Contains(".xlsx", defaults);
+        Assert.Contains(".pptx", defaults);
+        Assert.Contains(".ppt", defaults);
         Assert.Subset(ViewerFormats.AssociableExtensions.ToHashSet(StringComparer.OrdinalIgnoreCase), defaults.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 

@@ -54,10 +54,11 @@ becomes the first page; search runs in the folder being browsed. Phases in
 order; each one is usable on its own.
 
 ### Phase 0: groundwork
-- [ ] **Resident process.** `SingleInstanceHost` also takes plain starts
-  (`OpenFolder`, `OpenFile` commands): a second launch hands its path over the
-  pipe and exits, the primary opens the window. Needed before Grepdesk opens
-  folders for Explorer: a cold Avalonia start is too slow for that.
+- [x] **Resident process.** `SingleInstanceHost` also takes plain starts
+  (`OpenSearch`, `OpenFolder`, `OpenFile` commands): a second launch hands its
+  path over the pipe and exits, the primary opens (or focuses) the window via
+  `CommandDispatcher`. Needed before Grepdesk opens folders for Explorer: a cold
+  Avalonia start is too slow for that.
 - [ ] **Tray icon and global hotkey** on top of the resident process.
 - [ ] **Split `MainWindow.axaml.cs`** (see Code health).
 - [ ] **Persisted index kept current from the NTFS USN journal**, so search
@@ -77,25 +78,47 @@ order; each one is usable on its own.
 - [x] Explorer's icons (`IShellItemImageFactory` on one STA thread), cached per
   extension, per item for apps, shortcuts and folders; only for rows on screen.
 - [x] Remember the last folder and the sort order.
-- [ ] Resizable columns, remembered.
-- [ ] `.lnk` shortcuts to folders open in the browser instead of Explorer.
+- [x] Resizable columns, remembered: drag the left edge of Date modified / Type /
+  Size in the header; double-click resets that column (`BrowseColumnWidths`).
+- [ ] Network locations, phones, libraries and Control Panel: passed on to
+  `explorer.exe` for now; browse them natively later.
+- [x] `.lnk` shortcuts to folders open in the browser instead of Explorer
+  (`ShortcutFile` reads the target from the file itself; shortcuts to files,
+  missing folders or shell items such as Control Panel still go to the OS).
 
 ### Phase 2: file operations
 - [x] Rename (F2), new folder (Ctrl+Shift+N), Recycle Bin (Delete), on a
   multiple selection where it makes sense.
 - [x] Copy / cut / paste (Ctrl+C / X / V) through the system clipboard, so it
   works both ways with Explorer; pastes run as the existing transfer job.
-- [ ] Ctrl+Z for rename, new folder, move and trash.
-- [ ] Drag and drop between folders and to / from Explorer.
+- [x] Ctrl+Z for rename and new folder (`UndoHistory`; a new folder is only
+  removed while still empty).
+- [ ] Ctrl+Z for move and trash. Trash needs a restore from the Recycle Bin
+  (not in `IPlatformShell` yet); moves run in a job process, so the job has
+  to report what it moved.
+- [ ] Drag and drop between folders and to / from Explorer. (Written in
+  `BrowseView.DragDrop.cs`; needs a manual pass from the release checklist.)
 - [ ] **The system context menu** (`IContextMenu` hosting) so third-party
   entries (7-Zip, Git, editors) show up. The hardest item in this phase.
-- [ ] Properties dialog (`SHObjectProperties`), "Open with" submenu.
+- [x] Properties dialog (Alt+Enter, context menu) and "Open with…" dialog on
+  Windows (`IPlatformShell.ShowProperties` / `OpenWithDialog`; Linux and macOS
+  report "unsupported" and hide the entries). The richer "Open with" submenu
+  (recent / favourite apps) is under Opener below.
 
 ### Phase 3: better than Explorer
 - [ ] Tabs and a dual pane; restore them on start.
 - [ ] Search below the current folder from the index; folder size column.
-- [ ] Grid / thumbnail view, grouping.
-- [ ] Viewer: previous / next file in the folder with ←/→.
+- [x] Grid / thumbnail view: Medium and Large icons next to Details (toolbar View
+  button, Ctrl+Shift+2 / 3 / 6). One global choice for every folder, not per
+  folder as in Explorer. Thumbnails come from the shell and are fetched as a
+  cell scrolls into view. The grid has no virtualisation, so folders with more
+  than 1,500 items fall back to Details. Not done: List / Tiles / Extra large
+  / Small views, grouping, arrow-key movement by rows in the grid, a
+  virtualised grid for big folders.
+- [x] Viewer: previous / next file in the folder with ←/→ (`SiblingFiles`), plus
+  ‹ › buttons. Alt+←/→ always steps; plain arrows only where the open
+  document does not use them (images, text), since slides, pages and media
+  seek keep theirs. Order is the natural name order, not the browser's sort.
 - [ ] Browse into `.zip` (and later `.7z`, `.rar`, `.tar`) like a folder.
 
 ### Phase 4: default file manager and opener
@@ -112,8 +135,42 @@ order; each one is usable on its own.
 ### Phase 5: polish and trust
 - [ ] Light theme / follow the system theme, Mica.
 - [ ] Cloud file states (OneDrive placeholders) in the list.
+- [ ] Accessibility pass (screen reader names, keyboard-only use, high
+  contrast); Avalonia's support is limited, so find out what works first.
 - [ ] Code signing (see Before release): an unsigned default handler is
   worse than an unsigned tool.
+
+## Documents (viewer and editor)
+
+Position: a fast viewer with light edits, not a replacement for Office.
+Fidelity gaps will look like bugs next to the real application, so cap the
+scope and say so in the README.
+
+- [ ] **Legacy formats**: read `.doc`, `.xls`, `.ppt`, `.rtf`, `.odt`, `.ods`,
+  `.odp` (view and content search). Common in school and government files.
+- [ ] **PowerPoint fidelity**: charts and OLE objects (the EMF preview picture
+  can't be decoded by Skia, a placeholder is shown), SmartArt, gradients,
+  shape geometry, transitions, fonts that are not installed.
+- [ ] **Excel**: formulas and cached values, number formats, charts,
+  conditional formatting, frozen panes.
+- [ ] **Word**: tracked changes, comments, headers / footers and page layout.
+- [ ] **Print and export to PDF** from the viewer.
+- [ ] **PDF**: annotation, form filling and page tools (merge, split, rotate).
+- [ ] **Preview pane**: render the first slide / page of Office files, not
+  only their text.
+
+## Opener for other file types
+
+- [ ] **Register as a default-app candidate** (see Phase 4): capabilities
+  for every type the viewer handles.
+- [ ] **More archive types** (see Features): `.7z`, `.rar`, `.tar`, `.gz`.
+- [ ] **More viewers**: `.epub`, `.eml` / `.msg`, fonts, `.iso` contents,
+  `.torrent`, 3D / CAD where a small library exists.
+- [ ] **Image metadata** (EXIF) panel, animated formats.
+- [ ] **File compare**: side-by-side diff of two text files, folder compare.
+- [ ] **Text tools**: find and replace across files, encoding conversion.
+- [ ] **Open with**: submenu with recent and favourite apps; per-type
+  default in Settings.
 
 ## Features
 

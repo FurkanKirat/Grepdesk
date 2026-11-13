@@ -653,11 +653,11 @@ public partial class CleanupView : UserControl
         if (e.Source is not Control { DataContext: ItemRow { Item: { } item } row }) return;
         ItemList.SelectedItem = row;
 
-        var open = new MenuItem { Header = Loc.Get("ContextMenuOpen") };
+        var open = new MenuItem { Header = Loc.Get("ContextMenuOpen"), Icon = MenuIcons.For("ContextMenuOpen") };
         open.Click += (_, _) => Open(item.Path);
-        var show = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
+        var show = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder"), Icon = MenuIcons.For("ContextMenuShowInFolder") };
         show.Click += (_, _) => ShowInFolder(item.Path);
-        var copy = new MenuItem { Header = Loc.Get("ContextMenuCopyPath") };
+        var copy = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath") };
         copy.Click += async (_, _) =>
         {
             if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)

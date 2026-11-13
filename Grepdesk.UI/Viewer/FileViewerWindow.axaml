@@ -44,6 +44,39 @@
             <Setter Property="Background" Value="#b4befe"/>
             <Setter Property="Foreground" Value="#11111b"/>
         </Style>
+        <Style Selector="Button.compact, ToggleButton.compact">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="FontSize" Value="11.5"/>
+        </Style>
+        <Style Selector="Button.status, ToggleButton.status">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="FontSize" Value="11.5"/>
+        </Style>
+        <Style Selector="Button.status:pointerover /template/ ContentPresenter, ToggleButton.status:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="ToggleButton.status:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="TextBox.findInput">
+            <Setter Property="Background" Value="#11111b"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+            <Setter Property="BorderBrush" Value="#45475a"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style Selector="TextBox.findInput.invalid">
+            <Setter Property="BorderBrush" Value="#f38ba8"/>
+        </Style>
     </Window.Styles>
 
     <DockPanel>
@@ -71,6 +104,11 @@
                                FontSize="12"
                                VerticalAlignment="Center"
                                IsVisible="False"/>
+                    <Button x:Name="PrevFileButton" Content="‹" MinWidth="32" HorizontalContentAlignment="Center"/>
+                    <Button x:Name="NextFileButton" Content="›" MinWidth="32" HorizontalContentAlignment="Center"/>
+                    <Button x:Name="FindButton" IsVisible="False"/>
+                    <Button x:Name="OutlineButton" IsVisible="False"/>
+                    <Button x:Name="FormatButton" IsVisible="False"/>
                     <ToggleButton x:Name="RenderedToggle" IsVisible="False"/>
                     <ToggleButton x:Name="WrapToggle" IsVisible="False"/>
                     <ToggleButton x:Name="EditToggle" IsVisible="False"/>
@@ -82,17 +120,81 @@
         </Border>
 
         <Panel Background="#11111b">
-            <ae:TextEditor x:Name="Editor"
-                           IsReadOnly="True"
-                           ShowLineNumbers="True"
-                           FontSize="12.5"
-                           Background="#11111b"
-                           Foreground="#bac2de"
-                           LineNumbersForeground="#585b70"
-                           HorizontalScrollBarVisibility="Auto"
-                           VerticalScrollBarVisibility="Auto"
-                           Padding="8,6"
-                           IsVisible="False"/>
+            <DockPanel x:Name="EditorContainer" IsVisible="False">
+                <!-- Find / Replace / Go to Line bar -->
+                <Border x:Name="EditorFindBar"
+                        DockPanel.Dock="Top"
+                        Background="#181825"
+                        BorderBrush="#313244"
+                        BorderThickness="0,0,0,1"
+                        Padding="12,7"
+                        IsVisible="False">
+                    <StackPanel Spacing="6">
+                        <StackPanel x:Name="FindRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBox x:Name="FindBox" Classes="findInput" Width="250"/>
+                            <ToggleButton x:Name="MatchCaseToggle" Classes="compact" Content="Aa"/>
+                            <ToggleButton x:Name="WholeWordToggle" Classes="compact" Content="W"/>
+                            <ToggleButton x:Name="RegexToggle" Classes="compact" Content=".*"/>
+                            <TextBlock x:Name="FindCountText"
+                                       Foreground="#6c7086"
+                                       FontSize="11.5"
+                                       MinWidth="76"
+                                       VerticalAlignment="Center"
+                                       Margin="4,0"/>
+                            <Button x:Name="FindPrevButton" Classes="compact" Content="↑" MinWidth="28" HorizontalContentAlignment="Center"/>
+                            <Button x:Name="FindNextButton" Classes="compact" Content="↓" MinWidth="28" HorizontalContentAlignment="Center"/>
+                            <Button x:Name="CloseFindButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel x:Name="ReplaceRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
+                            <TextBox x:Name="ReplaceBox" Classes="findInput" Width="250"/>
+                            <Button x:Name="ReplaceButton" Classes="compact"/>
+                            <Button x:Name="ReplaceAllButton" Classes="compact"/>
+                        </StackPanel>
+                        <StackPanel x:Name="GoToLineRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
+                            <TextBox x:Name="GoToLineBox" Classes="findInput" Width="170"/>
+                            <Button x:Name="GoToLineButton" Classes="primary compact"/>
+                            <Button x:Name="CloseGoToLineButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- IDE bottom status bar -->
+                <Border x:Name="EditorStatusBar"
+                        DockPanel.Dock="Bottom"
+                        Background="#181825"
+                        BorderBrush="#313244"
+                        BorderThickness="0,1,0,0"
+                        Padding="10,4">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Button x:Name="CursorPosButton" Classes="status"/>
+                            <Button x:Name="SymbolCrumbButton" Classes="status" IsVisible="False"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <ToggleButton x:Name="WhitespaceToggle" Classes="status" Content="·"/>
+                            <TextBlock x:Name="IndentText"
+                                       Foreground="#6c7086"
+                                       FontSize="11.5"
+                                       VerticalAlignment="Center"
+                                       Margin="4,0"/>
+                            <Button x:Name="LineEndingButton" Classes="status"/>
+                            <Button x:Name="EncodingButton" Classes="status"/>
+                            <Button x:Name="EditorZoomButton" Classes="status" Content="100%"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <ae:TextEditor x:Name="Editor"
+                               IsReadOnly="True"
+                               ShowLineNumbers="True"
+                               FontSize="12.5"
+                               Background="#11111b"
+                               Foreground="#bac2de"
+                               LineNumbersForeground="#585b70"
+                               HorizontalScrollBarVisibility="Auto"
+                               VerticalScrollBarVisibility="Auto"
+                               Padding="8,6"/>
+            </DockPanel>
 
             <ScrollViewer x:Name="MarkdownScroll" IsVisible="False">
                 <StackPanel MaxWidth="860" Margin="28,20" Spacing="10">

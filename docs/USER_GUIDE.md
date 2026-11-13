@@ -29,6 +29,8 @@ An everyday folder browser designed for speed and keyboard navigation:
 - **File Operations**:
   - **Rename** (`F2`): Edits the name inline with the extension deselected; prevents invalid characters and reserved Windows device names (`CON`, `NUL`, `COM1`, etc.).
   - **New Folder** (`Ctrl+Shift+N`): Creates a folder and immediately starts inline rename.
+  - **Drag and drop**: drag files out of the list into Explorer or any other app, or drop files from Explorer, other apps or within Grepdesk onto a folder row, a sidebar place or the open folder. Like Explorer, a drop moves within a drive and copies across drives; hold `Ctrl` to copy or `Shift` to move. Drops run as the same transfer job as paste (conflict prompts, progress, cancel).
+  - **Paste a screenshot**: with an image on the clipboard (Print Screen, a snip) and no files, `Ctrl+V` saves it as a PNG in the open folder.
   - **Cut / Copy / Paste** (`Ctrl+X`, `Ctrl+C`, `Ctrl+V`): Uses the native OS file clipboard so you can copy in Explorer and paste in Grepdesk (or vice versa). Pastes run using Grepdesk's multi-threaded transfer engine.
   - **Copy Path** (`Ctrl+Shift+C`): Copies the selected file/folder paths as text.
   - **Move to Recycle Bin** (`Delete`): Confirms before moving selected items to the Recycle Bin.
@@ -172,6 +174,16 @@ Grepdesk.UI.exe --unregister
 | `Ctrl+Shift+S` | Calculate sizes for all subfolders in the current folder |
 | `F2` | Rename selected item |
 | `Ctrl+Shift+N` | Create new folder |
+| `Ctrl+Z` | Undo the last rename or new folder (a new folder is removed only if still empty) |
+| `Alt+Enter` | Properties of the selected item or the open folder (Windows) |
+
+In the folder list, drag the left edge of the **Date modified**, **Type** or **Size** header to change that column's width (double-click the edge to reset it). The widths are remembered.
+
+**View modes**: the **View** button in the toolbar switches the folder list between **Details**, **Medium icons** and **Large icons** (`Ctrl+Shift+6` / `3` / `2`). Unlike Explorer, the choice is global: it applies to every folder and is remembered, not stored per folder. The icon views show thumbnails of pictures, videos and documents where Windows has them, and the View menu also holds the sort options since the column headers are hidden there. Folders with more than 1,500 items are shown as Details.
+
+Opening a **shortcut (`.lnk`) to a folder** shows that folder in the browser; other shortcuts open as before.
+
+In the file viewer, **Alt+←** / **Alt+→** (or the ‹ › buttons) open the previous / next file in the same folder. For images and text the plain arrow keys do the same; for slides, PDF pages and media they keep turning pages or seeking.
 | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / Copy / Paste files (interoperable with Windows Explorer) |
 | `Ctrl+Shift+C` | Copy selected path(s) as text |
 | `Delete` | Move selected item(s) to the Recycle Bin |

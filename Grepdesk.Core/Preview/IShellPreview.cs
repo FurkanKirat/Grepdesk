@@ -35,4 +35,10 @@ public interface IShellIcons
 {
     /// <summary>The icon of an existing file or folder, <paramref name="size"/> pixels square, or null.</summary>
     Task<ShellThumbnail?> GetIconAsync(string path, int size, CancellationToken ct = default);
+
+    /// <summary>
+    /// What Explorer shows at large sizes: a real thumbnail (a picture's contents, a video frame) where the
+    /// OS has one, otherwise the icon. Where the OS has no thumbnails this is just the icon.
+    /// </summary>
+    Task<ShellThumbnail?> GetThumbnailAsync(string path, int size, CancellationToken ct = default) => GetIconAsync(path, size, ct);
 }

@@ -20,8 +20,12 @@ public enum ViewerKind
     Pdf,
     Video,
     Audio,
-    /// <summary>Word documents: laid out as pages, read-only.</summary>
+    /// <summary>Word documents: laid out as pages, editable.</summary>
     Word,
+    /// <summary>Excel workbooks: spreadsheet grid with sheet tabs, editable.</summary>
+    Excel,
+    /// <summary>PowerPoint presentations: slide view with outline and notes, editable.</summary>
+    PowerPoint,
     /// <summary>Other Office documents: their extracted text, read-only.</summary>
     Document,
     /// <summary>Anything else: shown as text if it turns out to be text, otherwise a summary card.</summary>
@@ -68,9 +72,14 @@ public static class ViewerFormats
 
     public static readonly IReadOnlySet<string> WordExtensions = Set(".docx");
 
+    public static readonly IReadOnlySet<string> ExcelExtensions = Set(".xlsx");
+
+    public static readonly IReadOnlySet<string> PowerPointExtensions = Set(".pptx", ".ppt");
+
     public static readonly IReadOnlySet<string> DocumentExtensions = new HashSet<string>(
         ExtractorRegistry.AllSupportedExtensions.Where(e =>
-            ExtractorRegistry.TryGetExtractor(e, out var x) && x is not PlainTextExtractor and not PdfExtractor && !WordExtensions.Contains(e)),
+            ExtractorRegistry.TryGetExtractor(e, out var x) && x is not PlainTextExtractor and not PdfExtractor
+            && !WordExtensions.Contains(e) && !ExcelExtensions.Contains(e) && !PowerPointExtensions.Contains(e)),
         StringComparer.OrdinalIgnoreCase);
 
     public static ViewerKind KindOf(string path)
@@ -84,6 +93,8 @@ public static class ViewerFormats
         if (VideoExtensions.Contains(ext)) return ViewerKind.Video;
         if (AudioExtensions.Contains(ext)) return ViewerKind.Audio;
         if (WordExtensions.Contains(ext)) return ViewerKind.Word;
+        if (ExcelExtensions.Contains(ext)) return ViewerKind.Excel;
+        if (PowerPointExtensions.Contains(ext)) return ViewerKind.PowerPoint;
         if (DocumentExtensions.Contains(ext)) return ViewerKind.Document;
         return ViewerKind.Other;
     }
@@ -145,6 +156,8 @@ public static class ViewerFormats
         Add("Video", VideoExtensions, true);
         Add("Audio", AudioExtensions, true);
         Add("Word", WordExtensions, true);
+        Add("Excel", ExcelExtensions, true);
+        Add("PowerPoint", PowerPointExtensions, true);
         Add("Documents", DocumentExtensions, false);
         return categories;
     }

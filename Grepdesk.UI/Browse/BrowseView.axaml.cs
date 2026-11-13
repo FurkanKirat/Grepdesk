@@ -30,12 +30,15 @@ public partial class BrowseView : UserControl
     private const int SidebarHistoryLimit = 8;
 
     private readonly NavigationHistory _history = new();
+    private readonly UndoHistory _undo = new();
+    private readonly FolderTypeAhead _typeAhead = new();
     private readonly FolderBookmarks _bookmarks = new(Settings.FavoriteFolders, Settings.RecentFolders);
     private readonly IFileClipboard? _clipboard = PlatformShellFactory.CreateFileClipboard();
     private readonly ShellIconCache? _icons = PlatformShellFactory.CreateShellIcons() is { } icons ? new ShellIconCache(icons) : null;
     private readonly DispatcherTimer _reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
 
     private ObservableCollection<BrowseRow> _rows = [];
+    private int _totalRows; // what the folder shows; _rows can lag behind while an icon view is still filling
     private Dictionary<string, BrowseRow> _rowsByPath = new(PathUtil.Comparer);
     private readonly Dictionary<string, long> _folderSizes = new(PathUtil.Comparer);
     private List<FolderEntry> _entries = [];
@@ -81,6 +84,7 @@ public partial class BrowseView : UserControl
         FileList.ContainerPrepared += OnContainerPrepared;
         FileList.SelectionChanged += (_, _) => OnSelectionChanged();
         FileList.DoubleTapped += OnDoubleTapped;
+        FileList.TextInput += OnFileListTextInput;
         FileList.AddHandler(PointerReleasedEvent, OnListPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
 
         BackButton.Click += async (_, _) => await GoBackAsync();
@@ -97,6 +101,8 @@ public partial class BrowseView : UserControl
         HiddenToggle.IsCheckedChanged += async (_, _) => await SetShowHiddenAsync(HiddenToggle.IsChecked == true);
 
         NameColumn.Click += (_, _) => SortBy(FolderSortColumn.Name);
+        foreach (var grip in new[] { ModifiedGrip, TypeGrip, SizeGrip })
+            SetupColumnGrip(grip, Enum.Parse<BrowseColumn>((string)grip.Tag!));
         ModifiedColumn.Click += (_, _) => SortBy(FolderSortColumn.Modified);
         TypeColumn.Click += (_, _) => SortBy(FolderSortColumn.Type);
         SizeColumn.Click += (_, _) => SortBy(FolderSortColumn.Size);
@@ -141,6 +147,8 @@ public partial class BrowseView : UserControl
         // Mouse back / forward buttons.
         AddHandler(PointerPressedEvent, OnPreviewPointerPressed, RoutingStrategies.Tunnel);
 
+        SetupDragDrop();
+        SetupViewModes();
         ApplyLanguage();
     }
 
@@ -158,6 +166,7 @@ public partial class BrowseView : UserControl
         ToolTip.SetTip(NewFolderButton, Loc.Get("BrowseNewFolder"));
         ToolTip.SetTip(SearchBelowButton, Loc.Get("BrowseSearchBelow"));
         ToolTip.SetTip(HiddenToggle, Loc.Get("BrowseShowHidden"));
+        ToolTip.SetTip(ViewButton, Loc.Get("BrowseView"));
         CalculateSizesButton.Content = Loc.Get("BrowseCalculateSizes");
         ToolTip.SetTip(CalculateSizesButton, Loc.Get("BrowseCalculateSizesTip"));
         FilterBox.Watermark = Loc.Get("BrowseFilterWatermark");
@@ -219,7 +228,7 @@ public partial class BrowseView : UserControl
     /// <param name="select">Select this item once listed (the folder we came up from, a renamed file).</param>
     private async Task LoadAsync(bool folderChanged, string? select)
     {
-        var folder = _history.Current!;
+        var folder = _history.Current!; Tr.StartStallMonitor(); Tr.Log($"LoadAsync start {folder} (folderChanged={folderChanged})"); // TMP-TRACE
         // Opening a folder replaces the focused row; unless the focus was elsewhere, give it back to the list.
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Visual;
         var refocus = folderChanged && (focused is null || (this.IsVisualAncestorOf(focused) && focused != AddressBox && focused != FilterBox));
@@ -230,6 +239,7 @@ public partial class BrowseView : UserControl
         if (folderChanged)
         {
             CancelRename();
+            _typeAhead.Reset();
             _message = null;
             _clearingFilter = true;
             FilterBox.Text = "";
@@ -290,7 +300,9 @@ public partial class BrowseView : UserControl
         _calculatingSizes = hasUncalculated;
         _error = contents.Error;
         RefreshCutMarks();
+        Tr.Log($"listed {_entries.Count} entries"); // TMP-TRACE
         Render(reset: folderChanged);
+        Tr.Log("Render returned"); Dispatcher.UIThread.Post(() => Tr.Log("UI idle after Render (layout+paint done)"), DispatcherPriority.ApplicationIdle); // TMP-TRACE
         if (hasUncalculated)
             _ = ComputeFolderSizesAsync(_entries.Where(e => e.IsDirectory && e.Size < 0).ToList(), forceFull: false, ct);
         if (refocus && IsEffectivelyVisible)
@@ -465,6 +477,7 @@ public partial class BrowseView : UserControl
     /// </param>
     private void Render(bool reset)
     {
+        _fillGeneration++; // a fill still running for the previous render stops
         var filter = FilterBox.Text;
         var view = FolderListing.Filter(_entries, filter).ToList();
         view.Sort(FolderListing.Comparer(_sort));
@@ -491,16 +504,27 @@ public partial class BrowseView : UserControl
             byPath[entry.FullPath] = row;
         }
         _rowsByPath = byPath;
+        _totalRows = desired.Count;
 
         if (reset)
         {
-            _rows = new ObservableCollection<BrowseRow>(desired);
+            // An icon view builds a control per item and can't virtualise, so a big folder is added in
+            // batches: the first screenful shows at once and the window stays responsive while the rest follows.
+            var first = desired.Count;
+            if (FolderViewModes.Effective(Settings.BrowseViewMode, desired.Count) != FolderViewMode.Details && desired.Count > FirstIconBatch)
+            {
+                var wanted = _selectAfterLoad is { } path ? desired.FindIndex(r => PathUtil.Comparer.Equals(r.FullPath, path)) : -1;
+                first = Math.Min(desired.Count, Math.Max(FirstIconBatch, wanted + IconBatch)); // a row to select must already be there
+            }
+            _rows = new ObservableCollection<BrowseRow>(first == desired.Count ? desired : desired.GetRange(0, first));
             FileList.ItemsSource = _rows;
+            if (first < desired.Count) _ = FillRowsAsync(_rows, desired, first, _fillGeneration);
         }
         else
         {
             Merge(_rows, desired);
         }
+        ApplyViewMode();
 
         var select = _selectAfterLoad;
         _selectAfterLoad = null; // one render's worth: a folder we came back from may not be listed here
@@ -555,8 +579,8 @@ public partial class BrowseView : UserControl
             FolderListingError.AccessDenied => Loc.Get("BrowseAccessDenied"),
             FolderListingError.NotFound => Loc.Get("BrowseNotFound"),
             FolderListingError.Failed => Loc.Get("BrowseReadFailed"),
-            _ when _rows.Count == 0 && !string.IsNullOrWhiteSpace(filter) => Loc.Get("BrowseNoMatches", filter.Trim()),
-            _ when _rows.Count == 0 => Loc.Get("BrowseEmptyFolder"),
+            _ when _totalRows == 0 && !string.IsNullOrWhiteSpace(filter) => Loc.Get("BrowseNoMatches", filter.Trim()),
+            _ when _totalRows == 0 => Loc.Get("BrowseEmptyFolder"),
             _ => null
         };
         EmptyText.Text = text;
@@ -585,7 +609,7 @@ public partial class BrowseView : UserControl
         }
 
         var selected = SelectedRows.ToList();
-        var count = Loc.Get("BrowseItemCount", _rows.Count);
+        var count = Loc.Get("BrowseItemCount", _totalRows);
         if (selected.Count == 0)
         {
             StatusText.Text = count;
@@ -642,6 +666,12 @@ public partial class BrowseView : UserControl
         // Icons only for rows that are actually on screen: a folder of 50,000
         // files shouldn't queue 50,000 icon requests.
         if (_icons is null || e.Container.DataContext is not BrowseRow { Icon: null } row) return;
+        if (++Tr.Prepared % 100 == 0 || Tr.Prepared == 1) Tr.Log($"container prepared #{Tr.Prepared}"); // TMP-TRACE
+        if (InIconView)
+        {
+            ScheduleThumbnailPass(); // fetched for the cells that are (nearly) on screen
+            return;
+        }
         var ct = _loadCts.Token;
         _ = SetIconAsync(row, ct);
     }
@@ -651,6 +681,14 @@ public partial class BrowseView : UserControl
         var icon = await _icons!.Get(row.Entry, ct);
         if (icon is not null && !ct.IsCancellationRequested)
             Dispatcher.UIThread.Post(() => row.Icon ??= icon);
+    }
+
+    internal void Cleanup()
+    {
+        _watcher?.Dispose();
+        _watcher = null;
+        _reloadTimer.Stop();
+        _loadCts.Cancel();
     }
 
     private void Watch(string folder)
@@ -1037,9 +1075,19 @@ public partial class BrowseView : UserControl
     private async Task OpenAsync(BrowseRow row)
     {
         if (row.IsDirectory)
+        {
             await NavigateAsync(row.FullPath);
-        else
-            Report(Shell?.OpenPath(row.FullPath), "FileOpenFailed");
+            return;
+        }
+
+        // A shortcut to a folder opens that folder here, not in Explorer.
+        if (string.Equals(Path.GetExtension(row.FullPath), ".lnk", StringComparison.OrdinalIgnoreCase)
+            && await Task.Run(() => ShortcutFile.ResolveFolder(row.FullPath)) is { } folder)
+        {
+            await NavigateAsync(folder);
+            return;
+        }
+        Report(Shell?.OpenPath(row.FullPath), "FileOpenFailed");
     }
 
     private async Task OpenSelectionAsync()
@@ -1136,14 +1184,21 @@ public partial class BrowseView : UserControl
             Key.N when ctrl && shift => Do(NewFolder),
             Key.S when ctrl && shift && InFolder => () => CalculateFolderSizesAsync(forceFull: true),
             Key.Enter when mods == KeyModifiers.None && hasSelection => OpenSelectionAsync,
+            Key.Enter when alt && Shell?.SupportsNativeDialogs == true && (SingleSelected is not null || InFolder) =>
+                Do(() => ShowProperties(SingleSelected?.FullPath ?? CurrentFolder!)),
             Key.Space when mods == KeyModifiers.None && inList && SingleSelected is { IsDirectory: false } file =>
                 Do(() => ViewRequested?.Invoke(file.ToResultItem())),
             Key.F2 when inList && InFolder && SingleSelected is { } row => Do(() => StartRename(row)),
             Key.Delete when hasSelection && InFolder => TrashSelectionAsync,
+            Key.Z when ctrl && !shift && InFolder => Do(UndoLast),
+            Key.A when ctrl && inList => Do(() => { CompleteFill(); FileList.SelectAll(); }), // all of them, even those still being added
+            Key.D2 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.LargeIcons)),
+            Key.D3 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.MediumIcons)),
+            Key.D6 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.Details)),
             Key.C when ctrl && shift && (hasSelection || InFolder) => CopyPathsAsync,
             Key.C when ctrl && hasSelection => Do(() => PutOnClipboard(cut: false)),
             Key.X when ctrl && hasSelection && InFolder => Do(() => PutOnClipboard(cut: true)),
-            Key.V when ctrl && InFolder => Do(() => Paste(CurrentFolder!)),
+            Key.V when ctrl && InFolder => () => PasteAsync(CurrentFolder!),
             _ => null
         };
     }
@@ -1153,6 +1208,34 @@ public partial class BrowseView : UserControl
         var props = e.GetCurrentPoint(this).Properties;
         if (props.IsXButton1Pressed) { _ = GoBackAsync(); e.Handled = true; }
         else if (props.IsXButton2Pressed) { _ = GoForwardAsync(); e.Handled = true; }
+    }
+
+    private void OnFileListTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (_renaming is not null || (e.Source as Visual)?.FindAncestorOfType<TextBox>(includeSelf: true) is not null)
+            return;
+
+        CompleteFill();
+        var names = new string[_rows.Count];
+        for (var i = 0; i < _rows.Count; i++)
+            names[i] = _rows[i].Name;
+
+        var next = _typeAhead.NextMatch(names, FileList.SelectedIndex, e.Text, Environment.TickCount64);
+        e.Handled = true;
+        if (next < 0 || next >= _rows.Count) return;
+
+        var target = _rows[next];
+        FileList.SelectedItems!.Clear();
+        FileList.SelectedItem = target;
+        FileList.ScrollIntoView(target);
+        if (FileList.ContainerFromItem(target) is Control container)
+            container.Focus();
+        else
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (FileList.SelectedItem == target && FileList.ContainerFromItem(target) is Control c)
+                    c.Focus();
+            }, DispatcherPriority.Loaded);
     }
 
     /// <summary>Focus the list on the selected row, so the arrow keys work from there.</summary>
@@ -1213,6 +1296,8 @@ public partial class BrowseView : UserControl
             else
             {
                 menu.Add(Item("ContextMenuView", () => ViewRequested?.Invoke(single.ToResultItem()), new KeyGesture(Key.Space)));
+                if (Shell?.SupportsNativeDialogs == true)
+                    menu.Add(Item("ContextMenuOpenWith", () => Report(Shell?.OpenWithDialog(single.FullPath), "FileOpenFailed")));
             }
         }
         if (!InFolder) return menu; // drives in This PC: just open them
@@ -1247,13 +1332,18 @@ public partial class BrowseView : UserControl
                 Report(Shell?.OpenInTerminal(single.IsDirectory ? single.FullPath : CurrentFolder!), "TerminalOpenFailed")));
             foreach (var editor in Editors.Where(ed => EditorTargetResolver.IsCompatible(ed, single.FullPath)))
             {
-                var menuItem = new MenuItem { Header = editor.Header };
+                var menuItem = new MenuItem { Header = editor.Header, Icon = MenuIcons.For("Editor") };
                 menuItem.Click += (_, _) => Report(Shell?.OpenInEditor(editor, single.FullPath), "EditorOpenFailed", editor.Header);
                 menu.Add(menuItem);
             }
             if (single.IsDirectory)
                 menu.Add(Item("ContextMenuOrganize", () => OrganizeRequested?.Invoke(single.FullPath)));
             menu.Add(Item("BrowseShowInExplorer", () => Report(Shell?.ShowInFileManager(single.FullPath), "ShowInFolderFailed")));
+        }
+        if (single is not null && Shell?.SupportsNativeDialogs == true)
+        {
+            menu.Add(new Separator());
+            menu.Add(Item("ContextMenuProperties", () => ShowProperties(single.FullPath), new KeyGesture(Key.Enter, KeyModifiers.Alt)));
         }
         return menu;
     }
@@ -1265,7 +1355,7 @@ public partial class BrowseView : UserControl
         var folder = CurrentFolder!;
         var menu = new List<Control>();
         if (ClipboardHasFiles())
-            menu.Add(Item("BrowsePaste", () => Paste(folder), new KeyGesture(Key.V, KeyModifiers.Control)));
+            menu.Add(Item("BrowsePaste", () => _ = PasteAsync(folder), new KeyGesture(Key.V, KeyModifiers.Control)));
         menu.Add(Item("BrowseNewFolder", NewFolder, new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)));
         menu.Add(Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5)));
 
@@ -1282,11 +1372,13 @@ public partial class BrowseView : UserControl
         menu.Add(Item("ContextMenuOpenInTerminal", () => Report(Shell?.OpenInTerminal(folder), "TerminalOpenFailed")));
         foreach (var editor in Editors.Where(ed => EditorTargetResolver.IsCompatible(ed, folder)))
         {
-            var menuItem = new MenuItem { Header = editor.Header };
+            var menuItem = new MenuItem { Header = editor.Header, Icon = MenuIcons.For("Editor") };
             menuItem.Click += (_, _) => Report(Shell?.OpenInEditor(editor, folder), "EditorOpenFailed", editor.Header);
             menu.Add(menuItem);
         }
         menu.Add(Item("BrowseOpenInExplorer", () => Report(Shell?.OpenPath(folder), "FileOpenFailed")));
+        if (Shell?.SupportsNativeDialogs == true)
+            menu.Add(Item("ContextMenuProperties", () => ShowProperties(folder), new KeyGesture(Key.Enter, KeyModifiers.Alt)));
 
         var hidden = new MenuItem
         {
@@ -1301,9 +1393,11 @@ public partial class BrowseView : UserControl
         return menu;
     }
 
+    private void ShowProperties(string path) => Report(Shell?.ShowProperties(path), "PropertiesFailed");
+
     private static MenuItem Item(string key, Action action, KeyGesture? gesture = null)
     {
-        var item = new MenuItem { Header = Loc.Get(key), InputGesture = gesture };
+        var item = new MenuItem { Header = Loc.Get(key), InputGesture = gesture, Icon = MenuIcons.For(key) };
         item.Click += (_, _) => action();
         return item;
     }
@@ -1359,6 +1453,47 @@ public partial class BrowseView : UserControl
             return;
         }
         StartJob("--paste", [destination]);
+    }
+
+    /// <summary>Ctrl+V: files paste as a job; with only an image on the clipboard (Print Screen, a snip) it is saved as a PNG in the folder.</summary>
+    private async Task PasteAsync(string destination)
+    {
+        if (ClipboardHasFiles()) { Paste(destination); return; }
+
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        Avalonia.Media.Imaging.Bitmap? bitmap = null;
+        try
+        {
+            if (clipboard is not null)
+                bitmap = await Avalonia.Input.Platform.ClipboardExtensions.TryGetBitmapAsync(clipboard);
+            if (bitmap is null)
+            {
+                SetMessage(() => Loc.Get("JobClipboardEmpty"));
+                return;
+            }
+
+            var name = Loc.Get("BrowseScreenshotName", DateTime.Now.ToString("yyyy-MM-dd HH.mm.ss")) + ".png";
+            var path = Path.Combine(destination, FileNames.UniqueName(destination, name, isDirectory: false));
+            await Task.Run(() =>
+            {
+                using var stream = File.Create(path);
+                bitmap.Save(stream);
+            });
+            SessionTrail.Note($"Pasted clipboard image as {path}");
+            _selectAfterLoad = path;
+            FilterBox.Text = "";
+            var saved = Path.GetFileName(path);
+            SetMessage(() => Loc.Get("BrowseImageSaved", saved));
+            await ReloadAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SetMessage(() => $"{Loc.Get("BrowseImageSaveFailed")}: {ex.Message}");
+        }
+        finally
+        {
+            bitmap?.Dispose();
+        }
     }
 
     private async Task CopyPathsAsync()
@@ -1425,6 +1560,7 @@ public partial class BrowseView : UserControl
         try
         {
             var path = FileNames.CreateFolder(CurrentFolder!, Loc.Get("BrowseNewFolderName"));
+            _undo.Push(new CreatedFolderAction(path));
             _selectAfterLoad = path;
             _renameAfterLoad = true;
             FilterBox.Text = ""; // a filter would hide the new folder
@@ -1434,6 +1570,101 @@ public partial class BrowseView : UserControl
         {
             SetMessage(() => $"{Loc.Get("BrowseNewFolderFailed")}: {ex.Message}");
         }
+    }
+
+    /// <summary>Ctrl+Z: takes back the last rename or new folder.</summary>
+    private void UndoLast()
+    {
+        var result = _undo.Undo();
+        switch (result.Outcome)
+        {
+            case UndoOutcome.NothingToUndo:
+                SetMessage(() => Loc.Get("BrowseNothingToUndo"));
+                return;
+            case UndoOutcome.Done:
+                var path = result.Path!;
+                var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
+                if (result.Action is RenamedAction renamed)
+                {
+                    if (Directory.Exists(path))
+                    {
+                        _history.Forget(renamed.NewPath);
+                        _bookmarks.Rename(renamed.NewPath, path);
+                        SaveBookmarks();
+                        FillBookmarks();
+                    }
+                    Removed?.Invoke([renamed.NewPath]);
+                    SetMessage(() => Loc.Get("BrowseUndoRename", name));
+                }
+                else
+                {
+                    _bookmarks.Forget(path);
+                    SaveBookmarks();
+                    FillBookmarks();
+                    Removed?.Invoke([path]);
+                    SetMessage(() => Loc.Get("BrowseUndoNewFolder", name));
+                }
+                if (result.Action is RenamedAction) _selectAfterLoad = path;
+                _ = ReloadAsync();
+                return;
+            case UndoOutcome.Blocked:
+                var target = Path.GetFileName(Path.TrimEndingDirectorySeparator(result.Path ?? ""));
+                var key = result.Block switch
+                {
+                    UndoBlock.NameTaken => "BrowseUndoNameTaken",
+                    UndoBlock.NotEmpty => "BrowseUndoNotEmpty",
+                    _ => "BrowseUndoMissing",
+                };
+                SetMessage(() => Loc.Get(key, target));
+                return;
+            default:
+                var error = result.Error?.Message ?? "";
+                SetMessage(() => $"{Loc.Get("BrowseUndoFailed")}: {error}");
+                return;
+        }
+    }
+
+    // ---- column resizing ----
+
+    /// <summary>
+    /// A column is resized by dragging its left edge. The pointer is measured against the
+    /// header row (which does not move), not the grip (which moves with the column).
+    /// </summary>
+    private static void SetupColumnGrip(Border grip, BrowseColumn column)
+    {
+        double startX = 0, startWidth = 0;
+        var dragging = false;
+        var model = BrowseColumnsModel.Instance;
+
+        grip.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(grip).Properties.IsLeftButtonPressed || grip.Parent is not Visual header) return;
+            dragging = true;
+            startX = e.GetPosition(header).X;
+            startWidth = model.WidthOf(column);
+            e.Pointer.Capture(grip);
+            e.Handled = true;
+        };
+        grip.PointerMoved += (_, e) =>
+        {
+            if (!dragging || grip.Parent is not Visual header) return;
+            model.SetWidth(column, startWidth - (e.GetPosition(header).X - startX));
+            e.Handled = true;
+        };
+        grip.PointerReleased += (_, e) =>
+        {
+            if (!dragging) return;
+            dragging = false;
+            e.Pointer.Capture(null);
+            model.Save();
+            e.Handled = true;
+        };
+        grip.PointerCaptureLost += (_, _) => dragging = false;
+        grip.DoubleTapped += (_, e) =>
+        {
+            model.Reset(column); // back to the default width
+            e.Handled = true;
+        };
     }
 
     // ---- inline rename ----
@@ -1486,6 +1717,7 @@ public partial class BrowseView : UserControl
         switch (result.Outcome)
         {
             case RenameOutcome.Renamed:
+                _undo.Push(new RenamedAction(row.FullPath, result.Path));
                 if (row.IsDirectory)
                 {
                     _history.Forget(row.FullPath);

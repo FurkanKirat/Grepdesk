@@ -18,4 +18,13 @@ public interface IPlatformShell
 
     /// <summary>Permanently deletes everything in the Recycle Bin / Trash.</summary>
     ShellActionResult EmptyTrash();
+
+    /// <summary>True where the OS has its own Properties and "Open with" dialogs that <see cref="ShowProperties"/> and <see cref="OpenWithDialog"/> can raise.</summary>
+    bool SupportsNativeDialogs => false;
+
+    /// <summary>The OS Properties dialog for a file, folder or drive.</summary>
+    ShellActionResult ShowProperties(string path) => ShellActionResult.Failure(ShellActionStatus.Unsupported);
+
+    /// <summary>The OS "choose an app to open this file with" dialog.</summary>
+    ShellActionResult OpenWithDialog(string path) => ShellActionResult.Failure(ShellActionStatus.Unsupported);
 }

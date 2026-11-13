@@ -35,6 +35,38 @@ public class AppCommandTests
     }
 
     [Fact]
+    public void Drop_flags_carry_the_sources_and_the_destination_last()
+    {
+        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "gd"));
+        var copy = AppCommand.Parse(["--copy-to", Path.Combine(root, "a.txt"), Path.Combine(root, "dest")]);
+        var move = AppCommand.Parse(["--move-to", Path.Combine(root, "a.txt"), Path.Combine(root, "dest")]);
+
+        Assert.Equal(CommandKind.Copy, copy.Kind);
+        Assert.Equal(CommandKind.Move, move.Kind);
+        Assert.True(copy.IsJob && move.IsJob);
+        Assert.Equal(Path.Combine(root, "dest"), copy.Paths[^1]);
+        Assert.Equal(2, move.Paths.Count);
+    }
+
+    [Fact]
+    public void Plain_starts_distinguish_search_folder_and_file()
+    {
+        using var dir = new TempDir();
+        var file = dir.WriteFile("note.txt", "hello");
+
+        var search = AppCommand.Parse([]);
+        var folder = AppCommand.Parse([dir.Path]);
+        var openFile = AppCommand.Parse([file]);
+
+        Assert.Equal(CommandKind.OpenSearch, search.Kind);
+        Assert.Equal(CommandKind.OpenFolder, folder.Kind);
+        Assert.Equal(CommandKind.OpenFile, openFile.Kind);
+        Assert.False(search.IsJob || folder.IsJob || openFile.IsJob);
+        Assert.Equal(dir.Path, folder.Paths.Single());
+        Assert.Equal(file, openFile.Paths.Single());
+    }
+
+    [Fact]
     public void Survives_the_pipe_round_trip()
     {
         var command = AppCommand.Parse(["--extract-here", @"D:\arşiv klasörü\a.zip"]);

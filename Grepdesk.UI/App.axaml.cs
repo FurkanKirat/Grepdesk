@@ -29,35 +29,17 @@ public class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            if (StartupCommand.IsJob)
-            {
-                // Job mode: no search window; the process lives as long as
-                // its job windows do.
-                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-                new JobDispatcher(desktop, Host).Start(StartupCommand);
-            }
-            else if (StartupCommand.Paths.FirstOrDefault(File.Exists) is { } file)
-            {
-                // A file opened with Grepdesk (its menu entry, "Open with", or
-                // Grepdesk as the file type's default app): just the viewer.
-                desktop.MainWindow = OpenStandaloneViewer(file);
-            }
-            else
-            {
-                // Explorer's "Open with Grepdesk" passes the folder as the argument.
-                var startFolder = StartupCommand.Paths.FirstOrDefault(Directory.Exists);
-                desktop.MainWindow = new MainWindow(startFolder);
-            }
-
-            // Job windows stay quiet; the next normal start reports their crashes too.
-            if (desktop.MainWindow is { } window)
-                window.Opened += (_, _) => _ = CrashHandling.ReportPreviousCrashes();
+            // Stay alive across window opens/closes (e.g. standalone viewers,
+            // job windows, or multiple browser windows); CommandDispatcher shuts
+            // the app down once the last tracked window closes.
+            desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            new CommandDispatcher(desktop, Host).Start(StartupCommand);
         }
 
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static FileViewerWindow OpenStandaloneViewer(string path)
+    internal static FileViewerWindow OpenStandaloneViewer(string path)
     {
         var shell = PlatformShellFactory.CreatePlatformShell();
         var viewer = new FileViewerWindow(standalone: true);

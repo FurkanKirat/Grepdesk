@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Grepdesk.Core.Preview;
 
 namespace Grepdesk.UI.Viewer;
 
@@ -64,6 +65,7 @@ internal sealed class ImageView : DockPanel, IViewerBody
 
         Children.Add(ViewerBar.Create(bar));
         Children.Add(_scroll);
+        AttachedToVisualTree += (_, _) => ApplyZoom(); // the screen scaling is known once attached
         ApplyZoom();
     }
 
@@ -97,6 +99,13 @@ internal sealed class ImageView : DockPanel, IViewerBody
         }
         _image.Width = Math.Max(1, size.Width * _zoom);
         _image.Height = Math.Max(1, size.Height * _zoom);
+
+        // Enlarged small images (icons, sprites) get hard pixels; smoothing would blur them.
+        var scale = _zoom * (TopLevel.GetTopLevel(this)?.RenderScaling ?? 1);
+        RenderOptions.SetBitmapInterpolationMode(_image,
+            ImageScaling.UseNearestNeighbor(_bitmap.PixelSize.Width, _bitmap.PixelSize.Height, scale)
+                ? BitmapInterpolationMode.None
+                : BitmapInterpolationMode.HighQuality);
         _zoomText.Text = $"{_zoom * 100:0}%";
     }
 

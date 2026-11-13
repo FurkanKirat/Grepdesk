@@ -24,23 +24,19 @@ class Program
 
         var command = AppCommand.Parse(args);
 
-        SingleInstanceHost? host = null;
-        if (command.IsJob)
+        var host = SingleInstanceHost.TryAcquire();
+        if (host is null)
         {
+            // Another Grepdesk is already running: hand our command over and
+            // exit before paying for Avalonia's startup.
+            if (SingleInstanceHost.TrySend(command))
+                return;
+
+            // The primary didn't answer (it may have just exited); try once
+            // more to claim the primary role ourselves.
             host = SingleInstanceHost.TryAcquire();
-            if (host is null)
-            {
-                // Another Grepdesk is collecting jobs: hand ours over and exit
-                // before paying for Avalonia's startup.
-                if (SingleInstanceHost.TrySend(command))
-                    return;
-                // The primary didn't answer (it may be shutting down); run the job ourselves.
-            }
-            else
-            {
-                host.StartListening();
-            }
         }
+        host?.StartListening();
 
         SessionTrail.Start();
         SessionTrail.Note($"command: {command.Kind}, {command.Paths.Count} path(s)");

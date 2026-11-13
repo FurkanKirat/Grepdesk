@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
 using Grepdesk.Core.Preview;
+using Grepdesk.Core.Viewer;
 using Grepdesk.UI.Helpers;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -134,7 +135,45 @@ internal sealed class DocumentPreviewProvider : IPreviewProvider
     {
         if (item.Size > MaxBytes) return PreviewContent.FromMessage(Loc.Get("PreviewTooLarge"));
 
-        ExtractorRegistry.TryGetExtractor(Path.GetExtension(item.FullPath), out var extractor);
+        var ext = Path.GetExtension(item.FullPath);
+        if (string.Equals(ext, ".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var xlsx = XlsxDocument.Load(item.FullPath, ct);
+                var tableText = xlsx.ToPlainText(maxRowsPerSheet: 60);
+                var details = new List<(string, string)> { (Loc.Get("PreviewSheets"), xlsx.Sheets.Count.ToString("N0")) };
+                if (string.IsNullOrWhiteSpace(tableText))
+                    return new PreviewContent { Message = Loc.Get("PreviewUnavailable"), Details = details };
+                return tableText.Length > MaxChars
+                    ? new PreviewContent { Text = tableText[..MaxChars], Monospace = true, Footer = Loc.Get("PreviewTruncated"), Details = details }
+                    : new PreviewContent { Text = tableText, Monospace = true, Details = details };
+            }
+            catch
+            {
+                // Fall through to generic extractor
+            }
+        }
+        else if (string.Equals(ext, ".pptx", StringComparison.OrdinalIgnoreCase) || string.Equals(ext, ".ppt", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var pptx = PptxDocument.Load(item.FullPath, ct);
+                var slideText = pptx.ToPlainText();
+                var details = new List<(string, string)> { (Loc.Get("PreviewSlides"), pptx.Slides.Count.ToString("N0")) };
+                if (string.IsNullOrWhiteSpace(slideText))
+                    return new PreviewContent { Message = Loc.Get("PreviewUnavailable"), Details = details };
+                return slideText.Length > MaxChars
+                    ? new PreviewContent { Text = slideText[..MaxChars], Footer = Loc.Get("PreviewTruncated"), Details = details }
+                    : new PreviewContent { Text = slideText, Details = details };
+            }
+            catch
+            {
+                // Fall through to generic extractor
+            }
+        }
+
+        ExtractorRegistry.TryGetExtractor(ext, out var extractor);
         var text = await extractor.ExtractTextAsync(item.FullPath, ct);
         if (string.IsNullOrWhiteSpace(text)) return PreviewContent.FromMessage(Loc.Get("PreviewFailed"));
 
@@ -151,6 +190,7 @@ internal sealed class MarkdownPreviewProvider : IPreviewProvider
     private const int MaxImages = 12;
     private const long MaxImageBytes = 20 * 1024 * 1024;
     private const int ImageWidth = 600;
+    private const long SmallImageBytes = 512 * 1024;
 
     private static readonly HashSet<string> Extensions =
         new([".md", ".markdown", ".mdown", ".mkd"], StringComparer.OrdinalIgnoreCase);
@@ -210,7 +250,11 @@ internal sealed class MarkdownPreviewProvider : IPreviewProvider
                 var info = new FileInfo(path);
                 if (!info.Exists || info.Length > MaxImageBytes) continue;
                 using var stream = info.OpenRead();
-                images[url] = Bitmap.DecodeToWidth(stream, ImageWidth, BitmapInterpolationMode.MediumQuality);
+                // Only big pictures are scaled down to the page width. DecodeToWidth would also enlarge a
+                // small one (a 16 px badge) to that width, smoothed into a blur; those keep their own size.
+                images[url] = info.Length > SmallImageBytes
+                    ? Bitmap.DecodeToWidth(stream, ImageWidth, BitmapInterpolationMode.MediumQuality)
+                    : new Bitmap(stream);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
             {

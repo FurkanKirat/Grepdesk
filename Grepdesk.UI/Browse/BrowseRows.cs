@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Grepdesk.Core.Viewer;
 using Grepdesk.Core;
 using Grepdesk.Core.Browse;
 using Grepdesk.Core.Preview;
@@ -18,6 +19,7 @@ public sealed class BrowseRow : INotifyPropertyChanged
     private FolderEntry _entry;
     private Bitmap? _icon;
     private bool _isRenaming;
+    private bool _hardPixels;
     private bool _isCut;
 
     public BrowseRow(FolderEntry entry, string? typeText = null)
@@ -59,19 +61,35 @@ public sealed class BrowseRow : INotifyPropertyChanged
     public Bitmap? Icon
     {
         get => _icon;
-        set { if (_icon != value) { _icon = value; Changed(); Changed(nameof(ShowFallbackIcon)); Changed(nameof(ShowFolderIcon)); Changed(nameof(ShowBadge)); } }
+        set { if (_icon != value) { _icon = value; Changed(); Changed(nameof(ShowFallbackIcon)); Changed(nameof(FallbackRow)); Changed(nameof(ShowFolderIcon)); Changed(nameof(ShowBadge)); } }
+    }
+
+    /// <summary>True: hard pixels for a small picture enlarged in an icon view (pixel art, icons), smoothing otherwise.</summary>
+    public bool HardPixels
+    {
+        get => _hardPixels;
+        set { if (_hardPixels != value) { _hardPixels = value; Changed(); } }
     }
 
     // Until (or unless) the shell's icon arrives, the same type badges as the search results.
     public bool ShowFallbackIcon => _icon is null;
+
+    /// <summary>This row until its picture arrives, else null: the icon views build the folder / type badge only while it is shown.</summary>
+    public BrowseRow? FallbackRow => _icon is null ? this : null;
     public bool ShowFolderIcon => _icon is null && IsDirectory;
     public bool ShowBadge => _icon is null && !IsDirectory;
 
     public bool IsRenaming
     {
         get => _isRenaming;
-        set { if (_isRenaming != value) { _isRenaming = value; Changed(); Changed(nameof(IsNotRenaming)); } }
+        set { if (_isRenaming != value) { _isRenaming = value; Changed(); Changed(nameof(IsNotRenaming)); Changed(nameof(RenamingRow)); } }
     }
+
+    /// <summary>This row while it is being renamed, else null: the list builds the (heavy) rename box only then.</summary>
+    public BrowseRow? RenamingRow => _isRenaming ? this : null;
+
+    /// <summary>A thumbnail has been asked for in the current icon view.</summary>
+    public bool ThumbnailRequested { get; set; }
     public bool IsNotRenaming => !_isRenaming;
 
     /// <summary>Cut to the clipboard: drawn faded until pasted, as in Explorer.</summary>
@@ -118,6 +136,8 @@ internal sealed class ShellIconCache(IShellIcons shell)
 
     private readonly Dictionary<string, Task<Bitmap?>> _byType = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Task<Bitmap?>> _byItem = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Task<Bitmap?>> _thumbnails = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxThumbnails = 500; // bitmaps are large; rows that are on screen hold their own
 
     /// <summary>Call on the UI thread; the task completes off it.</summary>
     public Task<Bitmap?> Get(FolderEntry entry, CancellationToken ct)
@@ -137,10 +157,51 @@ internal sealed class ShellIconCache(IShellIcons shell)
         return task;
     }
 
+    /// <summary>A thumbnail for the icon views (per file, per size). Call on the UI thread; the task completes off it.</summary>
+    public Task<Bitmap?> GetThumbnail(FolderEntry entry, int size, CancellationToken ct)
+    {
+        var key = $"{size}|{entry.Modified.Ticks}|{entry.FullPath}";
+        if (_thumbnails.TryGetValue(key, out var cached) && !cached.IsCanceled) return cached;
+        if (_thumbnails.Count > MaxThumbnails) _thumbnails.Clear();
+
+        var task = LoadThumbnail(entry.FullPath, size, ct);
+        _thumbnails[key] = task;
+        task.ContinueWith(t => { if (t.Result is null && ct.IsCancellationRequested) Forget(_thumbnails, key, task); },
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return task;
+    }
+
+    // Small picture files are decoded here, not by the shell: its thumbnail handler enlarges a
+    // 16 px sprite with smoothing, which blurs pixel art. Big photos still use the shell's (cached) thumbnails.
+    private const long OwnDecodeMaxBytes = 300 * 1024;
+
+    private async Task<Bitmap?> LoadThumbnail(string path, int size, CancellationToken ct)
+    {
+        if (ViewerFormats.ImageExtensions.Contains(Path.GetExtension(path)) && await Task.Run(() => DecodeSmallImage(path), ct).ConfigureAwait(false) is { } own)
+            return own;
+        var thumbnail = await shell.GetThumbnailAsync(path, size, ct).ConfigureAwait(false);
+        return thumbnail is null ? null : ShellPreviewProvider.ToBitmap(thumbnail);
+    }
+
     private async Task<Bitmap?> Load(string path, CancellationToken ct)
     {
         var icon = await shell.GetIconAsync(path, Size, ct).ConfigureAwait(false);
         return icon is null ? null : ShellPreviewProvider.ToBitmap(icon);
+    }
+
+    private static Bitmap? DecodeSmallImage(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length is 0 or > OwnDecodeMaxBytes) return null;
+            using var stream = info.OpenRead();
+            return new Bitmap(stream);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return null; // not decodable here: the shell gets a try
+        }
     }
 
     private static void Forget(Dictionary<string, Task<Bitmap?>> cache, string key, Task<Bitmap?> task)

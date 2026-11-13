@@ -41,6 +41,14 @@ internal sealed class AppSettings
     public Core.Browse.FolderSortColumn BrowseSortColumn { get; set; }
     public bool BrowseSortDescending { get; set; }
 
+    /// <summary>Details or icon view of the folder list: one choice for every folder.</summary>
+    public Core.Browse.FolderViewMode BrowseViewMode { get; set; }
+
+    /// <summary>Widths of the folder list's Date modified, Type and Size columns (points).</summary>
+    public double BrowseModifiedWidth { get; set; } = 140;
+    public double BrowseTypeWidth { get; set; } = 120;
+    public double BrowseSizeWidth { get; set; } = 90;
+
     /// <summary>Extensions "Open with Grepdesk" registers for, or null for the defaults.</summary>
     public List<string>? OpenWithFileTypes { get; set; }
 

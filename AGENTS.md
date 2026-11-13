@@ -6,22 +6,24 @@ Instructions and guidelines for AI coding agents working on the **Grepdesk** rep
 
 ## 1. Project Overview
 
-**Grepdesk** is a high-performance desktop file manager and utility suite built with **.NET 10 (`net10.0`)** and **Avalonia UI 11.3**. It combines folder browsing, instant file name indexing, deep content search (`.txt`, code, `.pdf`, `.docx`, `.xlsx`), disk usage analysis, space cleanup & duplicate detection, deterministic folder organization, a built-in document/media viewer & editor, and multi-core zip/copy/move engines integrated into the OS file manager.
+**Grepdesk** is a high-performance desktop file manager, standalone CLI (`grepdesk`), and utility suite built with **.NET 10 (`net10.0`)** and **Avalonia UI 11.3**. It combines folder browsing, instant file name indexing, deep content search (`.txt`, code, `.pdf`, `.docx`, `.xlsx`, `.pptx`), disk usage analysis, space cleanup & duplicate detection, deterministic folder organization, a built-in document/media viewer & editor, and multi-core zip/copy/move engines integrated into the OS file manager.
 
 ---
 
 ## 2. Build, Run & Test Commands
 
-Always verify changes by building and running the test suite before finishing a task.
+Always verify changes by building and running the test suite before finishing a task. See [docs/BUILD.md](docs/BUILD.md) for full packaging and release details.
 
 ```powershell
 # Build the entire solution
 dotnet build
 
-# Run the desktop application
+# Run the desktop application or standalone CLI
 dotnet run --project Grepdesk.UI
+dotnet run --project Grepdesk.Cli -- --help
 
 # Run unit and integration tests (fast, runs by default)
+dotnet test
 dotnet test Grepdesk.Tests
 
 # Run a single test class or method
@@ -30,13 +32,23 @@ dotnet test Grepdesk.Tests --filter "FullyQualifiedName~ZipCompressorTests"
 # Run performance guard tests (skipped unless GREPDESK_PERF=1 is set)
 $env:GREPDESK_PERF = "1"; dotnet test Grepdesk.Tests -c Release --filter Category=Performance
 
-# Run quick smoke benchmark
+# Run benchmarks (smoke run or full suite; CLI benchmark logs to %LOCALAPPDATA%\Grepdesk\benchmark.log)
 dotnet run -c Release --project Grepdesk.Benchmarks -- --scale 0.1 --rounds 1
+dotnet run --project Grepdesk.Benchmarks -c Release
+publish\win-x64\Grepdesk.UI.exe --extract-to --benchmark archive.zip
 
-# Full build, test, self-contained publish, and packaging via build CLI
+# Build CLI tool (actions: all, build, test, publish, installer, portable, clean)
 python build.py
+python build.py test
+python build.py publish --os windows        # or linux / macos
+python build.py --no-test --no-installer -c Debug
 # Or on Windows PowerShell:
 .\build.ps1
+
+# Manual self-contained publish & Inno Setup installer (Windows)
+dotnet publish Grepdesk.UI -p:PublishProfile=win-x64
+dotnet publish Grepdesk.Cli -p:PublishProfile=win-x64
+iscc setup.iss
 ```
 
 ### Linux Test Execution (via Docker on Windows)
@@ -108,17 +120,19 @@ Grepdesk.UI ──► Grepdesk.Core ◄── Grepdesk.Windows / Grepdesk.Linux 
 
 | Area | Key Files |
 | :--- | :--- |
-| **Entry Point & IPC** | `Grepdesk.UI/Program.cs`, `Startup/AppCommand.cs`, `Startup/SingleInstanceHost.cs`, `Startup/JobDispatcher.cs` |
+| **Entry Point & IPC** | `Grepdesk.UI/Program.cs`, `Startup/AppCommand.cs`, `Startup/SingleInstanceHost.cs`, `Startup/CommandDispatcher.cs`, `Startup/JobDispatcher.cs` |
 | **Settings & Localization** | `Grepdesk.UI/AppSettings.cs`, `LocalizationService.cs`, `Assets/Lang/en.json`, `Assets/Lang/tr.json` |
 | **Crash & Error Logging** | `Grepdesk.UI/CrashHandling.cs`, `ErrorLog.cs`, `SessionTrail.cs` |
-| **Folder Browser** | `Grepdesk.Core/Browse/FolderListing.cs`, `AddressResolver.cs`, `NavigationHistory.cs`, `Grepdesk.UI/Browse/BrowseView.axaml.cs` |
-| **Name & Content Search** | `Grepdesk.Core/FileIndex.cs`, `ContentSearch/ContentSearcher.cs`, `ContentSearch/ExtractorRegistry.cs`, `Grepdesk.UI/MainWindow.axaml.cs` |
+| **Folder Browser** | `Grepdesk.Core/Browse/FolderListing.cs`, `AddressResolver.cs`, `NavigationHistory.cs`, `FolderBookmarks.cs`, `BrowseColumnWidths.cs`, `FolderViewMode.cs`, `ShortcutFile.cs`, `UndoHistory.cs`, `Grepdesk.UI/Browse/BrowseView.axaml.cs`, `BrowseView.DragDrop.cs`, `BrowseView.ViewModes.cs` |
+| **Name & Content Search** | `Grepdesk.Core/FileIndex.cs`, `ContentSearch/ContentSearcher.cs`, `ContentSearch/ExtractorRegistry.cs`, `ContentSearch/PptxExtractor.cs`, `Grepdesk.UI/MainWindow.axaml.cs` |
 | **Archive Engine (Zip)** | `Grepdesk.Core/Archive/ZipCompressor.cs`, `ZipExtractor.cs`, `ZipWriter.cs` |
 | **Transfer Engine (Copy/Move)** | `Grepdesk.Core/Transfer/TransferEngine.cs`, `IFileCopier.cs`, `Grepdesk.Windows/CopyFile2Copier.cs` |
 | **Jobs & Conflict UI** | `Grepdesk.Core/Jobs/JobContext.cs`, `Conflicts.cs`, `Grepdesk.UI/Jobs/JobWindow.axaml.cs`, `JobSpecs.cs` |
 | **Disk Usage** | `Grepdesk.Core/DiskUsage/DiskAnalyzer.cs`, `DiskClassifier.cs`, `Grepdesk.UI/DiskUsage/DiskUsageView.axaml.cs` |
 | **Cleanup & Duplicates** | `Grepdesk.Core/Cleanup/CleanupAnalyzer.cs`, `CleanupExecutor.cs`, `DuplicateFinder.cs`, `Grepdesk.UI/Cleanup/CleanupView.axaml.cs` |
 | **Smart Organize** | `Grepdesk.Core/Grouping/FolderGrouper.cs`, `FolderOrganizer.cs`, `Grepdesk.UI/Organize/OrganizeView.axaml.cs` |
-| **Viewer & DOCX Editor** | `Grepdesk.Core/Viewer/DocxDocument.cs`, `DocxEditDocument.cs`, `PdfRenderer.cs`, `Grepdesk.UI/Viewer/FileViewerWindow.axaml.cs`, `DocxEditor.cs` |
+| **Viewer & Editors** | `Grepdesk.Core/Viewer/DocxDocument.cs`, `DocxEditDocument.cs`, `XlsxDocument.cs`, `PptxDocument.cs`, `PdfRenderer.cs`, `PdfPageText.cs`, `SiblingFiles.cs`, `Grepdesk.UI/Viewer/FileViewerWindow.axaml.cs`, `DocxEditor.cs`, `XlsxView.cs`, `PptxView.cs` |
+| **Standalone CLI** | `Grepdesk.Cli/Program.cs`, `CliRunner.cs`, `Commands/*` |
 | **Platform Implementations** | `Grepdesk.UI/Helpers/PlatformShellFactory.cs`, `Grepdesk.Windows/*`, `Grepdesk.Linux/*`, `Grepdesk.MacOS/*` |
+| **Build & Packaging** | `Directory.Build.props`, `build.py`, `build.ps1`, `setup.iss` |
 | **Further Documentation** | `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/BUILD.md`, `docs/CLI.md`, `docs/ROADMAP.md` |

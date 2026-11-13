@@ -15,6 +15,7 @@ public static class ExtractorRegistry
         new PlainTextExtractor(),
         new DocxExtractor(),
         new XlsxExtractor(),
+        new PptxExtractor(),
         new PdfExtractor(),
     ];
 

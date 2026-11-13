@@ -102,7 +102,7 @@ public static class CliRunner
 
             Commands:
               find <pattern>                Instant file and directory name search
-              grep <query>                  Deep content search (.txt, code, .md, .docx, .xlsx, .pdf)
+              grep <query>                  Deep content search (.txt, code, .md, .docx, .xlsx, .ppt, .pptx, .pdf)
               open <path>                   Read file/folder content in CLI, or open in Grepdesk/OS app
               zip <output.zip> <inputs...>  Multi-core parallel zip compression
               unzip <archive.zip>           Multi-core parallel zip extraction

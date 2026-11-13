@@ -126,6 +126,15 @@ public partial class MainWindow : Window
         InitAbout();
         InitUpdates();
         ApplyLanguage();
+
+        Closed += (_, _) =>
+        {
+            _indexCts.Cancel();
+            _searchCts.Cancel();
+            _contentSearchCts.Cancel();
+            _index.Dispose();
+            BrowsePage.Cleanup();
+        };
     }
 
     // =====================================================================
@@ -904,27 +913,27 @@ public partial class MainWindow : Window
 
             var menuItems = new List<Control>();
 
-            var openItem = new MenuItem { Header = Loc.Get("ContextMenuOpen"), InputGesture = new KeyGesture(Key.Enter) };
+            var openItem = new MenuItem { Header = Loc.Get("ContextMenuOpen"), Icon = MenuIcons.For("ContextMenuOpen"), InputGesture = new KeyGesture(Key.Enter) };
             openItem.Click += (_, _) =>
             {
                 var result = _shell.OpenPath(item.Result.FullPath);
                 ReportShellResult(result, Loc.Get("FileOpenFailed"));
             };
 
-            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder"), InputGesture = new KeyGesture(Key.Enter, KeyModifiers.Control) };
+            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder"), Icon = MenuIcons.For("ContextMenuShowInFolder"), InputGesture = new KeyGesture(Key.Enter, KeyModifiers.Control) };
             showItem.Click += (_, _) =>
             {
                 var result = _shell.ShowInFileManager(item.Result.FullPath);
                 ReportShellResult(result, Loc.Get("ShowInFolderFailed"));
             };
 
-            var copyItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control) };
+            var copyItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control) };
             copyItem.Click += async (_, _) => await CopyPathAsync(item);
 
-            var copyFileItem = new MenuItem { Header = Loc.Get("ContextMenuCopyFile"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift) };
+            var copyFileItem = new MenuItem { Header = Loc.Get("ContextMenuCopyFile"), Icon = MenuIcons.For("ContextMenuCopyFile"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift) };
             copyFileItem.Click += async (_, _) => await CopyFileAsync(item);
 
-            var terminalItem = new MenuItem { Header = Loc.Get("ContextMenuOpenInTerminal") };
+            var terminalItem = new MenuItem { Header = Loc.Get("ContextMenuOpenInTerminal"), Icon = MenuIcons.For("ContextMenuOpenInTerminal") };
             terminalItem.Click += (_, _) =>
             {
                 var res = item.Result;
@@ -935,7 +944,7 @@ public partial class MainWindow : Window
             menuItems.Add(openItem);
             if (!item.IsDirectory)
             {
-                var viewItem = new MenuItem { Header = Loc.Get("ContextMenuView"), InputGesture = new KeyGesture(Key.Space) };
+                var viewItem = new MenuItem { Header = Loc.Get("ContextMenuView"), Icon = MenuIcons.For("ContextMenuView"), InputGesture = new KeyGesture(Key.Space) };
                 viewItem.Click += (_, _) => ViewFile(item, list == ContentResultsList ? _contentQuery : null);
                 menuItems.Add(viewItem);
             }
@@ -957,12 +966,12 @@ public partial class MainWindow : Window
 
             if (item.IsDirectory)
             {
-                var organizeItem = new MenuItem { Header = Loc.Get("ContextMenuOrganize") };
+                var organizeItem = new MenuItem { Header = Loc.Get("ContextMenuOrganize"), Icon = MenuIcons.For("ContextMenuOrganize") };
                 organizeItem.Click += async (_, _) => await OpenOrganizeAsync(item.FullPath);
                 menuItems.Add(organizeItem);
             }
 
-            var trashItem = new MenuItem { Header = Loc.Get("ContextMenuMoveToTrash"), InputGesture = new KeyGesture(Key.Delete) };
+            var trashItem = new MenuItem { Header = Loc.Get("ContextMenuMoveToTrash"), Icon = MenuIcons.For("ContextMenuMoveToTrash"), InputGesture = new KeyGesture(Key.Delete) };
             trashItem.Click += async (_, _) => await MoveToTrashAsync(item);
             menuItems.Add(trashItem);
 
@@ -975,7 +984,7 @@ public partial class MainWindow : Window
                     if (!EditorTargetResolver.IsCompatible(editor, item.Result.FullPath))
                         continue;
 
-                    var editorItem = new MenuItem { Header = editor.Header };
+                    var editorItem = new MenuItem { Header = editor.Header, Icon = MenuIcons.For("Editor") };
                     editorItem.Click += (_, _) =>
                     {
                         var result = _shell.OpenInEditor(editor, item.Result.FullPath);
@@ -1006,7 +1015,7 @@ public partial class MainWindow : Window
 
     private MenuItem JobMenuItem(string labelKey, string flag, string path)
     {
-        var menuItem = new MenuItem { Header = Loc.Get(labelKey) };
+        var menuItem = new MenuItem { Header = Loc.Get(labelKey), Icon = MenuIcons.For(labelKey) };
         menuItem.Click += (_, _) => StartJob(flag, path);
         return menuItem;
     }

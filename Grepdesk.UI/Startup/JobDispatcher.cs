@@ -1,15 +1,13 @@
-using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using Grepdesk.UI.Jobs;
 
 namespace Grepdesk.UI.Startup;
 
 /// <summary>
-/// Runs in the primary process. Collects commands of the same kind that
-/// arrive close together (one per selected file, from Explorer) into a single
-/// job window, and shuts the process down when the last job window closes.
+/// Collects Explorer shell-extension job commands of the same kind that arrive
+/// close together (one per selected file) into a single job window.
 /// </summary>
-internal sealed class JobDispatcher(IClassicDesktopStyleApplicationLifetime desktop, SingleInstanceHost? host)
+internal sealed class JobDispatcher(Action<JobWindow> openWindow)
 {
     // Explorer starts the processes almost at once, but each needs ~100 ms of
     // .NET startup before it can connect; wait until arrivals go quiet.
@@ -27,30 +25,23 @@ internal sealed class JobDispatcher(IClassicDesktopStyleApplicationLifetime desk
 
     private readonly Dictionary<CommandKind, PendingBatch> _pending = [];
     private readonly DispatcherTimer _flushTimer = new() { Interval = TimeSpan.FromMilliseconds(50) };
-    private int _openWindows;
+    private bool _tickWired;
 
-    public void Start(AppCommand first)
-    {
-        _flushTimer.Tick += (_, _) => FlushDueBatches();
-        Add(first);
+    public bool HasPending => _pending.Count > 0;
 
-        if (host is not null)
-            _ = PumpAsync(host);
-    }
-
-    private async Task PumpAsync(SingleInstanceHost source)
-    {
-        await foreach (var command in source.Commands.ReadAllAsync())
-            Dispatcher.UIThread.Post(() => Add(command));
-    }
-
-    private void Add(AppCommand command)
+    public void Enqueue(AppCommand command)
     {
         if (!command.IsJob)
             return;
 
-        // Every paste has its own destination; never merge them.
-        if (command.Kind == CommandKind.Paste)
+        if (!_tickWired)
+        {
+            _flushTimer.Tick += (_, _) => FlushDueBatches();
+            _tickWired = true;
+        }
+
+        // Every paste or drop has its own destination; never merge them.
+        if (command.Kind is CommandKind.Paste or CommandKind.Copy or CommandKind.Move)
         {
             Open(command);
             return;
@@ -87,44 +78,5 @@ internal sealed class JobDispatcher(IClassicDesktopStyleApplicationLifetime desk
             _flushTimer.Stop();
     }
 
-    private void Open(AppCommand command)
-    {
-        var window = new JobWindow(JobSpecs.From(command));
-        _openWindows++;
-        window.Closed += (_, _) =>
-        {
-            _openWindows--;
-            ShutdownIfIdle();
-        };
-        window.Show();
-    }
-
-    private void ShutdownIfIdle()
-    {
-        if (_openWindows > 0 || _pending.Count > 0)
-            return;
-
-        if (host is not null)
-        {
-            // Release the pipe first so a click arriving now starts a new
-            // primary, then pick up anything that slipped in just before.
-            host.StopAccepting();
-            var any = false;
-            while (host.Commands.TryRead(out var late))
-            {
-                Add(late);
-                any = true;
-            }
-            if (any)
-                return;
-        }
-
-        // Low priority: a command the pump already posted runs first and
-        // opens its window, and then we are no longer idle.
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (_openWindows == 0 && _pending.Count == 0)
-                desktop.Shutdown();
-        }, DispatcherPriority.Background);
-    }
+    private void Open(AppCommand command) => openWindow(new JobWindow(JobSpecs.From(command)));
 }

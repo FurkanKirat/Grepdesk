@@ -7,6 +7,7 @@ using Grepdesk.Core.Browse;
 using Grepdesk.Core.ContentSearch;
 using Grepdesk.Core.Editor;
 using Grepdesk.Core.Grouping;
+using Grepdesk.Core.Viewer;
 using UglyToad.PdfPig;
 
 namespace Grepdesk.Cli.Commands;
@@ -336,6 +337,27 @@ internal static class OpenCommand
 
             (totalPages, pdfPages, content) = pdfResult.Value;
         }
+        else if (string.Equals(ext, ".pptx", StringComparison.OrdinalIgnoreCase) || string.Equals(ext, ".ppt", StringComparison.OrdinalIgnoreCase))
+        {
+            var pptxResult = ExtractPptxSlides(fullPath, pageRange, ct);
+            if (pptxResult is null)
+                return Fail(stderr, $"Unable to extract text from PowerPoint presentation: {fullPath}");
+
+            (totalPages, pdfPages, content) = pptxResult.Value;
+        }
+        else if (string.Equals(ext, ".xlsx", StringComparison.OrdinalIgnoreCase) && pageRange.HasValue)
+        {
+            try
+            {
+                var xlsx = XlsxDocument.Load(fullPath, ct);
+                totalPages = xlsx.Sheets.Count;
+                content = xlsx.ToPlainText(sheetRange: pageRange);
+            }
+            catch
+            {
+                return Fail(stderr, $"Unable to extract text from XLSX workbook: {fullPath}");
+            }
+        }
         else if (ExtractorRegistry.TryGetExtractor(ext, out var extractor) && extractor is not PlainTextExtractor)
         {
             var extracted = await extractor.ExtractTextAsync(fullPath, ct);
@@ -417,6 +439,36 @@ internal static class OpenCommand
             }
 
             return (totalPages, pages, sb.ToString());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static (int TotalSlides, List<PdfPageDto> Slides, string CombinedText)? ExtractPptxSlides(
+        string fullPath,
+        (int Start, int End)? slideRange,
+        CancellationToken ct)
+    {
+        try
+        {
+            var pptx = PptxDocument.Load(fullPath, ct);
+            var totalSlides = pptx.Slides.Count;
+            var startSlide = slideRange?.Start ?? 1;
+            var endSlide = slideRange.HasValue ? Math.Min(totalSlides, slideRange.Value.End) : totalSlides;
+
+            var slides = new List<PdfPageDto>();
+            for (var s = startSlide; s <= endSlide && s <= totalSlides; s++)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (s < 1) continue;
+                var slideText = pptx.ToPlainText(slideRange: (s, s));
+                slides.Add(new PdfPageDto(s, slideText));
+            }
+
+            var combined = pptx.ToPlainText(slideRange: slideRange);
+            return (totalSlides, slides, combined);
         }
         catch
         {
@@ -560,7 +612,7 @@ internal static class OpenCommand
             Aliases: cat, read, view
 
             Outputs file or directory contents in the CLI by default (including extracted
-            text from .pdf, .docx, and .xlsx), or opens the path in Grepdesk UI or the OS
+            text from .pdf, .docx, .xlsx, .ppt, and .pptx), or opens the path in Grepdesk UI or the OS
             default application.
 
             CLI Output Options:

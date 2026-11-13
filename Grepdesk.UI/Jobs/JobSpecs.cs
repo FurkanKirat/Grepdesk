@@ -26,6 +26,7 @@ public static class JobSpecs
         CommandKind.ExtractHere or CommandKind.ExtractTo => Extract(command),
         CommandKind.Compress => Compress(command),
         CommandKind.Paste => Paste(command),
+        CommandKind.Copy or CommandKind.Move => Drop(command),
         _ => throw new ArgumentOutOfRangeException(nameof(command), command.Kind, null)
     };
 
@@ -74,6 +75,27 @@ public static class JobSpecs
 
             var workers = WorkerPolicy.Compression(Drives.GetKind(command.Paths[0]), Drives.GetKind(archive));
             await ZipCompressor.CompressAsync(command.Paths, archive, CompressionLevel.Optimal, ctx, workers);
+        }, command.Benchmark);
+    }
+
+    /// <summary>A drag and drop: the sources are every path but the last, which is the destination folder.</summary>
+    private static JobSpec Drop(AppCommand command)
+    {
+        var move = command.Kind == CommandKind.Move;
+        var destination = command.Paths.Count > 0 ? command.Paths[^1] : Environment.CurrentDirectory;
+        var sources = command.Paths.Take(Math.Max(0, command.Paths.Count - 1)).ToList();
+        var title = Loc.Get(move ? "JobMoving" : "JobCopying", sources.Count == 0 ? destination : Subject(sources, "JobManyItems"));
+
+        return new JobSpec(command.Kind, title, async ctx =>
+        {
+            if (sources.Count == 0)
+            {
+                ctx.ReportError(destination, JobErrorKind.Io, Loc.Get("JobClipboardEmpty"));
+                return;
+            }
+            var workers = WorkerPolicy.FileOperations(Drives.GetKind(sources[0]), Drives.GetKind(destination));
+            var engine = new TransferEngine(PlatformShellFactory.CreateFileCopier());
+            await engine.RunAsync(sources, destination, move, ctx, workers);
         }, command.Benchmark);
     }
 

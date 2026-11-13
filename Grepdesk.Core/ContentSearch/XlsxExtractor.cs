@@ -1,24 +1,17 @@
 using System.Collections.Generic;
-using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Grepdesk.Core.Viewer;
 
 namespace Grepdesk.Core.ContentSearch;
 
 /// <summary>
-/// .xlsx is also a zip archive. Cell text mostly lives in xl/sharedStrings.xml
-/// (deduplicated string table); numeric/formula cells live inline in each sheet
-/// xml but we mainly care about text search, so shared strings covers the
-/// common case. No external NuGet package required.
-///
-/// A single shared-string entry can be split into multiple &lt;r&gt; (rich
-/// text) runs — e.g. if only part of a cell's text is bold. Concatenating
-/// &lt;t&gt; node values directly (rather than a naive tag-strip-with-space)
-/// avoids inserting a stray space in the middle of a word at a run boundary.
+/// Extracts structured rows and cells from Excel (.xlsx) workbooks in sheet order,
+/// resolving shared strings, inline strings, numbers, dates, and formulas.
 /// </summary>
 public class XlsxExtractor : IContentExtractor
 {
@@ -26,6 +19,18 @@ public class XlsxExtractor : IContentExtractor
 
     public Task<string?> ExtractTextAsync(string path, CancellationToken ct) => Task.Run(() =>
     {
+        try
+        {
+            var doc = XlsxDocument.Load(path, ct);
+            var text = doc.ToPlainText();
+            if (!string.IsNullOrWhiteSpace(text))
+                return text;
+        }
+        catch
+        {
+            // Fall back to raw XML extraction if workbook structure is incomplete.
+        }
+
         try
         {
             using var archive = ZipFile.OpenRead(path);
@@ -36,7 +41,6 @@ public class XlsxExtractor : IContentExtractor
             if (sharedStrings is not null && TryExtractSharedStrings(sharedStrings, sb))
                 any = true;
 
-            // Also sweep sheet XML for inline strings/values not in the shared table.
             foreach (var sheetEntry in archive.Entries.Where(e =>
                          e.FullName.StartsWith("xl/worksheets/") && e.FullName.EndsWith(".xml")))
             {
@@ -53,10 +57,6 @@ public class XlsxExtractor : IContentExtractor
         }
     }, ct);
 
-    // sharedStrings.xml structure: <sst><si><t>text</t></si> or, for rich text,
-    // <si><r><t>part one</t></r><r><t>part two</t></r></si> — each <si> is one
-    // logical string, so its runs concatenate with nothing between them, and
-    // each <si> is separated from the next by a space (they're distinct cells).
     private static bool TryExtractSharedStrings(ZipArchiveEntry entry, StringBuilder sb)
     {
         try
@@ -81,8 +81,6 @@ public class XlsxExtractor : IContentExtractor
         }
     }
 
-    // Worksheet XML: each <c> (cell) may contain an inline <is><t>text</t></is>
-    // or a numeric <v>. We only care about text here for search purposes.
     private static bool TryExtractSheetText(ZipArchiveEntry entry, StringBuilder sb)
     {
         try
@@ -107,4 +105,3 @@ public class XlsxExtractor : IContentExtractor
         }
     }
 }
-
