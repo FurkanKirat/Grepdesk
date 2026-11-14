@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Media.Immutable;
+using Grepdesk.Core.Viewer;
 using Markdig;
 using Markdig.Extensions.Tables;
 using Markdig.Extensions.TaskLists;
@@ -44,6 +45,8 @@ internal static class MarkdownView
     private static readonly IBrush RuleBrush = Brush.Parse("#45475a");
     private static readonly IBrush HighlightBackground = new ImmutableSolidColorBrush(Color.Parse("#f9e2af"), 0.25);
     private static readonly IBrush HighlightForeground = Brush.Parse("#f9e2af");
+    private static readonly IBrush ActiveHighlightBackground = new ImmutableSolidColorBrush(Color.Parse("#f9e2af"), 0.78);
+    private static readonly IBrush ActiveHighlightForeground = Brush.Parse("#11111b");
 
     private const double BodySize = 12.5;
     private static readonly double[] HeadingSizes = [20, 17, 15, 13.5, 12.5, 12.5];
@@ -83,20 +86,30 @@ internal static class MarkdownView
     /// <param name="highlight">Text to mark (the content search query), or null.</param>
     /// <param name="open">Called with a web address or a local path when a link is clicked.</param>
     /// <param name="reveal">Called with a local path that would run a program, to show it instead.</param>
-    public static Control Build(MarkdownPreview markdown, string? highlight, Action<string> open, Action<string> reveal)
+    public static Control Build(MarkdownPreview markdown, string? highlight, Action<string> open, Action<string> reveal) =>
+        BuildSearchable(markdown, highlight, open, reveal).Root;
+
+    /// <summary>Builds a rendered Markdown control tree with support for interactive in-document search.</summary>
+    public static MarkdownDocumentView BuildSearchable(MarkdownPreview markdown, string? highlight, Action<string> open, Action<string> reveal)
     {
-        var context = new Context(markdown, string.IsNullOrEmpty(highlight) ? null : highlight, open, reveal);
+        var normalizedHighlight = string.IsNullOrEmpty(highlight) ? null : highlight;
+        var context = new Context(markdown, normalizedHighlight, open, reveal);
         var root = new StackPanel { Spacing = 10 };
         context.AddBlocks(markdown.Document, root, listDepth: 0);
-        return root;
+        return new MarkdownDocumentView(root, context.Entries, normalizedHighlight);
     }
 
     private sealed record LinkSpan(int Start, int End, string Url);
 
-    private readonly record struct Style(bool Bold = false, bool Italic = false, bool Strike = false, bool Code = false, string? Link = null);
+    internal readonly record struct Style(bool Bold = false, bool Italic = false, bool Strike = false, bool Code = false, string? Link = null);
+
+    internal readonly record struct Piece(int Start, int End, string Text, Style Style);
+
+    internal sealed record TextEntry(SelectableTextBlock Block, Piece[] Pieces, string PlainText);
 
     private sealed class Context(MarkdownPreview markdown, string? highlight, Action<string> open, Action<string> reveal)
     {
+        public List<TextEntry> Entries { get; } = [];
         // ── Blocks ──────────────────────────────────────────────────────────
 
         public void AddBlocks(ContainerBlock container, Panel target, int listDepth)
@@ -367,47 +380,62 @@ internal static class MarkdownView
         {
             var inlines = new InlineCollection();
             var links = new List<LinkSpan>();
+            var recordedPieces = new List<Piece>();
+            var plain = new System.Text.StringBuilder();
             var offset = 0;
 
             foreach (var (text, style) in pieces)
             {
                 if (text.Length == 0) continue;
-                foreach (var (part, marked) in SplitHighlight(text))
-                {
-                    var run = new Run(part);
-                    if (style.Bold) run.FontWeight = FontWeight.SemiBold;
-                    if (style.Italic) run.FontStyle = FontStyle.Italic;
-                    if (style.Strike) run.TextDecorations = TextDecorations.Strikethrough;
-                    if (style.Code)
-                    {
-                        run.FontFamily = PreviewPane.Monospace;
-                        run.FontSize = block.FontSize - 1;
-                        run.Foreground = CodeBrush;
-                        run.Background = CodeBackground;
-                    }
-                    if (style.Link is not null)
-                    {
-                        run.Foreground = LinkBrush;
-                        run.TextDecorations = TextDecorations.Underline;
-                    }
-                    if (marked)
-                    {
-                        run.Background = HighlightBackground;
-                        run.Foreground = HighlightForeground;
-                        run.FontWeight = FontWeight.Bold;
-                    }
-                    inlines.Add(run);
-                }
+                recordedPieces.Add(new Piece(offset, offset + text.Length, text, style));
+                plain.Append(text);
+                foreach (var (part, marked) in SplitHighlight(text, highlight))
+                    inlines.Add(MakeRun(part, style, block.FontSize, marked ? 1 : 0));
 
                 if (style.Link is not null) links.Add(new LinkSpan(offset, offset + text.Length, style.Link));
                 offset += text.Length;
             }
 
             block.Inlines = inlines;
+            if (recordedPieces.Count > 0)
+                Entries.Add(new TextEntry(block, [.. recordedPieces], plain.ToString()));
             if (links.Count > 0) AttachLinks(block, links);
         }
 
-        private IEnumerable<(string Text, bool Marked)> SplitHighlight(string text)
+        internal static Run MakeRun(string text, Style style, double blockFontSize, int highlightState)
+        {
+            var run = new Run(text);
+            if (style.Bold) run.FontWeight = FontWeight.SemiBold;
+            if (style.Italic) run.FontStyle = FontStyle.Italic;
+            if (style.Strike) run.TextDecorations = TextDecorations.Strikethrough;
+            if (style.Code)
+            {
+                run.FontFamily = PreviewPane.Monospace;
+                run.FontSize = blockFontSize - 1;
+                run.Foreground = CodeBrush;
+                run.Background = CodeBackground;
+            }
+            if (style.Link is not null)
+            {
+                run.Foreground = LinkBrush;
+                run.TextDecorations = TextDecorations.Underline;
+            }
+            if (highlightState == 1)
+            {
+                run.Background = HighlightBackground;
+                run.Foreground = HighlightForeground;
+                run.FontWeight = FontWeight.Bold;
+            }
+            else if (highlightState == 2)
+            {
+                run.Background = ActiveHighlightBackground;
+                run.Foreground = ActiveHighlightForeground;
+                run.FontWeight = FontWeight.Bold;
+            }
+            return run;
+        }
+
+        internal static IEnumerable<(string Text, bool Marked)> SplitHighlight(string text, string? highlight)
         {
             if (highlight is null)
             {
@@ -461,6 +489,144 @@ internal static class MarkdownView
             // A link in a document shouldn't be able to start a program with one click.
             if (RunnableExtensions.Contains(Path.GetExtension(path))) reveal(path);
             else open(path);
+        }
+    }
+
+    internal sealed class MarkdownDocumentView
+    {
+        public readonly record struct MatchLocation(SelectableTextBlock Block, int OffsetInBlock, int Length);
+
+        private readonly List<TextEntry> _entries;
+        private readonly string? _initialHighlight;
+        private readonly HashSet<int> _highlightedEntries = [];
+        private readonly List<(int EntryIndex, TextSpan Span)> _matches = [];
+        private readonly Dictionary<int, List<(int GlobalIndex, TextSpan Span)>> _matchesByEntry = new();
+        private int _activeGlobalIndex = -1;
+
+        internal MarkdownDocumentView(Control root, List<TextEntry> entries, string? initialHighlight)
+        {
+            Root = root;
+            _entries = entries;
+            _initialHighlight = initialHighlight;
+        }
+
+        public Control Root { get; }
+
+        public IReadOnlyList<MatchLocation> Find(
+            string query,
+            bool matchCase,
+            bool wholeWord,
+            bool useRegex,
+            out bool validRegex)
+        {
+            validRegex = true;
+            ClearActiveMatches(restoreInitialHighlight: string.IsNullOrEmpty(query));
+
+            if (string.IsNullOrEmpty(query))
+                return [];
+
+            var results = new List<MatchLocation>();
+            for (var i = 0; i < _entries.Count; i++)
+            {
+                var entry = _entries[i];
+                var spans = CodeEditorSearch.FindMatches(entry.PlainText, query, matchCase, wholeWord, useRegex, out validRegex);
+                if (!validRegex)
+                {
+                    ClearActiveMatches(restoreInitialHighlight: true);
+                    return [];
+                }
+                if (spans.Count == 0) continue;
+
+                var list = new List<(int GlobalIndex, TextSpan Span)>(spans.Count);
+                foreach (var span in spans)
+                {
+                    var globalIndex = _matches.Count;
+                    _matches.Add((i, span));
+                    list.Add((globalIndex, span));
+                    results.Add(new MatchLocation(entry.Block, span.Offset, span.Length));
+                }
+                _matchesByEntry[i] = list;
+                _highlightedEntries.Add(i);
+                RenderEntry(entry, list, activeGlobalIndex: -1, initialHighlight: null);
+            }
+
+            return results;
+        }
+
+        public void SetActiveMatch(int globalIndex)
+        {
+            var prevEntry = _activeGlobalIndex >= 0 && _activeGlobalIndex < _matches.Count
+                ? _matches[_activeGlobalIndex].EntryIndex
+                : -1;
+            var nextEntry = globalIndex >= 0 && globalIndex < _matches.Count
+                ? _matches[globalIndex].EntryIndex
+                : -1;
+
+            _activeGlobalIndex = globalIndex;
+
+            if (prevEntry >= 0 && prevEntry != nextEntry && _matchesByEntry.TryGetValue(prevEntry, out var prevList))
+                RenderEntry(_entries[prevEntry], prevList, _activeGlobalIndex, initialHighlight: null);
+
+            if (nextEntry >= 0 && _matchesByEntry.TryGetValue(nextEntry, out var nextList))
+                RenderEntry(_entries[nextEntry], nextList, _activeGlobalIndex, initialHighlight: null);
+        }
+
+        public void ClearSearch() => ClearActiveMatches(restoreInitialHighlight: true);
+
+        private void ClearActiveMatches(bool restoreInitialHighlight)
+        {
+            foreach (var entryIndex in _highlightedEntries)
+                RenderEntry(_entries[entryIndex], null, -1, restoreInitialHighlight ? _initialHighlight : null);
+
+            _highlightedEntries.Clear();
+            _matches.Clear();
+            _matchesByEntry.Clear();
+            _activeGlobalIndex = -1;
+        }
+
+        private static void RenderEntry(
+            TextEntry entry,
+            List<(int GlobalIndex, TextSpan Span)>? entryMatches,
+            int activeGlobalIndex,
+            string? initialHighlight)
+        {
+            var inlines = new InlineCollection();
+            var fontSize = entry.Block.FontSize;
+
+            if (entryMatches is null || entryMatches.Count == 0)
+            {
+                foreach (var piece in entry.Pieces)
+                {
+                    foreach (var (part, marked) in Context.SplitHighlight(piece.Text, initialHighlight))
+                        inlines.Add(Context.MakeRun(part, piece.Style, fontSize, marked ? 1 : 0));
+                }
+                entry.Block.Inlines = inlines;
+                return;
+            }
+
+            foreach (var piece in entry.Pieces)
+            {
+                var pos = 0;
+                foreach (var (globalIndex, span) in entryMatches)
+                {
+                    var spanEnd = span.Offset + span.Length;
+                    if (spanEnd <= piece.Start) continue;
+                    if (span.Offset >= piece.End) break;
+
+                    var localStart = Math.Max(0, span.Offset - piece.Start);
+                    var localEnd = Math.Min(piece.Text.Length, spanEnd - piece.Start);
+                    if (localStart > pos)
+                        inlines.Add(Context.MakeRun(piece.Text[pos..localStart], piece.Style, fontSize, 0));
+
+                    var state = globalIndex == activeGlobalIndex ? 2 : 1;
+                    inlines.Add(Context.MakeRun(piece.Text[localStart..localEnd], piece.Style, fontSize, state));
+                    pos = localEnd;
+                }
+                if (pos < piece.Text.Length)
+                    inlines.Add(Context.MakeRun(piece.Text[pos..], piece.Style, fontSize, 0));
+            }
+
+            entry.Block.Inlines = inlines;
         }
     }
 }

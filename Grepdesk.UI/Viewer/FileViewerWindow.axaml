@@ -80,14 +80,18 @@
     </Window.Styles>
 
     <DockPanel>
-        <!-- Header: what the file is, and the few things you can do with it -->
+        <!-- Header: navigation, file identity, and primary actions -->
         <Border DockPanel.Dock="Top"
                 Background="#181825"
                 BorderBrush="#313244"
                 BorderThickness="0,0,0,1"
-                Padding="14,10">
-            <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Spacing="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                Padding="12,8">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <Button x:Name="PrevFileButton" Content="‹" MinWidth="28" Padding="6,4" HorizontalContentAlignment="Center"/>
+                    <Button x:Name="NextFileButton" Content="›" MinWidth="28" Padding="6,4" HorizontalContentAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center" Margin="0,0,12,0">
                     <TextBlock x:Name="NameText"
                                Foreground="#cdd6f4"
                                FontSize="14"
@@ -98,66 +102,62 @@
                                FontSize="11"
                                TextTrimming="PathSegmentEllipsis"/>
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <TextBlock x:Name="StatusText"
                                Foreground="#a6e3a1"
                                FontSize="12"
                                VerticalAlignment="Center"
+                               Margin="0,0,4,0"
                                IsVisible="False"/>
-                    <Button x:Name="PrevFileButton" Content="‹" MinWidth="32" HorizontalContentAlignment="Center"/>
-                    <Button x:Name="NextFileButton" Content="›" MinWidth="32" HorizontalContentAlignment="Center"/>
-                    <Button x:Name="FindButton" IsVisible="False"/>
-                    <Button x:Name="OutlineButton" IsVisible="False"/>
-                    <Button x:Name="FormatButton" IsVisible="False"/>
                     <ToggleButton x:Name="RenderedToggle" IsVisible="False"/>
-                    <ToggleButton x:Name="WrapToggle" IsVisible="False"/>
+                    <Button x:Name="FindButton" IsVisible="False"/>
                     <ToggleButton x:Name="EditToggle" IsVisible="False"/>
                     <Button x:Name="SaveButton" Classes="primary" IsVisible="False"/>
                     <Button x:Name="OpenButton"/>
-                    <Button x:Name="ShowInFolderButton"/>
+                    <Button x:Name="MoreButton" Content="⋯" MinWidth="32" Padding="8,5" HorizontalContentAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
 
+        <!-- Find / Replace / Go to Line bar (shared by Editor and Rendered Markdown) -->
+        <Border x:Name="EditorFindBar"
+                DockPanel.Dock="Top"
+                Background="#181825"
+                BorderBrush="#313244"
+                BorderThickness="0,0,0,1"
+                Padding="12,7"
+                IsVisible="False">
+            <StackPanel Spacing="6">
+                <StackPanel x:Name="FindRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBox x:Name="FindBox" Classes="findInput" Width="250"/>
+                    <ToggleButton x:Name="MatchCaseToggle" Classes="compact" Content="Aa"/>
+                    <ToggleButton x:Name="WholeWordToggle" Classes="compact" Content="W"/>
+                    <ToggleButton x:Name="RegexToggle" Classes="compact" Content=".*"/>
+                    <TextBlock x:Name="FindCountText"
+                               Foreground="#6c7086"
+                               FontSize="11.5"
+                               MinWidth="76"
+                               VerticalAlignment="Center"
+                               Margin="4,0"/>
+                    <Button x:Name="FindPrevButton" Classes="compact" Content="↑" MinWidth="28" HorizontalContentAlignment="Center"/>
+                    <Button x:Name="FindNextButton" Classes="compact" Content="↓" MinWidth="28" HorizontalContentAlignment="Center"/>
+                    <Button x:Name="CloseFindButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
+                </StackPanel>
+                <StackPanel x:Name="ReplaceRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
+                    <TextBox x:Name="ReplaceBox" Classes="findInput" Width="250"/>
+                    <Button x:Name="ReplaceButton" Classes="compact"/>
+                    <Button x:Name="ReplaceAllButton" Classes="compact"/>
+                </StackPanel>
+                <StackPanel x:Name="GoToLineRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
+                    <TextBox x:Name="GoToLineBox" Classes="findInput" Width="170"/>
+                    <Button x:Name="GoToLineButton" Classes="primary compact"/>
+                    <Button x:Name="CloseGoToLineButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
         <Panel Background="#11111b">
             <DockPanel x:Name="EditorContainer" IsVisible="False">
-                <!-- Find / Replace / Go to Line bar -->
-                <Border x:Name="EditorFindBar"
-                        DockPanel.Dock="Top"
-                        Background="#181825"
-                        BorderBrush="#313244"
-                        BorderThickness="0,0,0,1"
-                        Padding="12,7"
-                        IsVisible="False">
-                    <StackPanel Spacing="6">
-                        <StackPanel x:Name="FindRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                            <TextBox x:Name="FindBox" Classes="findInput" Width="250"/>
-                            <ToggleButton x:Name="MatchCaseToggle" Classes="compact" Content="Aa"/>
-                            <ToggleButton x:Name="WholeWordToggle" Classes="compact" Content="W"/>
-                            <ToggleButton x:Name="RegexToggle" Classes="compact" Content=".*"/>
-                            <TextBlock x:Name="FindCountText"
-                                       Foreground="#6c7086"
-                                       FontSize="11.5"
-                                       MinWidth="76"
-                                       VerticalAlignment="Center"
-                                       Margin="4,0"/>
-                            <Button x:Name="FindPrevButton" Classes="compact" Content="↑" MinWidth="28" HorizontalContentAlignment="Center"/>
-                            <Button x:Name="FindNextButton" Classes="compact" Content="↓" MinWidth="28" HorizontalContentAlignment="Center"/>
-                            <Button x:Name="CloseFindButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
-                        </StackPanel>
-                        <StackPanel x:Name="ReplaceRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
-                            <TextBox x:Name="ReplaceBox" Classes="findInput" Width="250"/>
-                            <Button x:Name="ReplaceButton" Classes="compact"/>
-                            <Button x:Name="ReplaceAllButton" Classes="compact"/>
-                        </StackPanel>
-                        <StackPanel x:Name="GoToLineRow" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsVisible="False">
-                            <TextBox x:Name="GoToLineBox" Classes="findInput" Width="170"/>
-                            <Button x:Name="GoToLineButton" Classes="primary compact"/>
-                            <Button x:Name="CloseGoToLineButton" Classes="compact" Content="✕" MinWidth="28" HorizontalContentAlignment="Center"/>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
                 <!-- IDE bottom status bar -->
                 <Border x:Name="EditorStatusBar"
                         DockPanel.Dock="Bottom"

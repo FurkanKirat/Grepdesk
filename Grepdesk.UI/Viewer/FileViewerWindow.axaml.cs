@@ -71,6 +71,7 @@ public partial class FileViewerWindow : Window
     private CancellationTokenSource _cts = new();
     private string? _highlight;
     private MarkdownPreview? _markdown;
+    private MarkdownView.MarkdownDocumentView? _markdownView;
     private bool _markdownStale;
     private bool _preferRendered = true;
     private bool _loading;
@@ -90,6 +91,7 @@ public partial class FileViewerWindow : Window
     private bool _cachedTextDirty;
     private IReadOnlyList<CodeSymbol> _symbols = [];
     private IReadOnlyList<TextSpan> _searchMatches = [];
+    private IReadOnlyList<MarkdownView.MarkdownDocumentView.MatchLocation> _markdownMatches = [];
     private int _activeMatchIndex = -1;
 
     /// <summary>Raised with the full path when the user clicks Open / Show in folder (or a link in Markdown).</summary>
@@ -129,7 +131,6 @@ public partial class FileViewerWindow : Window
         ApplyCurrentLineColors();
         SetupEditorFeatures();
 
-        WrapToggle.IsCheckedChanged += (_, _) => Editor.WordWrap = WrapToggle.IsChecked == true;
         RenderedToggle.IsCheckedChanged += (_, _) =>
         {
             if (_loading) return;
@@ -170,7 +171,7 @@ public partial class FileViewerWindow : Window
         PrevFileButton.Click += async (_, _) => await ShowNeighborAsync(-1);
         NextFileButton.Click += async (_, _) => await ShowNeighborAsync(+1);
         OpenButton.Click += (_, _) => { if (FilePath is not null) OpenRequested?.Invoke(FilePath); };
-        ShowInFolderButton.Click += (_, _) => { if (FilePath is not null) ShowInFolderRequested?.Invoke(FilePath); };
+        MoreButton.Click += (_, _) => ShowMoreMenu(MoreButton);
 
         // Tunnel catches IDE shortcuts (Ctrl+F/H/G, Ctrl+/, F3, Esc in find bar) before AvaloniaEdit.
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -188,10 +189,7 @@ public partial class FileViewerWindow : Window
     public void ApplyLanguage()
     {
         FindButton.Content = Loc.Get("ViewerFind");
-        OutlineButton.Content = Loc.Get("ViewerOutline");
-        FormatButton.Content = Loc.Get("ViewerFormat");
         RenderedToggle.Content = Loc.Get("ViewerRendered");
-        WrapToggle.Content = Loc.Get("ViewerWrap");
         EditToggle.Content = Loc.Get("ViewerEdit");
         SaveButton.Content = Loc.Get("ViewerSave");
 
@@ -203,8 +201,6 @@ public partial class FileViewerWindow : Window
         GoToLineButton.Content = Loc.Get("ViewerGoToLineGo");
 
         ToolTip.SetTip(FindButton, "Ctrl+F");
-        ToolTip.SetTip(OutlineButton, "Ctrl+Shift+O");
-        ToolTip.SetTip(FormatButton, "Shift+Alt+F");
         ToolTip.SetTip(SaveButton, "Ctrl+S");
         ToolTip.SetTip(EditToggle, "Ctrl+E");
         ToolTip.SetTip(PrevFileButton, Loc.Get("ViewerPrevFile"));
@@ -222,7 +218,6 @@ public partial class FileViewerWindow : Window
         ToolTip.SetTip(EditorZoomButton, Loc.Get("ViewerZoomResetTip"));
 
         OpenButton.Content = Loc.Get("ContextMenuOpen");
-        ShowInFolderButton.Content = Loc.Get("ContextMenuShowInFolder");
     }
 
     /// <param name="highlight">Text to find and select (the content search query), or null.</param>
@@ -666,7 +661,7 @@ public partial class FileViewerWindow : Window
 
         SetInfo(Format.Size(size), Loc.Get("ViewerExtractedText"));
         ShowText(text, null);
-        WrapToggle.IsChecked = true;
+        Editor.WordWrap = true;
         ShowTextBody();
         Dispatcher.UIThread.Post(() => SelectHighlight(text), DispatcherPriority.Loaded);
     }
@@ -692,7 +687,6 @@ public partial class FileViewerWindow : Window
         ReinstallFoldingManager();
         RefreshCodeStructure();
         UpdateEditorStatusBar();
-        WrapToggle.IsVisible = true;
         UpdateTitle();
     }
 
@@ -737,19 +731,29 @@ public partial class FileViewerWindow : Window
             }
         }
 
-        MarkdownHost.Content = rendered
-            ? MarkdownView.Build(_markdown!, _highlight,
+        _markdownView = rendered
+            ? MarkdownView.BuildSearchable(_markdown!, _highlight,
                 open: target => OpenRequested?.Invoke(target),
                 reveal: target => ShowInFolderRequested?.Invoke(target))
             : null;
+        MarkdownHost.Content = _markdownView?.Root;
         MarkdownScroll.IsVisible = rendered;
         MarkdownScroll.Offset = default;
         EditorContainer.IsVisible = !rendered;
         FindButton.IsVisible = true;
-        OutlineButton.IsVisible = _symbols.Count > 0;
-        FormatButton.IsVisible = !rendered && _encoding is not null && CodeFormatter.CanFormat(FilePath);
-        WrapToggle.IsVisible = !rendered;
         MessagePanel.IsVisible = false;
+
+        if (EditorFindBar.IsVisible)
+        {
+            if (rendered && (ReplaceRow.IsVisible || GoToLineRow.IsVisible))
+            {
+                ReplaceRow.IsVisible = false;
+                GoToLineRow.IsVisible = false;
+                FindRow.IsVisible = true;
+            }
+            if (FindRow.IsVisible)
+                UpdateFindMatches(jumpToNearest: true);
+        }
 
         // After layout: a control that was hidden until now can't take focus yet.
         Dispatcher.UIThread.Post(() =>
@@ -1108,8 +1112,10 @@ public partial class FileViewerWindow : Window
         Editor.IsReadOnly = true;
         EditorFindBar.IsVisible = false;
         SymbolCrumbButton.IsVisible = false;
-        EditorContainer.IsVisible = MarkdownScroll.IsVisible = RenderedToggle.IsVisible = WrapToggle.IsVisible = false;
-        FindButton.IsVisible = OutlineButton.IsVisible = FormatButton.IsVisible = false;
+        _markdownView = null;
+        _markdownMatches = [];
+        EditorContainer.IsVisible = MarkdownScroll.IsVisible = RenderedToggle.IsVisible = false;
+        FindButton.IsVisible = false;
         EditToggle.IsVisible = SaveButton.IsVisible = false;
         MessageDetails.ItemsSource = null;
     }
@@ -1136,8 +1142,6 @@ public partial class FileViewerWindow : Window
         Editor.AddHandler(PointerWheelChangedEvent, OnEditorPointerWheelChanged, RoutingStrategies.Tunnel);
 
         FindButton.Click += (_, _) => OpenFindBar(replace: false, goToLine: false);
-        OutlineButton.Click += (_, _) => ShowOutlineMenu(OutlineButton);
-        FormatButton.Click += (_, _) => FormatDocument();
 
         FindBox.TextChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
         MatchCaseToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
@@ -1236,7 +1240,6 @@ public partial class FileViewerWindow : Window
         }
 
         _symbols = CodeSymbolExtractor.ExtractSymbols(text, ext);
-        OutlineButton.IsVisible = _symbols.Count > 0;
         UpdateSymbolCrumb();
     }
 
@@ -1301,21 +1304,22 @@ public partial class FileViewerWindow : Window
 
     private void OpenFindBar(bool replace, bool goToLine)
     {
-        if (_markdown is not null && RenderedToggle.IsChecked == true)
+        if ((replace || goToLine) && _markdown is not null && RenderedToggle.IsChecked == true)
             RenderedToggle.IsChecked = false;
-        if (!EditorContainer.IsVisible) return;
+        if (!EditorContainer.IsVisible && !MarkdownScroll.IsVisible) return;
 
-        if (replace && EditToggle.IsVisible && !IsEditing)
+        var inRenderedMarkdown = MarkdownScroll.IsVisible;
+        if (replace && !inRenderedMarkdown && EditToggle.IsVisible && !IsEditing)
             EditToggle.IsChecked = true;
 
         EditorFindBar.IsVisible = true;
-        GoToLineRow.IsVisible = goToLine;
-        FindRow.IsVisible = !goToLine;
-        ReplaceRow.IsVisible = !goToLine && replace && EditToggle.IsVisible;
+        GoToLineRow.IsVisible = goToLine && !inRenderedMarkdown;
+        FindRow.IsVisible = !GoToLineRow.IsVisible;
+        ReplaceRow.IsVisible = !inRenderedMarkdown && !goToLine && replace && EditToggle.IsVisible;
         ReplaceButton.IsEnabled = IsEditing;
         ReplaceAllButton.IsEnabled = IsEditing;
 
-        if (goToLine)
+        if (GoToLineRow.IsVisible)
         {
             GoToLineBox.Text = Editor.TextArea.Caret.Line.ToString(CultureInfo.InvariantCulture);
             Dispatcher.UIThread.Post(() =>
@@ -1326,11 +1330,15 @@ public partial class FileViewerWindow : Window
             return;
         }
 
-        if (Editor.SelectionLength is > 0 and <= 200)
+        if (!inRenderedMarkdown && Editor.SelectionLength is > 0 and <= 200)
         {
             var selected = Editor.SelectedText;
             if (!selected.Contains('\n') && !selected.Contains('\r'))
                 FindBox.Text = selected;
+        }
+        else if (inRenderedMarkdown && string.IsNullOrEmpty(FindBox.Text) && !string.IsNullOrEmpty(_highlight))
+        {
+            FindBox.Text = _highlight;
         }
 
         UpdateFindMatches(jumpToNearest: true);
@@ -1345,11 +1353,14 @@ public partial class FileViewerWindow : Window
     {
         EditorFindBar.IsVisible = false;
         _searchMatches = [];
+        _markdownMatches = [];
         _activeMatchIndex = -1;
         FindCountText.Text = "";
         FindBox.Classes.Set("invalid", false);
         _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
-        Editor.TextArea.Focus();
+        _markdownView?.ClearSearch();
+        if (MarkdownScroll.IsVisible) MarkdownScroll.Focus();
+        else Editor.TextArea.Focus();
     }
 
     private void UpdateFindMatches(bool jumpToNearest)
@@ -1359,6 +1370,36 @@ public partial class FileViewerWindow : Window
         var wholeWord = WholeWordToggle.IsChecked == true;
         var useRegex = RegexToggle.IsChecked == true;
 
+        if (MarkdownScroll.IsVisible && _markdownView is not null)
+        {
+            _searchMatches = [];
+            _markdownMatches = _markdownView.Find(query, matchCase, wholeWord, useRegex, out var validMdRegex);
+            FindBox.Classes.Set("invalid", !validMdRegex);
+
+            if (query.Length == 0 || !validMdRegex)
+            {
+                _activeMatchIndex = -1;
+                FindCountText.Text = "";
+                return;
+            }
+
+            if (_markdownMatches.Count == 0)
+            {
+                _activeMatchIndex = -1;
+                FindCountText.Text = Loc.Get("ViewerFindNoMatches");
+                return;
+            }
+
+            if (jumpToNearest || _activeMatchIndex >= _markdownMatches.Count || _activeMatchIndex < 0)
+                _activeMatchIndex = 0;
+
+            FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _markdownMatches.Count);
+            _markdownView.SetActiveMatch(_activeMatchIndex);
+            if (jumpToNearest) ScrollMarkdownToMatch(_activeMatchIndex);
+            return;
+        }
+
+        _markdownMatches = [];
         _searchMatches = CodeEditorSearch.FindMatches(
             GetEditorText(), query, matchCase, wholeWord, useRegex, out var validRegex);
 
@@ -1392,6 +1433,19 @@ public partial class FileViewerWindow : Window
 
     private void StepSearchMatch(bool backward)
     {
+        if (MarkdownScroll.IsVisible && _markdownView is not null)
+        {
+            if (_markdownMatches.Count == 0) return;
+            _activeMatchIndex = _activeMatchIndex < 0
+                ? (backward ? _markdownMatches.Count - 1 : 0)
+                : (_activeMatchIndex + (backward ? -1 : 1) + _markdownMatches.Count) % _markdownMatches.Count;
+
+            FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _markdownMatches.Count);
+            _markdownView.SetActiveMatch(_activeMatchIndex);
+            ScrollMarkdownToMatch(_activeMatchIndex);
+            return;
+        }
+
         if (_searchMatches.Count == 0) return;
         var caretOffset = backward ? Editor.SelectionStart : Editor.SelectionStart + Editor.SelectionLength;
         _activeMatchIndex = CodeEditorSearch.FindMatchIndex(_searchMatches, caretOffset, backward);
@@ -1400,6 +1454,25 @@ public partial class FileViewerWindow : Window
         FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _searchMatches.Count);
         _highlighter.SetMatches(Editor.TextArea.TextView, _searchMatches, _activeMatchIndex);
         SelectSearchMatch(_activeMatchIndex);
+    }
+
+    private void ScrollMarkdownToMatch(int index)
+    {
+        if (index < 0 || index >= _markdownMatches.Count) return;
+        var match = _markdownMatches[index];
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!MarkdownScroll.IsVisible) return;
+            if (match.Block.TranslatePoint(new Point(0, 0), MarkdownHost) is not { } origin) return;
+            var charRect = match.Block.TextLayout.HitTestTextPosition(match.OffsetInBlock);
+            var targetTop = origin.Y + charRect.Y;
+            var targetBottom = targetTop + charRect.Height;
+            var viewTop = MarkdownScroll.Offset.Y;
+            var viewHeight = MarkdownScroll.Viewport.Height;
+            if (viewHeight <= 0) return;
+            if (targetTop < viewTop + 20 || targetBottom > viewTop + viewHeight - 20)
+                MarkdownScroll.Offset = new Vector(MarkdownScroll.Offset.X, Math.Max(0, targetTop - viewHeight / 3));
+        }, DispatcherPriority.Background);
     }
 
     private void SelectSearchMatch(int index)
@@ -1569,6 +1642,40 @@ public partial class FileViewerWindow : Window
         new ContextMenu { ItemsSource = items }.Open(anchor);
     }
 
+    private void ShowMoreMenu(Control anchor)
+    {
+        var items = new List<Control>();
+        if (_symbols.Count > 0)
+        {
+            var outlineItem = new MenuItem { Header = $"{Loc.Get("ViewerOutline")}  (Ctrl+Shift+O)" };
+            outlineItem.Click += (_, _) => ShowOutlineMenu(anchor);
+            items.Add(outlineItem);
+        }
+        if (EditorContainer.IsVisible && _encoding is not null && CodeFormatter.CanFormat(FilePath))
+        {
+            var formatItem = new MenuItem { Header = $"{Loc.Get("ViewerFormat")}  (Shift+Alt+F)" };
+            formatItem.Click += (_, _) => FormatDocument();
+            items.Add(formatItem);
+        }
+        if (EditorContainer.IsVisible)
+        {
+            var wrapPrefix = Editor.WordWrap ? "✓ " : "    ";
+            var wrapItem = new MenuItem { Header = wrapPrefix + Loc.Get("ViewerWrap") };
+            wrapItem.Click += (_, _) => Editor.WordWrap = !Editor.WordWrap;
+            items.Add(wrapItem);
+        }
+        if (items.Count > 0 && FilePath is not null)
+            items.Add(new Separator());
+        if (FilePath is not null)
+        {
+            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
+            showItem.Click += (_, _) => ShowInFolderRequested?.Invoke(FilePath);
+            items.Add(showItem);
+        }
+        if (items.Count > 0)
+            new ContextMenu { ItemsSource = items }.Open(anchor);
+    }
+
     private void FormatDocument()
     {
         if (FilePath is null || !CodeFormatter.CanFormat(FilePath) || _encoding is null) return;
@@ -1691,16 +1798,17 @@ public partial class FileViewerWindow : Window
             e.Handled = true;
             return;
         }
-        if (!ctrl && !alt && e.Key == Key.F3 && EditorContainer.IsVisible)
+        if (!ctrl && !alt && e.Key == Key.F3)
         {
-            if (_searchMatches.Count > 0) StepSearchMatch(backward: shift);
+            var hasMatches = MarkdownScroll.IsVisible ? _markdownMatches.Count > 0 : _searchMatches.Count > 0;
+            if (hasMatches) StepSearchMatch(backward: shift);
             else OpenFindBar(replace: false, goToLine: false);
             e.Handled = true;
             return;
         }
         if (ctrl && shift && !alt && e.Key == Key.O)
         {
-            ShowOutlineMenu(OutlineButton.IsVisible ? OutlineButton : SymbolCrumbButton);
+            ShowOutlineMenu(SymbolCrumbButton.IsVisible ? SymbolCrumbButton : MoreButton);
             e.Handled = true;
             return;
         }
