@@ -52,8 +52,28 @@ internal static class ViewerFileLoader
         byte[] bytes;
         try
         {
-            if (new FileInfo(path).Length > maxBytes) return ViewerFile.Failed(ViewerProblem.TooLarge);
-            bytes = File.ReadAllBytes(path);
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            if (stream.CanSeek && stream.Length > maxBytes)
+                return ViewerFile.Failed(ViewerProblem.TooLarge);
+
+            var capacity = stream.CanSeek && stream.Length is > 0 and <= int.MaxValue ? (int)stream.Length : 0;
+            using var ms = new MemoryStream(capacity);
+            var buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                total += read;
+                if (total > maxBytes)
+                    return ViewerFile.Failed(ViewerProblem.TooLarge);
+                ms.Write(buffer, 0, read);
+            }
+            bytes = ms.ToArray();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

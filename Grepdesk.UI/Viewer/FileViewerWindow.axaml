@@ -44,6 +44,14 @@
             <Setter Property="Background" Value="#b4befe"/>
             <Setter Property="Foreground" Value="#11111b"/>
         </Style>
+        <Style Selector="Button.warning">
+            <Setter Property="Background" Value="#f9e2af"/>
+            <Setter Property="Foreground" Value="#11111b"/>
+        </Style>
+        <Style Selector="Button.warning:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#fcecc9"/>
+            <Setter Property="Foreground" Value="#11111b"/>
+        </Style>
         <Style Selector="Button.compact, ToggleButton.compact">
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="MinHeight" Value="26"/>
@@ -115,6 +123,40 @@
                     <Button x:Name="SaveButton" Classes="primary" IsVisible="False"/>
                     <Button x:Name="OpenButton"/>
                     <Button x:Name="MoreButton" Content="⋯" MinWidth="32" Padding="8,5" HorizontalContentAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- External file change notification bar -->
+        <Border x:Name="ExternalChangeBar"
+                DockPanel.Dock="Top"
+                Background="#1d2436"
+                BorderBrush="#89b4fa"
+                BorderThickness="0,0,0,1"
+                Padding="12,8"
+                IsVisible="False">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                <PathIcon x:Name="ExternalChangeIcon"
+                          Data="{StaticResource IconRefresh}"
+                          Width="16"
+                          Height="16"
+                          Foreground="#89b4fa"
+                          VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="ExternalChangeTitle"
+                               Foreground="#cdd6f4"
+                               FontSize="12.5"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ExternalChangeDetail"
+                               Foreground="#a6adc8"
+                               FontSize="11.5"
+                               TextWrapping="Wrap"
+                               IsVisible="False"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button x:Name="ExternalReloadButton" Classes="primary compact"/>
+                    <Button x:Name="ExternalDismissButton" Classes="compact"/>
                 </StackPanel>
             </Grid>
         </Border>

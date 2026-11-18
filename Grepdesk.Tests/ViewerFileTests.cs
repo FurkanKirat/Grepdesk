@@ -196,4 +196,22 @@ public class ViewerFileTests
 
         Assert.Equal(ViewerProblem.LongLines, ViewerFileLoader.Load(path, default).Problem);
     }
+
+    [Fact]
+    public void Text_files_open_for_shared_writing_can_still_be_loaded()
+    {
+        using var dir = new TempDir();
+        var path = dir.WriteFile("live.log", "initial line\n");
+
+        using var writer = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        using var sw = new StreamWriter(writer, new UTF8Encoding(false), leaveOpen: true);
+        writer.Seek(0, SeekOrigin.End);
+        sw.Write("appended line\n");
+        sw.Flush();
+
+        var loaded = ViewerFileLoader.Load(path, default);
+
+        Assert.Equal(ViewerProblem.None, loaded.Problem);
+        Assert.Equal("initial line\nappended line\n", loaded.Text);
+    }
 }

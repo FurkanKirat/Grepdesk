@@ -64,6 +64,15 @@ public partial class FileViewerWindow : Window
         [".psd1"] = ".ps1", [".kts"] = ".kt", [".zsh"] = ".sh", [".bash"] = ".sh", [".env"] = ".ini", [".cfg"] = ".ini",
     };
 
+    private sealed record ReloadViewState(
+        bool WasEditing,
+        bool WordWrap,
+        double EditorFontSize,
+        int CaretLine,
+        int CaretColumn,
+        double MarkdownScrollY,
+        bool FindBarVisible);
+
     private readonly bool _standalone;
     private readonly TextMate.Installation _textMate;
     private readonly CodeEditorHighlighter _highlighter = new();
@@ -72,6 +81,8 @@ public partial class FileViewerWindow : Window
     private FoldingManager? _foldingManager;
     private CancellationTokenSource _cts = new();
     private CancellationTokenSource? _findCts;
+    private FileChangeTracker? _changeTracker;
+    private FileChangeKind _externalChangeKind;
     private Task? _activeFindTask;
     private bool _activeFindJumps;
     private string? _highlight;
@@ -173,10 +184,27 @@ public partial class FileViewerWindow : Window
             else if (IsEditing) Editor.TextArea.Focus();
         };
         SaveButton.Click += async (_, _) => await SaveAsync();
+        ExternalReloadButton.Click += async (_, _) =>
+        {
+            ExternalReloadButton.IsEnabled = false;
+            try { await ReloadAsync(confirmUnsaved: false); }
+            finally { ExternalReloadButton.IsEnabled = true; }
+        };
+        ExternalDismissButton.Click += (_, _) =>
+        {
+            _changeTracker?.Dismiss();
+            if (_externalChangeKind != FileChangeKind.None)
+            {
+                _externalChangeKind = FileChangeKind.None;
+                UpdateExternalChangeBar();
+            }
+        };
         PrevFileButton.Click += async (_, _) => await ShowNeighborAsync(-1);
         NextFileButton.Click += async (_, _) => await ShowNeighborAsync(+1);
         OpenButton.Click += (_, _) => { if (FilePath is not null) OpenRequested?.Invoke(FilePath); };
         MoreButton.Click += (_, _) => ShowMoreMenu(MoreButton);
+
+        Activated += OnWindowActivated;
 
         // Tunnel catches IDE shortcuts (Ctrl+F/H/G, Ctrl+/, F3, Esc in find bar) before AvaloniaEdit.
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -223,20 +251,51 @@ public partial class FileViewerWindow : Window
         ToolTip.SetTip(EditorZoomButton, Loc.Get("ViewerZoomResetTip"));
 
         OpenButton.Content = Loc.Get("ContextMenuOpen");
+        UpdateExternalChangeBar();
     }
 
     /// <param name="highlight">Text to find and select (the content search query), or null.</param>
     public async void Load(string path, string? highlight) => await LoadAsync(path, highlight);
 
-    public async Task LoadAsync(string path, string? highlight)
+    public Task LoadAsync(string path, string? highlight) =>
+        LoadCoreAsync(path, highlight, confirmUnsaved: true, preserveState: null);
+
+    public async Task ReloadAsync(bool confirmUnsaved = true)
     {
-        if (!await ConfirmLeaveAsync()) return;
+        if (FilePath is not { } path) return;
+        if (!File.Exists(path))
+        {
+            _changeTracker?.CheckNow();
+            _externalChangeKind = FileChangeKind.Deleted;
+            UpdateExternalChangeBar();
+            ShowStatus(Loc.Get("ViewerFileDeletedTitle"), ok: false);
+            return;
+        }
+        if (confirmUnsaved && !await ConfirmLeaveAsync()) return;
+
+        SessionTrail.Note($"viewer: reload");
+        var caret = Editor.TextArea.Caret;
+        var state = new ReloadViewState(
+            WasEditing: IsEditing,
+            WordWrap: Editor.WordWrap,
+            EditorFontSize: Editor.FontSize,
+            CaretLine: caret.Line,
+            CaretColumn: caret.Column,
+            MarkdownScrollY: MarkdownScroll.Offset.Y,
+            FindBarVisible: EditorFindBar.IsVisible);
+        await LoadCoreAsync(path, _highlight, confirmUnsaved: false, preserveState: state);
+    }
+
+    private async Task LoadCoreAsync(string path, string? highlight, bool confirmUnsaved, ReloadViewState? preserveState)
+    {
+        if (confirmUnsaved && !await ConfirmLeaveAsync()) return;
 
         _cts.Cancel();
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         FilePath = path;
         _highlight = string.IsNullOrEmpty(highlight) ? null : highlight;
+        DisposeChangeTracker();
 
         var name = Path.GetFileName(path);
         NameText.Text = name;
@@ -247,6 +306,9 @@ public partial class FileViewerWindow : Window
 
         try
         {
+            var initialSnapshot = await Task.Run(() => FileSnapshot.Capture(path, computeHash: true), token);
+            if (token.IsCancellationRequested || FilePath != path) return;
+
             var kind = ViewerFormats.KindOf(path);
             // Type and size only: the log may be shared, file names stay private.
             SessionTrail.Note($"viewer: open {kind} {Path.GetExtension(path)}, {Format.Size(new FileInfo(path).Length)}");
@@ -262,20 +324,27 @@ public partial class FileViewerWindow : Window
                     await LoadMediaAsync(path, kind == ViewerKind.Video, token);
                     break;
                 case ViewerKind.Word:
-                    await LoadWordAsync(path, token, editIfStandalone: true);
+                    await LoadWordAsync(path, token, openForEditing: preserveState?.WasEditing ?? _standalone);
                     break;
                 case ViewerKind.Excel:
-                    await LoadExcelAsync(path, token, editIfStandalone: true);
+                    await LoadExcelAsync(path, token, openForEditing: preserveState?.WasEditing ?? _standalone);
                     break;
                 case ViewerKind.PowerPoint:
-                    await LoadPowerPointAsync(path, token, editIfStandalone: true);
+                    await LoadPowerPointAsync(path, token, openForEditing: preserveState?.WasEditing ?? _standalone);
                     break;
                 case ViewerKind.Document:
-                    await LoadDocumentAsync(path, token);
+                    await LoadDocumentAsync(path, token, preserveState);
                     break;
                 default:
-                    await LoadTextAsync(path, kind, token);
+                    await LoadTextAsync(path, kind, token, preserveState);
                     break;
+            }
+
+            if (!token.IsCancellationRequested && FilePath == path)
+            {
+                StartChangeTracker(path, initialSnapshot);
+                if (preserveState is not null)
+                    ShowStatus(Loc.Get("ViewerReloaded"), ok: true);
             }
         }
         catch (OperationCanceledException)
@@ -283,7 +352,13 @@ public partial class FileViewerWindow : Window
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            if (!token.IsCancellationRequested) ShowMessage(Loc.Get("PreviewFailed"));
+            if (!token.IsCancellationRequested && FilePath == path)
+            {
+                ShowMessage(Loc.Get("PreviewFailed"));
+                var fallback = await Task.Run(() => FileSnapshot.Capture(path, computeHash: false));
+                if (!token.IsCancellationRequested && FilePath == path)
+                    StartChangeTracker(path, fallback);
+            }
         }
     }
 
@@ -291,7 +366,7 @@ public partial class FileViewerWindow : Window
     // Text, code and Markdown
     // =====================================================================
 
-    private async Task LoadTextAsync(string path, ViewerKind kind, CancellationToken token)
+    private async Task LoadTextAsync(string path, ViewerKind kind, CancellationToken token, ReloadViewState? preserveState = null)
     {
         var directory = Path.GetDirectoryName(path) ?? "";
         var (file, markdown, size) = await Task.Run(() =>
@@ -332,23 +407,64 @@ public partial class FileViewerWindow : Window
         ShowText(file.Text, GrammarFor(path, file.Text.Length));
         SetMarkdown(markdown);
 
+        var wantEdit = preserveState is not null ? preserveState.WasEditing : (_standalone && markdown is null);
         _loading = true;
         RenderedToggle.IsVisible = markdown is not null;
-        RenderedToggle.IsChecked = _preferRendered;
+        RenderedToggle.IsChecked = _preferRendered && !wantEdit;
         EditToggle.IsVisible = true;
         // Opened from Explorer, text is there to be edited; Markdown to be read first.
-        EditToggle.IsChecked = _standalone && markdown is null;
+        EditToggle.IsChecked = wantEdit;
         _loading = false;
+        if (preserveState is not null)
+        {
+            Editor.WordWrap = preserveState.WordWrap;
+            SetEditorFontSize(preserveState.EditorFontSize);
+        }
         Editor.IsReadOnly = !IsEditing;
         SaveButton.IsVisible = IsEditing;
+        ReplaceButton.IsEnabled = IsEditing;
+        ReplaceAllButton.IsEnabled = IsEditing;
+        UpdateEditorStatusBar();
 
         ShowTextBody();
-        // After layout: the editor was hidden until now, so it can't scroll yet.
-        if (!MarkdownScroll.IsVisible) Dispatcher.UIThread.Post(() => SelectHighlight(file.Text), DispatcherPriority.Loaded);
+        if (preserveState is not null)
+        {
+            if (preserveState.FindBarVisible && !string.IsNullOrEmpty(FindBox.Text))
+            {
+                FindRow.IsVisible = true;
+                GoToLineRow.IsVisible = false;
+                if (MarkdownScroll.IsVisible)
+                    ReplaceRow.IsVisible = false;
+                EditorFindBar.IsVisible = true;
+                UpdateFindMatches(jumpToNearest: false);
+            }
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (FilePath != path) return;
+                if (MarkdownScroll.IsVisible)
+                {
+                    var maxY = Math.Max(0, MarkdownScroll.Extent.Height - MarkdownScroll.Viewport.Height);
+                    MarkdownScroll.Offset = new Vector(MarkdownScroll.Offset.X, Math.Clamp(preserveState.MarkdownScrollY, 0, maxY));
+                }
+                else if (EditorContainer.IsVisible)
+                {
+                    var line = Math.Clamp(preserveState.CaretLine, 1, Math.Max(1, Editor.Document.LineCount));
+                    var docLine = Editor.Document.GetLineByNumber(line);
+                    var col = Math.Clamp(preserveState.CaretColumn, 1, docLine.Length + 1);
+                    Editor.CaretOffset = docLine.Offset + col - 1;
+                    ScrollEditorTo(line, col);
+                }
+            }, DispatcherPriority.Loaded);
+        }
+        else if (!MarkdownScroll.IsVisible)
+        {
+            // After layout: the editor was hidden until now, so it can't scroll yet.
+            Dispatcher.UIThread.Post(() => SelectHighlight(file.Text), DispatcherPriority.Loaded);
+        }
     }
 
     /// <summary>Word documents as pages; their text alone when the layout can't be read.</summary>
-    private async Task LoadWordAsync(string path, CancellationToken token, bool editIfStandalone)
+    private async Task LoadWordAsync(string path, CancellationToken token, bool openForEditing)
     {
         var size = new FileInfo(path).Length;
         if (size > MaxDocumentBytes)
@@ -384,7 +500,7 @@ public partial class FileViewerWindow : Window
         SetEditToggle(false);
         EditToggle.IsVisible = true;
         // Opened from Explorer, a document is there to be worked on, as in Word.
-        if (_standalone && editIfStandalone) EditToggle.IsChecked = true;
+        if (openForEditing) EditToggle.IsChecked = true;
     }
 
     private void SetEditToggle(bool on)
@@ -410,22 +526,28 @@ public partial class FileViewerWindow : Window
             }
             DisposeBody();
             ShowMessage(Loc.Get("PreviewLoading"));
-            await LoadWordAsync(path, token, editIfStandalone: false);
+            var readSnapshot = await Task.Run(() => FileSnapshot.Capture(path, computeHash: true), token);
+            if (token.IsCancellationRequested || FilePath != path) return;
+            await LoadWordAsync(path, token, openForEditing: false);
+            if (!token.IsCancellationRequested && FilePath == path)
+                StartChangeTracker(path, readSnapshot);
             UpdateTitle();
             return;
         }
 
         DocxEditDocument document;
         DocxDocument layout;
+        FileSnapshot editSnapshot;
         Dictionary<byte[], Bitmap> images = new(ReferenceEqualityComparer.Instance);
         try
         {
-            (document, layout) = await Task.Run(() =>
+            (editSnapshot, document, layout) = await Task.Run(() =>
             {
+                var snap = FileSnapshot.Capture(path, computeHash: true);
                 var opened = DocxEditDocument.Open(path, token);
                 var laid = opened.Layout(token);
                 DocxPreview.From(laid, "", images, token, ownsImages: false);
-                return (opened, laid);
+                return (snap, opened, laid);
             }, token);
         }
         catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
@@ -456,11 +578,12 @@ public partial class FileViewerWindow : Window
             editor));
         _docx = editor;
         SaveButton.IsVisible = true;
+        StartChangeTracker(path, editSnapshot);
         UpdateTitle();
     }
 
     /// <summary>Excel workbooks as a spreadsheet grid with sheet tabs and formula bar.</summary>
-    private async Task LoadExcelAsync(string path, CancellationToken token, bool editIfStandalone)
+    private async Task LoadExcelAsync(string path, CancellationToken token, bool openForEditing)
     {
         var size = new FileInfo(path).Length;
         if (size > MaxDocumentBytes)
@@ -488,7 +611,7 @@ public partial class FileViewerWindow : Window
         _excel = true;
         SetEditToggle(false);
         EditToggle.IsVisible = true;
-        if (_standalone && editIfStandalone) EditToggle.IsChecked = true;
+        if (openForEditing) EditToggle.IsChecked = true;
     }
 
     private async Task SwitchExcelEditingAsync(bool editing)
@@ -505,20 +628,26 @@ public partial class FileViewerWindow : Window
             }
             DisposeBody();
             ShowMessage(Loc.Get("PreviewLoading"));
-            await LoadExcelAsync(path, token, editIfStandalone: false);
+            var readSnapshot = await Task.Run(() => FileSnapshot.Capture(path, computeHash: true), token);
+            if (token.IsCancellationRequested || FilePath != path) return;
+            await LoadExcelAsync(path, token, openForEditing: false);
+            if (!token.IsCancellationRequested && FilePath == path)
+                StartChangeTracker(path, readSnapshot);
             UpdateTitle();
             return;
         }
 
+        FileSnapshot editSnapshot;
         XlsxEditDocument editDoc;
         XlsxDocument layout;
         try
         {
-            (editDoc, layout) = await Task.Run(() =>
+            (editSnapshot, editDoc, layout) = await Task.Run(() =>
             {
+                var snap = FileSnapshot.Capture(path, computeHash: true);
                 var opened = XlsxEditDocument.Open(path, token);
                 var laid = opened.Layout(token);
-                return (opened, laid);
+                return (snap, opened, laid);
             }, token);
         }
         catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
@@ -541,11 +670,12 @@ public partial class FileViewerWindow : Window
         ShowBody(view);
         _xlsxEdit = editDoc;
         SaveButton.IsVisible = true;
+        StartChangeTracker(path, editSnapshot);
         UpdateTitle();
     }
 
     /// <summary>PowerPoint presentations as slides with outline sidebar and speaker notes.</summary>
-    private async Task LoadPowerPointAsync(string path, CancellationToken token, bool editIfStandalone)
+    private async Task LoadPowerPointAsync(string path, CancellationToken token, bool openForEditing)
     {
         var size = new FileInfo(path).Length;
         if (size > MaxDocumentBytes)
@@ -579,7 +709,7 @@ public partial class FileViewerWindow : Window
         _powerPoint = true;
         SetEditToggle(false);
         EditToggle.IsVisible = canEdit;
-        if (canEdit && _standalone && editIfStandalone) EditToggle.IsChecked = true;
+        if (canEdit && openForEditing) EditToggle.IsChecked = true;
     }
 
     private async Task SwitchPowerPointEditingAsync(bool editing)
@@ -601,21 +731,27 @@ public partial class FileViewerWindow : Window
             }
             DisposeBody();
             ShowMessage(Loc.Get("PreviewLoading"));
-            await LoadPowerPointAsync(path, token, editIfStandalone: false);
+            var readSnapshot = await Task.Run(() => FileSnapshot.Capture(path, computeHash: true), token);
+            if (token.IsCancellationRequested || FilePath != path) return;
+            await LoadPowerPointAsync(path, token, openForEditing: false);
+            if (!token.IsCancellationRequested && FilePath == path)
+                StartChangeTracker(path, readSnapshot);
             UpdateTitle();
             return;
         }
 
+        FileSnapshot editSnapshot;
         PptxEditDocument editDoc;
         PptxPreview preview;
         try
         {
-            (editDoc, preview) = await Task.Run(() =>
+            (editSnapshot, editDoc, preview) = await Task.Run(() =>
             {
+                var snap = FileSnapshot.Capture(path, computeHash: true);
                 var opened = PptxEditDocument.Open(path, token);
                 var laid = opened.Layout(token);
                 var images = new Dictionary<byte[], Bitmap>(ReferenceEqualityComparer.Instance);
-                return (opened, PptxPreview.From(laid, images, token, ownsImages: true));
+                return (snap, opened, PptxPreview.From(laid, images, token, ownsImages: true));
             }, token);
         }
         catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
@@ -642,11 +778,12 @@ public partial class FileViewerWindow : Window
         ShowBody(view);
         _pptxEdit = editDoc;
         SaveButton.IsVisible = true;
+        StartChangeTracker(path, editSnapshot);
         UpdateTitle();
     }
 
     /// <summary>Excel and other documents: their text, read-only.</summary>
-    private async Task LoadDocumentAsync(string path, CancellationToken token)
+    private async Task LoadDocumentAsync(string path, CancellationToken token, ReloadViewState? preserveState = null)
     {
         var size = new FileInfo(path).Length;
         if (size > MaxDocumentBytes)
@@ -666,9 +803,34 @@ public partial class FileViewerWindow : Window
 
         SetInfo(Format.Size(size), Loc.Get("ViewerExtractedText"));
         ShowText(text, null);
-        Editor.WordWrap = true;
+        Editor.WordWrap = preserveState?.WordWrap ?? true;
+        if (preserveState is not null)
+            SetEditorFontSize(preserveState.EditorFontSize);
         ShowTextBody();
-        Dispatcher.UIThread.Post(() => SelectHighlight(text), DispatcherPriority.Loaded);
+        if (preserveState is not null)
+        {
+            if (preserveState.FindBarVisible && !string.IsNullOrEmpty(FindBox.Text))
+            {
+                FindRow.IsVisible = true;
+                GoToLineRow.IsVisible = false;
+                ReplaceRow.IsVisible = false;
+                EditorFindBar.IsVisible = true;
+                UpdateFindMatches(jumpToNearest: false);
+            }
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (FilePath != path || !EditorContainer.IsVisible) return;
+                var line = Math.Clamp(preserveState.CaretLine, 1, Math.Max(1, Editor.Document.LineCount));
+                var docLine = Editor.Document.GetLineByNumber(line);
+                var col = Math.Clamp(preserveState.CaretColumn, 1, docLine.Length + 1);
+                Editor.CaretOffset = docLine.Offset + col - 1;
+                ScrollEditorTo(line, col);
+            }, DispatcherPriority.Loaded);
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(() => SelectHighlight(text), DispatcherPriority.Loaded);
+        }
     }
 
     private void ShowText(string text, string? grammar)
@@ -815,76 +977,120 @@ public partial class FileViewerWindow : Window
 
     private async Task<bool> SaveAsync()
     {
-        if (_docx is { } docx)
+        var canSave = _docx is not null
+            || (_xlsxEdit is not null && FilePath is not null)
+            || (_pptxEdit is not null && FilePath is not null)
+            || (FilePath is not null && _encoding is not null && IsEditing);
+        if (!canSave || FilePath is not { } path) return false;
+
+        var tracker = _changeTracker;
+        if (tracker is not null)
         {
-            try
+            var diverged = await Task.Run(tracker.HasDiskDivergedFromBaseline);
+            if (FilePath != path) return false;
+            if (diverged)
             {
-                // On the UI thread: the document is edited there, and saving reads it.
-                docx.Save();
-                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
-                UpdateTitle();
-                return true;
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                // Most often: the file is open in Word, which locks it.
-                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
-                return false;
+                var overwrite = await ConfirmDialog.ShowAsync(
+                    this,
+                    Loc.Get("ViewerOverwriteTitle"),
+                    Loc.Get("ViewerOverwriteMessage", Path.GetFileName(path)),
+                    Loc.Get("ViewerOverwriteDetail"),
+                    Loc.Get("ViewerOverwriteButton"),
+                    Loc.Get("JobCancel"));
+                if (!overwrite || FilePath != path) return false;
             }
         }
-        if (_xlsxEdit is { } xlsxEdit && FilePath is { } xlsxPath)
-        {
-            try
-            {
-                xlsxEdit.Save(xlsxPath);
-                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
-                UpdateTitle();
-                return true;
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
-                return false;
-            }
-        }
-        if (_pptxEdit is { } pptxEdit && FilePath is { } pptxPath)
-        {
-            try
-            {
-                pptxEdit.Save(pptxPath);
-                ShowStatus(Loc.Get("ViewerSaved"), ok: true);
-                UpdateTitle();
-                return true;
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
-                return false;
-            }
-        }
-        if (FilePath is null || _encoding is null || !IsEditing) return false;
-        var path = FilePath;
-        var text = Editor.Text;
-        var encoding = _encoding;
+
+        var activeTracker = ReferenceEquals(_changeTracker, tracker) ? tracker : null;
+        activeTracker?.BeginInternalSave();
+        var saved = false;
         try
         {
-            var used = await Task.Run(() => ViewerFileLoader.Save(path, text, encoding));
-            if (path != FilePath) return true;
+            if (_docx is { } docx)
+            {
+                try
+                {
+                    // On the UI thread: the document is edited there, and saving reads it.
+                    docx.Save();
+                    saved = true;
+                    ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                    UpdateTitle();
+                    return true;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Most often: the file is open in Word, which locks it.
+                    ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                    return false;
+                }
+            }
+            if (_xlsxEdit is { } xlsxEdit)
+            {
+                try
+                {
+                    xlsxEdit.Save(path);
+                    saved = true;
+                    ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                    UpdateTitle();
+                    return true;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                    return false;
+                }
+            }
+            if (_pptxEdit is { } pptxEdit)
+            {
+                try
+                {
+                    pptxEdit.Save(path);
+                    saved = true;
+                    ShowStatus(Loc.Get("ViewerSaved"), ok: true);
+                    UpdateTitle();
+                    return true;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                    return false;
+                }
+            }
+            if (_encoding is not { } encoding || !IsEditing) return false;
+            var text = Editor.Text;
+            try
+            {
+                var used = await Task.Run(() => ViewerFileLoader.Save(path, text, encoding));
+                saved = true;
+                if (path != FilePath) return true;
 
-            _encoding = used;
-            _encodingChanged = false;
-            Editor.Document.UndoStack.MarkAsOriginalFile();
-            UpdateTitle();
-            UpdateEditorStatusBar(forceTextMetrics: true);
-            var size = new FileInfo(path).Length;
-            SetInfo(Loc.Get("ViewerLines", Editor.Document.LineCount), Format.Size(size), used.Name);
-            ShowStatus(used == encoding ? Loc.Get("ViewerSaved") : Loc.Get("ViewerSavedAsUtf8", encoding.Name), ok: true);
-            return true;
+                _encoding = used;
+                _encodingChanged = false;
+                Editor.Document.UndoStack.MarkAsOriginalFile();
+                UpdateTitle();
+                UpdateEditorStatusBar(forceTextMetrics: true);
+                var size = new FileInfo(path).Length;
+                SetInfo(Loc.Get("ViewerLines", Editor.Document.LineCount), Format.Size(size), used.Name);
+                ShowStatus(used == encoding ? Loc.Get("ViewerSaved") : Loc.Get("ViewerSavedAsUtf8", encoding.Name), ok: true);
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
+                return false;
+            }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        finally
         {
-            ShowStatus(Loc.Get("ViewerSaveFailed", e.Message), ok: false);
-            return false;
+            if (activeTracker is not null)
+            {
+                await Task.Run(() => activeTracker.EndInternalSave(saved));
+                if (saved && ReferenceEquals(_changeTracker, activeTracker))
+                {
+                    _externalChangeKind = FileChangeKind.None;
+                    UpdateExternalChangeBar();
+                }
+            }
         }
     }
 
@@ -1112,6 +1318,93 @@ public partial class FileViewerWindow : Window
         var dirty = HasUnsavedChanges ? "• " : "";
         Title = $"{dirty}{name} — Grepdesk";
         NameText.Text = dirty + name;
+        if (_externalChangeKind != FileChangeKind.None)
+            UpdateExternalChangeBar();
+    }
+
+    private void OnWindowActivated(object? sender, EventArgs e)
+    {
+        if (_changeTracker is { } tracker && FilePath is not null)
+            _ = Task.Run(tracker.CheckNow);
+    }
+
+    private void StartChangeTracker(string path, FileSnapshot baseline)
+    {
+        DisposeChangeTracker();
+        if (FilePath != path) return;
+
+        var tracker = new FileChangeTracker(path, baseline);
+        tracker.StateChanged += kind => Dispatcher.UIThread.Post(() =>
+        {
+            if (!ReferenceEquals(_changeTracker, tracker)) return;
+            _externalChangeKind = kind;
+            UpdateExternalChangeBar();
+        });
+        _changeTracker = tracker;
+        tracker.Start();
+        _ = Task.Run(tracker.CheckNow);
+    }
+
+    private void DisposeChangeTracker()
+    {
+        var tracker = _changeTracker;
+        _changeTracker = null;
+        _externalChangeKind = FileChangeKind.None;
+        tracker?.Dispose();
+        UpdateExternalChangeBar();
+    }
+
+    private void UpdateExternalChangeBar()
+    {
+        if (_externalChangeKind == FileChangeKind.None)
+        {
+            ExternalChangeBar.IsVisible = false;
+            return;
+        }
+
+        ExternalChangeBar.IsVisible = true;
+        ExternalReloadButton.IsEnabled = true;
+        var dirty = HasUnsavedChanges;
+
+        if (_externalChangeKind == FileChangeKind.Deleted)
+        {
+            ExternalChangeBar.Background = Brush.Parse("#2c1d24");
+            ExternalChangeBar.BorderBrush = Brush.Parse("#f38ba8");
+            ExternalChangeIcon.Foreground = Brush.Parse("#f38ba8");
+            ExternalChangeTitle.Text = Loc.Get("ViewerFileDeletedTitle");
+            ExternalChangeDetail.Text = Loc.Get(dirty ? "ViewerFileDeletedDirtyDetail" : "ViewerFileDeletedDetail");
+            ExternalChangeDetail.IsVisible = true;
+            ExternalReloadButton.IsVisible = false;
+            ExternalDismissButton.Content = Loc.Get("ViewerDismiss");
+            return;
+        }
+
+        ExternalReloadButton.IsVisible = true;
+        ExternalChangeTitle.Text = Loc.Get("ViewerFileChangedTitle");
+
+        if (dirty)
+        {
+            ExternalChangeBar.Background = Brush.Parse("#2b241b");
+            ExternalChangeBar.BorderBrush = Brush.Parse("#f9e2af");
+            ExternalChangeIcon.Foreground = Brush.Parse("#f9e2af");
+            ExternalChangeDetail.Text = Loc.Get("ViewerFileChangedDirtyDetail");
+            ExternalChangeDetail.IsVisible = true;
+            ExternalReloadButton.Content = Loc.Get("ViewerDiscardAndReload");
+            ExternalReloadButton.Classes.Set("primary", false);
+            ExternalReloadButton.Classes.Set("warning", true);
+            ExternalDismissButton.Content = Loc.Get("ViewerKeepMine");
+        }
+        else
+        {
+            ExternalChangeBar.Background = Brush.Parse("#1d2436");
+            ExternalChangeBar.BorderBrush = Brush.Parse("#89b4fa");
+            ExternalChangeIcon.Foreground = Brush.Parse("#89b4fa");
+            ExternalChangeDetail.IsVisible = false;
+            ExternalReloadButton.Content = Loc.Get("ViewerReload");
+            ExternalReloadButton.Classes.Set("primary", true);
+            ExternalReloadButton.Classes.Set("warning", false);
+            ExternalDismissButton.Content = Loc.Get("ViewerDismiss");
+        }
     }
 
     /// <summary>Back to an empty window before the next file loads.</summary>
@@ -1881,6 +2174,15 @@ public partial class FileViewerWindow : Window
             items.Add(new Separator());
         if (FilePath is not null)
         {
+            var shortcut = _body is PptxView ? "" : "  (F5)";
+            var reloadItem = new MenuItem
+            {
+                Header = Loc.Get("ViewerReload") + shortcut,
+                Icon = MenuIcons.For("BrowseRefresh"),
+            };
+            reloadItem.Click += async (_, _) => await ReloadAsync(confirmUnsaved: true);
+            items.Add(reloadItem);
+
             var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
             showItem.Click += (_, _) => ShowInFolderRequested?.Invoke(FilePath);
             items.Add(showItem);
@@ -1984,6 +2286,13 @@ public partial class FileViewerWindow : Window
         {
             CloseFindBar();
             e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F5 && e.KeyModifiers == KeyModifiers.None && FilePath is not null && _body is not PptxView)
+        {
+            e.Handled = true;
+            _ = ReloadAsync(confirmUnsaved: true);
             return;
         }
 
@@ -2124,6 +2433,8 @@ public partial class FileViewerWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        Activated -= OnWindowActivated;
+        DisposeChangeTracker();
         _cts.Cancel();
         _findCts?.Cancel();
         _structureTimer.Stop();
