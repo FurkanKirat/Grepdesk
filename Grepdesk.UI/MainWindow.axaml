@@ -333,7 +333,7 @@
         <Panel x:Name="PageHost" Grid.Column="1" Margin="20,16,20,14">
 
             <!-- ================ PAGE : FILES (folder browser) ================ -->
-            <browse:BrowseView x:Name="BrowsePage"/>
+            <browse:BrowseWorkspace x:Name="BrowsePage"/>
 
             <!-- ================ PAGE : FILE NAME SEARCH ================ -->
             <DockPanel x:Name="NameSearchPage" IsVisible="False" DragDrop.AllowDrop="True" Background="Transparent">

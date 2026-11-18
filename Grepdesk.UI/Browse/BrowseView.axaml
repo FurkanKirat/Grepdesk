@@ -329,7 +329,7 @@
         </DockPanel>
 
         <!-- ===== Status line ===== -->
-        <DockPanel DockPanel.Dock="Bottom" Margin="2,8,2,0">
+        <DockPanel x:Name="StatusBar" DockPanel.Dock="Bottom" Margin="2,8,2,0" Background="Transparent">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
                 <Button x:Name="CalculateSizesButton" Classes="crumb" Background="#313244" Padding="8,2" FontSize="12" IsVisible="False"/>
                 <TextBlock x:Name="TotalSizeText" Classes="label" VerticalAlignment="Center"/>
@@ -337,9 +337,9 @@
             <TextBlock x:Name="StatusText" Classes="label" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
 
-        <Grid ColumnDefinitions="200,*,Auto">
+        <Grid x:Name="ContentGrid" ColumnDefinitions="200,*,Auto">
             <!-- ===== Places, Favorites, History, Drives ===== -->
-            <ScrollViewer Grid.Column="0" Margin="0,0,10,0" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer x:Name="PlacesPane" Grid.Column="0" Margin="0,0,10,0" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="10">
                     <!-- Favorites -->
                     <StackPanel Spacing="2">
@@ -448,7 +448,8 @@
                         </Grid>
                     </Border>
                     <Panel>
-                        <ListBox x:Name="FileList" Classes="files" SelectionMode="Multiple" IsTextSearchEnabled="False" Focusable="True">
+                        <ListBox x:Name="FileList" Classes="files" SelectionMode="Multiple" IsTextSearchEnabled="False" Focusable="True"
+                                 Padding="0,0,0,28">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="b:BrowseRow">
                                     <Grid Opacity="{Binding Opacity}" Background="Transparent"

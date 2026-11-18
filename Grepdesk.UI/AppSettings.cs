@@ -32,6 +32,15 @@ internal sealed class AppSettings
     /// <summary>Where the folder browser was left, opened again on the next start.</summary>
     public string? LastBrowseFolder { get; set; }
 
+    /// <summary>Browser tabs and dual-pane layout restored on the next start.</summary>
+    public bool DualPaneEnabled { get; set; }
+    public int ActivePaneIndex { get; set; }
+    public double DualPaneSplitRatio { get; set; } = 0.5;
+    public List<string> LeftPaneTabs { get; set; } = [];
+    public int LeftActiveTabIndex { get; set; }
+    public List<string> RightPaneTabs { get; set; } = [];
+    public int RightActiveTabIndex { get; set; }
+
     /// <summary>Folders pinned to the Favorites section in the folder browser.</summary>
     public List<string> FavoriteFolders { get; set; } = [];
 

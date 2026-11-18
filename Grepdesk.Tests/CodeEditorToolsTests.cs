@@ -235,4 +235,32 @@ public class CodeEditorToolsTests
         var (xmlUncommented, _, _, _, _) = CodeFormatter.ToggleLineComment(xmlCommented, 0, 0, "view.axaml");
         Assert.Equal("<Tag />", xmlUncommented);
     }
+
+    [Fact]
+    public void PreparedSearch_reuses_query_and_respects_budget_and_cancellation()
+    {
+        Assert.False(CodeEditorSearch.PreparedSearch.TryCreate("(unclosed", false, false, true, out _));
+
+        Assert.True(CodeEditorSearch.PreparedSearch.TryCreate(@"foo_\d+", false, false, true, out var prepared));
+        Assert.NotNull(prepared);
+
+        var output = new List<TextSpan>();
+        prepared!.FindInto("no match here", output);
+        Assert.Empty(output);
+
+        prepared.FindInto("foo_1 and foo_22 and foo_333", output, maxMatches: 2);
+        TextSpan[] expected1 = [new(0, 5), new(10, 6)];
+        Assert.Equal(expected1, output);
+
+        Assert.True(CodeEditorSearch.PreparedSearch.TryCreate("a*", false, false, true, out var zeroLen));
+        output.Clear();
+        zeroLen!.FindInto("aba", output);
+        TextSpan[] expected2 = [new(0, 1), new(2, 1)];
+        Assert.Equal(expected2, output);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+            CodeEditorSearch.FindMatches("foo foo foo", "foo", false, false, false, 10, out _, cts.Token));
+    }
 }

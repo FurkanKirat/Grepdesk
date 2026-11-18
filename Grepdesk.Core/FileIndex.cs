@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Grepdesk.Core.Browse;
 
 namespace Grepdesk.Core;
 
@@ -273,6 +274,38 @@ public class FileIndex : IDisposable
         foreach (var kv in _index)
         {
             if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+
+            var e = kv.Value;
+            if (matchAll || NameOf(kv.Key).Contains(query, StringComparison.OrdinalIgnoreCase))
+                results.Add(new SearchResult(kv.Key, e.IsDirectory, e.Size, e.Modified));
+        }
+        return results;
+    }
+
+    /// <summary>True if the current index has finished scanning and covers <paramref name="folder"/>.</summary>
+    public bool CoversFolder(string folder)
+    {
+        if (Count == 0 || IsIndexing || string.IsNullOrWhiteSpace(folder)) return false;
+        return Roots.Any(root => PathUtil.IsSameOrInside(folder, root));
+    }
+
+    /// <summary>
+    /// Searches only entries strictly under <paramref name="folder"/> in the already-built index.
+    /// </summary>
+    public List<SearchResult> SearchUnder(string folder, string query, CancellationToken ct = default)
+    {
+        var normalized = PathUtil.Normalize(folder);
+        var prefix = Path.EndsInDirectorySeparator(normalized) ? normalized : normalized + Path.DirectorySeparatorChar;
+        var matchAll = string.IsNullOrWhiteSpace(query);
+        var results = new List<SearchResult>();
+
+        var scanned = 0;
+        foreach (var kv in _index)
+        {
+            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+
+            if (kv.Key.Length <= prefix.Length || !kv.Key.StartsWith(prefix, PathUtil.Comparison))
+                continue;
 
             var e = kv.Value;
             if (matchAll || NameOf(kv.Key).Contains(query, StringComparison.OrdinalIgnoreCase))

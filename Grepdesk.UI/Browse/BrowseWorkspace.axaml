@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:b="using:Grepdesk.UI.Browse"
+             x:Class="Grepdesk.UI.Browse.BrowseWorkspace"
+             Background="Transparent">
+
+    <Grid x:Name="PaneGrid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="0"/>
+        </Grid.ColumnDefinitions>
+
+        <b:BrowsePane x:Name="LeftPane" Grid.Column="0"/>
+        <GridSplitter x:Name="PaneSplitter" Grid.Column="1" Width="6" Background="Transparent" IsVisible="False"
+                      ResizeDirection="Columns"/>
+        <b:BrowsePane x:Name="RightPane" Grid.Column="2" IsVisible="False"/>
+    </Grid>
+</UserControl>

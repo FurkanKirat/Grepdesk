@@ -206,6 +206,8 @@
   "PreviewAlbum": "Albüm",
   "PreviewSlides": "Slayt",
   "ViewerRendered": "İşlenmiş",
+  "MarkdownTableScrollLeft": "Tabloyu sola kaydır",
+  "MarkdownTableScrollRight": "Tabloyu sağa kaydır",
   "ErrorTitle": "Bir şeyler ters gitti",
   "ErrorMessage": "Grepdesk beklenmedik bir hatayla karşılaştı ama çalışmaya devam ediyor. Bir şey tuhaf görünürse uygulamayı yeniden başlat.",
   "ErrorFatal": "Grepdesk beklenmedik bir hatayla karşılaştı ve kapanması gerekiyor. Ayrıntılar log klasörüne kaydedildi:",
@@ -676,5 +678,11 @@
   "PlaceFavorites": "Favoriler",
   "PlaceHistory": "Geçmiş",
   "PlaceSectionPlaces": "Yerler",
-  "PlaceSectionDrives": "Diskler"
+  "PlaceSectionDrives": "Diskler",
+  "BrowseNewTab": "Yeni sekme (Ctrl+T)",
+  "BrowseCloseTab": "Sekmeyi kapat (Ctrl+W)",
+  "BrowseOpenInNewTab": "Yeni sekmede aç",
+  "BrowseDualPane": "Çift bölme (F3)",
+  "ShortcutBrowseTabs": "Dosyalar: yeni / kapat / sekme değiştir",
+  "ShortcutBrowseDualPane": "Dosyalar: çift bölmeyi aç-kapat / aktif bölmeyi değiştir"
 }

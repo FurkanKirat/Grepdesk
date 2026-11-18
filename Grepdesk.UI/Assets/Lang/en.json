@@ -206,6 +206,8 @@
   "PreviewAlbum": "Album",
   "PreviewSlides": "Slides",
   "ViewerRendered": "Rendered",
+  "MarkdownTableScrollLeft": "Scroll table left",
+  "MarkdownTableScrollRight": "Scroll table right",
   "ErrorTitle": "Something went wrong",
   "ErrorMessage": "Grepdesk ran into an unexpected error and kept running. If something looks off, restart the app.",
   "ErrorFatal": "Grepdesk ran into an unexpected error and has to close. The details were saved to the log folder:",
@@ -676,5 +678,11 @@
   "PlaceFavorites": "Favorites",
   "PlaceHistory": "History",
   "PlaceSectionPlaces": "Places",
-  "PlaceSectionDrives": "Drives"
+  "PlaceSectionDrives": "Drives",
+  "BrowseNewTab": "New tab (Ctrl+T)",
+  "BrowseCloseTab": "Close tab (Ctrl+W)",
+  "BrowseOpenInNewTab": "Open in new tab",
+  "BrowseDualPane": "Dual pane (F3)",
+  "ShortcutBrowseTabs": "Files: new / close / switch tabs",
+  "ShortcutBrowseDualPane": "Files: toggle dual pane / switch active pane"
 }

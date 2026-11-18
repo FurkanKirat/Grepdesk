@@ -106,8 +106,8 @@ order; each one is usable on its own.
   (recent / favourite apps) is under Opener below.
 
 ### Phase 3: better than Explorer
-- [ ] Tabs and a dual pane; restore them on start.
-- [ ] Search below the current folder from the index; folder size column.
+- [x] Tabs and a dual pane; restore them on start.
+- [x] Search below the current folder from the index; folder size column.
 - [x] Grid / thumbnail view: Medium and Large icons next to Details (toolbar View
   button, Ctrl+Shift+2 / 3 / 6). One global choice for every folder, not per
   folder as in Explorer. Thumbnails come from the shell and are fetched as a
@@ -119,7 +119,7 @@ order; each one is usable on its own.
   ‹ › buttons. Alt+←/→ always steps; plain arrows only where the open
   document does not use them (images, text), since slides, pages and media
   seek keep theirs. Order is the natural name order, not the browser's sort.
-- [ ] Browse into `.zip` (and later `.7z`, `.rar`, `.tar`) like a folder.
+- [x] Browse into `.zip` (and later `.7z`, `.rar`, `.tar`) like a folder.
 
 ### Phase 4: default file manager and opener
 - [ ] **"Use as default file manager"** setting: HKCU `open` verbs for

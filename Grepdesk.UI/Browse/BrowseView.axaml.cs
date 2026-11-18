@@ -75,6 +75,10 @@ public partial class BrowseView : UserControl
     public event Action<string>? OrganizeRequested;
     /// <summary>Items moved to the Recycle Bin or renamed away, so other pages can drop them.</summary>
     public event Action<IReadOnlyList<string>>? Removed;
+    /// <summary>Current folder changed (for updating tab headers and persisted session).</summary>
+    public event Action<string>? FolderChanged;
+    /// <summary>User asked to open a folder in a new tab.</summary>
+    public event Action<string>? OpenInNewTabRequested;
 
     public BrowseView()
     {
@@ -114,9 +118,25 @@ public partial class BrowseView : UserControl
 
         AddressBar.PointerPressed += (_, e) =>
         {
-            // Empty space in the bar (not a crumb) switches to typing a path.
+            // Left-clicking empty space in the bar (not a crumb) switches to typing a path.
+            if (!e.GetCurrentPoint(AddressBar).Properties.IsLeftButtonPressed) return;
             if ((e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is null) BeginEditAddress();
         };
+        AddressBar.AddHandler(PointerReleasedEvent, (_, e) =>
+        {
+            if (e.InitialPressMouseButton != MouseButton.Right) return;
+            if ((e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is not null) return;
+            if ((e.Source as Visual)?.FindAncestorOfType<TextBox>(includeSelf: true) is not null) return;
+            OpenContextMenu(AddressBar, BackgroundMenu());
+            e.Handled = true;
+        }, RoutingStrategies.Bubble, handledEventsToo: true);
+        StatusBar.AddHandler(PointerReleasedEvent, (_, e) =>
+        {
+            if (e.InitialPressMouseButton != MouseButton.Right) return;
+            if ((e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is not null) return;
+            OpenContextMenu(StatusBar, BackgroundMenu());
+            e.Handled = true;
+        }, RoutingStrategies.Bubble, handledEventsToo: true);
         AddressBox.LostFocus += (_, _) => EndEditAddress();
         // A deep path shows its end, where you are, rather than its start.
         CrumbScroller.PropertyChanged += (_, e) =>
@@ -155,6 +175,16 @@ public partial class BrowseView : UserControl
     private IEnumerable<BrowseRow> SelectedRows => FileList.SelectedItems?.OfType<BrowseRow>() ?? [];
     private BrowseRow? SingleSelected => FileList.SelectedItems is { Count: 1 } items ? items[0] as BrowseRow : null;
     private bool InFolder => !string.IsNullOrEmpty(CurrentFolder);
+    private bool InZip => CurrentFolder is { } f && ZipBrowsePath.IsZipPath(f);
+    private bool InWritableFolder => InFolder && !InZip;
+
+    /// <summary>Shows or hides the Places sidebar and Preview pane (used in dual-pane mode).</summary>
+    public void SetPaneChrome(bool showPlaces, bool showPreview)
+    {
+        PlacesPane.IsVisible = showPlaces;
+        ContentGrid.ColumnDefinitions[0].Width = showPlaces ? new GridLength(200) : new GridLength(0);
+        Preview.IsVisible = showPreview;
+    }
 
     public void ApplyLanguage()
     {
@@ -263,7 +293,9 @@ public partial class BrowseView : UserControl
         {
             contents = folder == ThisPc
                 ? await Task.Run(ListDrives, ct)
-                : await Task.Run(() => FolderListing.List(folder, showHidden, ct), ct);
+                : ZipBrowsePath.IsZipPath(folder)
+                    ? await Task.Run(() => ZipFolderListing.List(folder, showHidden, ct), ct)
+                    : await Task.Run(() => FolderListing.List(folder, showHidden, ct), ct);
         }
         catch (OperationCanceledException)
         {
@@ -279,19 +311,24 @@ public partial class BrowseView : UserControl
             SaveBookmarks();
             FillBookmarks();
             var existing = PathUtil.Parent(folder);
-            while (existing is not null && !Directory.Exists(existing)) existing = PathUtil.Parent(existing);
+            while (existing is not null && !Directory.Exists(existing) && !ZipBrowsePath.IsZipPath(existing))
+                existing = PathUtil.Parent(existing);
             await NavigateAsync(existing ?? ThisPc);
             return;
         }
 
         if (folderChanged && folder != ThisPc && contents.Error != FolderListingError.NotFound)
         {
-            _bookmarks.RecordVisit(folder);
-            SaveBookmarks();
-            FillBookmarks();
+            if (!ZipBrowsePath.IsZipPath(folder))
+            {
+                _bookmarks.RecordVisit(folder);
+                SaveBookmarks();
+                FillBookmarks();
+            }
             SelectPlace(folder);
             UpdateNavigationButtons();
         }
+        FolderChanged?.Invoke(folder);
 
         _entries = contents.Entries
             .Select(e => e.IsDirectory && e.Size < 0 && _folderSizes.TryGetValue(e.FullPath, out var known) ? e with { Size = known } : e)
@@ -412,8 +449,8 @@ public partial class BrowseView : UserControl
         ForwardButton.IsEnabled = _history.CanGoForward;
         UpButton.IsEnabled = InFolder;
         HistoryButton.IsEnabled = _bookmarks.Recent.Count > 0;
-        FavoriteButton.IsEnabled = InFolder;
-        NewFolderButton.IsEnabled = SearchBelowButton.IsEnabled = InFolder;
+        FavoriteButton.IsEnabled = InWritableFolder;
+        NewFolderButton.IsEnabled = SearchBelowButton.IsEnabled = InWritableFolder;
         FilterBox.IsEnabled = true;
         UpdateFavoriteButton();
     }
@@ -665,7 +702,7 @@ public partial class BrowseView : UserControl
     {
         // Icons only for rows that are actually on screen: a folder of 50,000
         // files shouldn't queue 50,000 icon requests.
-        if (_icons is null || e.Container.DataContext is not BrowseRow { Icon: null } row) return;
+        if (_icons is null || InZip || e.Container.DataContext is not BrowseRow { Icon: null } row) return;
         if (++Tr.Prepared % 100 == 0 || Tr.Prepared == 1) Tr.Log($"container prepared #{Tr.Prepared}"); // TMP-TRACE
         if (InIconView)
         {
@@ -696,7 +733,7 @@ public partial class BrowseView : UserControl
         _watcher?.Dispose();
         _watcher = null;
         _reloadTimer.Stop();
-        if (folder == ThisPc) return;
+        if (folder == ThisPc || ZipBrowsePath.IsZipPath(folder)) return;
 
         try
         {
@@ -757,6 +794,12 @@ public partial class BrowseView : UserControl
         {
             var button = new Button { Content = label, Classes = { "crumb" } };
             button.Click += async (_, _) => await NavigateAsync(path);
+            button.AddHandler(PointerReleasedEvent, (_, e) =>
+            {
+                if (e.InitialPressMouseButton != MouseButton.Right) return;
+                OpenContextMenu(button, CrumbMenu(path));
+                e.Handled = true;
+            }, RoutingStrategies.Bubble, handledEventsToo: true);
             Crumbs.Children.Add(button);
         }
     }
@@ -924,34 +967,70 @@ public partial class BrowseView : UserControl
         var row = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as PlaceRow;
         if (row is null || string.IsNullOrEmpty(row.Path)) return;
 
-        var path = row.Path;
+        List<Control>? extra = list == HistoryList
+            ? [Item("BrowseRemoveFromHistory", () => RemoveFromHistory(row.Path)), Item("BrowseClearHistory", ClearHistory)]
+            : null;
+        OpenContextMenu(list, FolderMenu(row.Path, extra));
+        e.Handled = true;
+    }
+
+    private List<Control> CrumbMenu(string path)
+    {
+        if (path == ThisPc)
+            return [!InFolder
+                ? Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))
+                : Item("ContextMenuOpen", () => _ = NavigateAsync(ThisPc))];
+
+        if (string.Equals(path, CurrentFolder, PathUtil.Comparison))
+            return BackgroundMenu();
+
+        return FolderMenu(path);
+    }
+
+    private List<Control> FolderMenu(string folder, IReadOnlyList<Control>? extraTopItems = null)
+    {
         var menu = new List<Control>
         {
-            Item("ContextMenuOpen", () => _ = NavigateAsync(path))
+            Item("ContextMenuOpen", () => _ = NavigateAsync(folder))
         };
 
-        if (list == FavoritesList)
-        {
-            menu.Add(Item("BrowseRemoveFavorite", () => ToggleFavorite(path)));
-        }
-        else
-        {
-            var favKey = _bookmarks.IsFavorite(path) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
-            menu.Add(Item(favKey, () => ToggleFavorite(path)));
-        }
+        var favKey = _bookmarks.IsFavorite(folder) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
+        menu.Add(Item(favKey, () => ToggleFavorite(folder)));
 
-        if (list == HistoryList)
+        if (extraTopItems is not null)
         {
-            menu.Add(Item("BrowseRemoveFromHistory", () => RemoveFromHistory(path)));
-            menu.Add(Item("BrowseClearHistory", ClearHistory));
+            foreach (var item in extraTopItems)
+                menu.Add(item);
         }
 
         menu.Add(new Separator());
-        menu.Add(Item("BrowseCopyPath", () => _ = CopySinglePathAsync(path)));
-        menu.Add(Item("BrowseOpenInExplorer", () => Report(Shell?.OpenPath(path), "FileOpenFailed")));
+        if (ClipboardHasFiles())
+            menu.Add(Item("BrowsePasteInto", () => Paste(folder)));
+        menu.Add(Item("BrowseCopyPath", () => _ = CopySinglePathAsync(folder)));
 
-        new ContextMenu { ItemsSource = menu }.Open(list);
-        e.Handled = true;
+        menu.Add(new Separator());
+        menu.Add(Item("ContextMenuOpenInTerminal", () => Report(Shell?.OpenInTerminal(folder), "TerminalOpenFailed")));
+        foreach (var editor in Editors.Where(ed => EditorTargetResolver.IsCompatible(ed, folder)))
+        {
+            var menuItem = new MenuItem { Header = editor.Header, Icon = MenuIcons.For("Editor") };
+            menuItem.Click += (_, _) => Report(Shell?.OpenInEditor(editor, folder), "EditorOpenFailed", editor.Header);
+            menu.Add(menuItem);
+        }
+        menu.Add(Item("ContextMenuOrganize", () => OrganizeRequested?.Invoke(folder)));
+        menu.Add(Item("BrowseOpenInExplorer", () => Report(Shell?.OpenPath(folder), "FileOpenFailed")));
+
+        if (Shell?.SupportsNativeDialogs == true)
+        {
+            menu.Add(new Separator());
+            menu.Add(Item("ContextMenuProperties", () => ShowProperties(folder)));
+        }
+
+        return menu;
+    }
+
+    private static void OpenContextMenu(Control target, List<Control> items)
+    {
+        if (items.Count > 0) new ContextMenu { ItemsSource = items }.Open(target);
     }
 
     private async Task CopySinglePathAsync(string path)
@@ -1056,11 +1135,25 @@ public partial class BrowseView : UserControl
     // Opening, selection, preview
     // =====================================================================
 
-    private void OnSelectionChanged()
+    private async void OnSelectionChanged()
     {
         if (_renaming is not null && !SelectedRows.Contains(_renaming)) CommitRename();
 
         var single = SingleSelected;
+        if (single is { IsDirectory: false } && InZip)
+        {
+            UpdateStatus();
+            var virtualPath = single.FullPath;
+            var tempPath = await Task.Run(() => ZipFolderListing.TryExtractEntryToTemp(virtualPath));
+            if (SingleSelected?.FullPath != virtualPath) return;
+            var item = tempPath is not null
+                ? new ResultItem(new SearchResult(tempPath, false, single.Entry.Size, single.Entry.Modified))
+                : single.ToResultItem();
+            Preview.Show(item);
+            SelectionFollowed?.Invoke(tempPath is not null ? item : null);
+            return;
+        }
+
         Preview.Show(single?.ToResultItem());
         SelectionFollowed?.Invoke(single is { IsDirectory: false } ? single.ToResultItem() : null);
         UpdateStatus();
@@ -1074,9 +1167,21 @@ public partial class BrowseView : UserControl
 
     private async Task OpenAsync(BrowseRow row)
     {
-        if (row.IsDirectory)
+        if (row.IsDirectory || ZipBrowsePath.IsZipFile(row.FullPath))
         {
             await NavigateAsync(row.FullPath);
+            return;
+        }
+
+        if (InZip)
+        {
+            var tempPath = await Task.Run(() => ZipFolderListing.TryExtractEntryToTemp(row.FullPath));
+            if (tempPath is null)
+            {
+                SetMessage(() => Loc.Get("BrowseReadFailed"));
+                return;
+            }
+            Report(Shell?.OpenPath(tempPath), "FileOpenFailed");
             return;
         }
 
@@ -1098,9 +1203,21 @@ public partial class BrowseView : UserControl
             await OpenAsync(selected[0]);
             return;
         }
+        if (InZip) return;
         // Several: open the files (like Explorer, up to a sane number); folders would each replace the view.
         foreach (var row in selected.Where(r => !r.IsDirectory).Take(20))
             Report(Shell?.OpenPath(row.FullPath), "FileOpenFailed");
+    }
+
+    private async Task ViewZipEntryAsync(BrowseRow file)
+    {
+        var tempPath = await Task.Run(() => ZipFolderListing.TryExtractEntryToTemp(file.FullPath));
+        if (tempPath is null)
+        {
+            SetMessage(() => Loc.Get("BrowseReadFailed"));
+            return;
+        }
+        ViewRequested?.Invoke(new ResultItem(new SearchResult(tempPath, false, file.Entry.Size, file.Entry.Modified)));
     }
 
     private void RequestSearch()
@@ -1176,29 +1293,29 @@ public partial class BrowseView : UserControl
             Key.Up when alt => GoUpAsync,
             Key.F5 or Key.BrowserRefresh => ReloadAsync,
             Key.L when ctrl => Do(BeginEditAddress),
-            Key.D when ctrl && (SingleSelected is { IsDirectory: true } || InFolder) =>
+            Key.D when ctrl && !InZip && (SingleSelected is { IsDirectory: true } || InFolder) =>
                 Do(() => ToggleFavorite(SingleSelected is { IsDirectory: true } dir ? dir.FullPath : CurrentFolder)),
             Key.D when alt => Do(BeginEditAddress),
             Key.F4 when mods == KeyModifiers.None => Do(BeginEditAddress),
             Key.H when ctrl => () => SetShowHiddenAsync(!Settings.ShowHiddenFiles),
-            Key.N when ctrl && shift => Do(NewFolder),
-            Key.S when ctrl && shift && InFolder => () => CalculateFolderSizesAsync(forceFull: true),
+            Key.N when ctrl && shift && InWritableFolder => Do(NewFolder),
+            Key.S when ctrl && shift && InWritableFolder => () => CalculateFolderSizesAsync(forceFull: true),
             Key.Enter when mods == KeyModifiers.None && hasSelection => OpenSelectionAsync,
-            Key.Enter when alt && Shell?.SupportsNativeDialogs == true && (SingleSelected is not null || InFolder) =>
+            Key.Enter when alt && Shell?.SupportsNativeDialogs == true && !InZip && (SingleSelected is not null || InFolder) =>
                 Do(() => ShowProperties(SingleSelected?.FullPath ?? CurrentFolder!)),
             Key.Space when mods == KeyModifiers.None && inList && SingleSelected is { IsDirectory: false } file =>
-                Do(() => ViewRequested?.Invoke(file.ToResultItem())),
-            Key.F2 when inList && InFolder && SingleSelected is { } row => Do(() => StartRename(row)),
-            Key.Delete when hasSelection && InFolder => TrashSelectionAsync,
-            Key.Z when ctrl && !shift && InFolder => Do(UndoLast),
+                InZip ? () => ViewZipEntryAsync(file) : Do(() => ViewRequested?.Invoke(file.ToResultItem())),
+            Key.F2 when inList && InWritableFolder && SingleSelected is { } row => Do(() => StartRename(row)),
+            Key.Delete when hasSelection && InWritableFolder => TrashSelectionAsync,
+            Key.Z when ctrl && !shift && InWritableFolder => Do(UndoLast),
             Key.A when ctrl && inList => Do(() => { CompleteFill(); FileList.SelectAll(); }), // all of them, even those still being added
             Key.D2 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.LargeIcons)),
             Key.D3 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.MediumIcons)),
             Key.D6 when ctrl && shift => Do(() => SetViewMode(FolderViewMode.Details)),
             Key.C when ctrl && shift && (hasSelection || InFolder) => CopyPathsAsync,
-            Key.C when ctrl && hasSelection => Do(() => PutOnClipboard(cut: false)),
-            Key.X when ctrl && hasSelection && InFolder => Do(() => PutOnClipboard(cut: true)),
-            Key.V when ctrl && InFolder => () => PasteAsync(CurrentFolder!),
+            Key.C when ctrl && hasSelection && !InZip => Do(() => PutOnClipboard(cut: false)),
+            Key.X when ctrl && hasSelection && InWritableFolder => Do(() => PutOnClipboard(cut: true)),
+            Key.V when ctrl && InWritableFolder => () => PasteAsync(CurrentFolder!),
             _ => null
         };
     }
@@ -1288,19 +1405,37 @@ public partial class BrowseView : UserControl
         if (single is not null)
         {
             menu.Add(Item("ContextMenuOpen", () => _ = OpenAsync(single), new KeyGesture(Key.Enter)));
-            if (single.IsDirectory)
+            if (single.IsDirectory || ZipBrowsePath.IsZipFile(single.FullPath))
+                menu.Add(Item("BrowseOpenInNewTab", () => OpenInNewTabRequested?.Invoke(single.FullPath)));
+            if (single.IsDirectory && !InZip)
             {
                 var favKey = _bookmarks.IsFavorite(single.FullPath) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
                 menu.Add(Item(favKey, () => ToggleFavorite(single.FullPath), new KeyGesture(Key.D, KeyModifiers.Control)));
             }
-            else
+            else if (!single.IsDirectory)
             {
-                menu.Add(Item("ContextMenuView", () => ViewRequested?.Invoke(single.ToResultItem()), new KeyGesture(Key.Space)));
-                if (Shell?.SupportsNativeDialogs == true)
+                menu.Add(Item("ContextMenuView", () =>
+                {
+                    if (InZip) _ = ViewZipEntryAsync(single);
+                    else ViewRequested?.Invoke(single.ToResultItem());
+                }, new KeyGesture(Key.Space)));
+                if (!InZip && Shell?.SupportsNativeDialogs == true)
                     menu.Add(Item("ContextMenuOpenWith", () => Report(Shell?.OpenWithDialog(single.FullPath), "FileOpenFailed")));
             }
         }
         if (!InFolder) return menu; // drives in This PC: just open them
+        if (InZip)
+        {
+            if (ZipBrowsePath.TrySplit(CurrentFolder!, out var archivePath, out _))
+            {
+                menu.Add(new Separator());
+                menu.Add(Item("ContextMenuExtractHere", () => StartJob("--extract-here", [archivePath])));
+                menu.Add(Item("ContextMenuExtractTo", () => StartJob("--extract-to", [archivePath])));
+            }
+            menu.Add(new Separator());
+            menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
+            return menu;
+        }
 
         menu.Add(new Separator());
         menu.Add(Item("BrowseCut", () => PutOnClipboard(cut: true), new KeyGesture(Key.X, KeyModifiers.Control)));
@@ -1351,6 +1486,22 @@ public partial class BrowseView : UserControl
     private List<Control> BackgroundMenu()
     {
         if (!InFolder) return [Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))];
+        if (InZip)
+        {
+            var zipMenu = new List<Control>
+            {
+                Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))
+            };
+            if (ZipBrowsePath.TrySplit(CurrentFolder!, out var archivePath, out _))
+            {
+                zipMenu.Add(new Separator());
+                zipMenu.Add(Item("ContextMenuExtractHere", () => StartJob("--extract-here", [archivePath])));
+                zipMenu.Add(Item("ContextMenuExtractTo", () => StartJob("--extract-to", [archivePath])));
+            }
+            zipMenu.Add(new Separator());
+            zipMenu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
+            return zipMenu;
+        }
 
         var folder = CurrentFolder!;
         var menu = new List<Control>();

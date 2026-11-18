@@ -7,6 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Folding;
@@ -67,8 +68,12 @@ public partial class FileViewerWindow : Window
     private readonly TextMate.Installation _textMate;
     private readonly CodeEditorHighlighter _highlighter = new();
     private readonly DispatcherTimer _structureTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
+    private readonly DispatcherTimer _findTimer = new() { Interval = TimeSpan.FromMilliseconds(140) };
     private FoldingManager? _foldingManager;
     private CancellationTokenSource _cts = new();
+    private CancellationTokenSource? _findCts;
+    private Task? _activeFindTask;
+    private bool _activeFindJumps;
     private string? _highlight;
     private MarkdownPreview? _markdown;
     private MarkdownView.MarkdownDocumentView? _markdownView;
@@ -720,25 +725,50 @@ public partial class FileViewerWindow : Window
             var text = Editor.Text;
             var directory = Path.GetDirectoryName(FilePath) ?? "";
             var token = _cts.Token;
-            _markdownStale = false;
+            var path = FilePath;
+            MarkdownHost.Content = null;
+            _markdownView = null;
             try
             {
-                SetMarkdown(await Task.Run(() => MarkdownPreviewProvider.Prepare(text, directory, token), token));
+                var prepared = await Task.Run(() => MarkdownPreviewProvider.Prepare(text, directory, token), token);
+                if (token.IsCancellationRequested || FilePath != path)
+                {
+                    foreach (var image in prepared.Images.Values) image.Dispose();
+                    return;
+                }
+                _markdownStale = false;
+                SetMarkdown(prepared);
             }
             catch (OperationCanceledException)
             {
                 return;
             }
+            if (RenderedToggle.IsChecked != true || _markdown is null)
+                return;
         }
 
-        _markdownView = rendered
-            ? MarkdownView.BuildSearchable(_markdown!, _highlight,
-                open: target => OpenRequested?.Invoke(target),
-                reveal: target => ShowInFolderRequested?.Invoke(target))
-            : null;
-        MarkdownHost.Content = _markdownView?.Root;
+        _findTimer.Stop();
+        _findCts?.Cancel();
+
+        if (rendered)
+        {
+            if (_markdownView is null && _markdown is not null)
+            {
+                _markdownView = MarkdownView.BuildSearchable(_markdown, _highlight,
+                    open: target => OpenRequested?.Invoke(target),
+                    reveal: target => ShowInFolderRequested?.Invoke(target));
+                MarkdownHost.Content = _markdownView.Root;
+                MarkdownScroll.Offset = default;
+            }
+            _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+        }
+        else
+        {
+            // Keep _markdownView attached while hidden so toggling İşlenmiş <-> Raw avoids tearing down and rebuilding thousands of controls.
+            _markdownView?.ClearSearch();
+        }
+
         MarkdownScroll.IsVisible = rendered;
-        MarkdownScroll.Offset = default;
         EditorContainer.IsVisible = !rendered;
         FindButton.IsVisible = true;
         MessagePanel.IsVisible = false;
@@ -778,6 +808,7 @@ public partial class FileViewerWindow : Window
     private void SetMarkdown(MarkdownPreview? markdown)
     {
         MarkdownHost.Content = null;
+        _markdownView = null;
         foreach (var image in _markdown?.Images.Values ?? []) image.Dispose();
         _markdown = markdown;
     }
@@ -844,7 +875,7 @@ public partial class FileViewerWindow : Window
             _encodingChanged = false;
             Editor.Document.UndoStack.MarkAsOriginalFile();
             UpdateTitle();
-            UpdateEditorStatusBar();
+            UpdateEditorStatusBar(forceTextMetrics: true);
             var size = new FileInfo(path).Length;
             SetInfo(Loc.Get("ViewerLines", Editor.Document.LineCount), Format.Size(size), used.Name);
             ShowStatus(used == encoding ? Loc.Get("ViewerSaved") : Loc.Get("ViewerSavedAsUtf8", encoding.Name), ok: true);
@@ -1090,6 +1121,10 @@ public partial class FileViewerWindow : Window
         _excel = false;
         _powerPoint = false;
         _structureTimer.Stop();
+        _findTimer.Stop();
+        _findCts?.Cancel();
+        _activeFindTask = null;
+        _activeFindJumps = false;
         DisposeBody();
         SetMarkdown(null);
         SetMessageImage(null);
@@ -1102,6 +1137,7 @@ public partial class FileViewerWindow : Window
         _activeMatchIndex = -1;
         _textMate.SetGrammar(null);
         Editor.Document = new TextDocument();
+        Editor.WordWrap = false;
         _foldingManager?.UpdateFoldings([], -1);
         _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
         _highlighter.SetBrackets(Editor.TextArea.TextView, null);
@@ -1133,9 +1169,18 @@ public partial class FileViewerWindow : Window
         {
             _structureTimer.Stop();
             RefreshCodeStructure();
+            UpdateEditorStatusBar();
             if (EditorFindBar.IsVisible && FindRow.IsVisible)
                 UpdateFindMatches(jumpToNearest: false);
         };
+        _findTimer.Tick += (_, _) =>
+        {
+            _findTimer.Stop();
+            UpdateFindMatches(jumpToNearest: true);
+        };
+
+        MarkdownScroll.ScrollChanged += (_, _) => UpdateMarkdownVisibleHighlights();
+        MarkdownScroll.SizeChanged += (_, _) => UpdateMarkdownVisibleHighlights();
 
         Editor.TextArea.Caret.PositionChanged += (_, _) => OnEditorCaretOrSelectionChanged();
         Editor.TextArea.SelectionChanged += (_, _) => OnEditorCaretOrSelectionChanged();
@@ -1143,7 +1188,7 @@ public partial class FileViewerWindow : Window
 
         FindButton.Click += (_, _) => OpenFindBar(replace: false, goToLine: false);
 
-        FindBox.TextChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
+        FindBox.TextChanged += (_, _) => ScheduleFindUpdate();
         MatchCaseToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
         WholeWordToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
         RegexToggle.IsCheckedChanged += (_, _) => UpdateFindMatches(jumpToNearest: true);
@@ -1243,7 +1288,7 @@ public partial class FileViewerWindow : Window
         UpdateSymbolCrumb();
     }
 
-    private void UpdateEditorStatusBar()
+    private void UpdateEditorStatusBar(bool forceTextMetrics = false)
     {
         var caret = Editor.TextArea.Caret;
         var selLen = Editor.SelectionLength;
@@ -1251,9 +1296,12 @@ public partial class FileViewerWindow : Window
             ? Loc.Get("ViewerStatusLnColSel", caret.Line, caret.Column, selLen)
             : Loc.Get("ViewerStatusLnCol", caret.Line, caret.Column);
 
-        var text = GetEditorText();
-        IndentText.Text = CodeFormatter.DetectIndentation(text);
-        LineEndingButton.Content = CodeFormatter.DetectLineEnding(text);
+        if (forceTextMetrics || !_cachedTextDirty)
+        {
+            var text = GetEditorText();
+            IndentText.Text = CodeFormatter.DetectIndentation(text);
+            LineEndingButton.Content = CodeFormatter.DetectLineEnding(text);
+        }
         EncodingButton.Content = _encoding?.Name ?? "";
         EncodingButton.IsVisible = _encoding is not null;
         EditorZoomButton.Content = $"{Math.Round(Editor.FontSize / DefaultEditorFontSize * 100)}%";
@@ -1282,12 +1330,21 @@ public partial class FileViewerWindow : Window
 
         UpdateSymbolCrumb();
 
-        var text = GetEditorText();
-        var brackets = text.Length <= MaxHighlightedChars
-            ? BracketMatcher.FindMatchingBracket(text, Editor.CaretOffset)
-            : null;
+        var doc = Editor.Document;
+        var len = doc.TextLength;
+        (int OpenOffset, int CloseOffset)? brackets = null;
+        if (len > 0 && len <= MaxHighlightedChars)
+        {
+            var offset = Editor.CaretOffset;
+            var nearBracket = (offset >= 0 && offset < len && IsBracketChar(doc.GetCharAt(offset))) ||
+                              (offset > 0 && offset - 1 < len && IsBracketChar(doc.GetCharAt(offset - 1)));
+            if (nearBracket)
+                brackets = BracketMatcher.FindMatchingBracket(GetEditorText(), offset);
+        }
         _highlighter.SetBrackets(Editor.TextArea.TextView, brackets);
     }
+
+    private static bool IsBracketChar(char c) => c is '(' or ')' or '{' or '}' or '[' or ']';
 
     private void OnEditorPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
@@ -1351,6 +1408,10 @@ public partial class FileViewerWindow : Window
 
     private void CloseFindBar()
     {
+        _findTimer.Stop();
+        _findCts?.Cancel();
+        _activeFindTask = null;
+        _activeFindJumps = false;
         EditorFindBar.IsVisible = false;
         _searchMatches = [];
         _markdownMatches = [];
@@ -1363,28 +1424,85 @@ public partial class FileViewerWindow : Window
         else Editor.TextArea.Focus();
     }
 
-    private void UpdateFindMatches(bool jumpToNearest)
+    private void ScheduleFindUpdate()
+    {
+        _findTimer.Stop();
+        if (string.IsNullOrEmpty(FindBox.Text))
+        {
+            UpdateFindMatches(jumpToNearest: true);
+            return;
+        }
+        _findTimer.Start();
+    }
+
+    private void UpdateFindMatches(bool jumpToNearest) => _ = UpdateFindMatchesAsync(jumpToNearest);
+
+    private Task UpdateFindMatchesAsync(bool jumpToNearest)
+    {
+        _findTimer.Stop();
+        _findCts?.Cancel();
+        var cts = _findCts = new CancellationTokenSource();
+        _activeFindJumps = jumpToNearest;
+        var task = UpdateFindMatchesCoreAsync(jumpToNearest, cts.Token);
+        _activeFindTask = task;
+        return task;
+    }
+
+    private async Task UpdateFindMatchesCoreAsync(bool jumpToNearest, CancellationToken token)
     {
         var query = FindBox.Text ?? "";
         var matchCase = MatchCaseToggle.IsChecked == true;
         var wholeWord = WholeWordToggle.IsChecked == true;
         var useRegex = RegexToggle.IsChecked == true;
+        var currentPath = FilePath;
 
-        if (MarkdownScroll.IsVisible && _markdownView is not null)
+        if (MarkdownScroll.IsVisible && _markdownView is { } mdView)
         {
             _searchMatches = [];
-            _markdownMatches = _markdownView.Find(query, matchCase, wholeWord, useRegex, out var validMdRegex);
-            FindBox.Classes.Set("invalid", !validMdRegex);
-
-            if (query.Length == 0 || !validMdRegex)
+            if (query.Length == 0)
             {
+                mdView.ClearSearch();
+                _markdownMatches = [];
+                _activeMatchIndex = -1;
+                FindBox.Classes.Set("invalid", false);
+                FindCountText.Text = "";
+                return;
+            }
+
+            MarkdownView.MarkdownDocumentView.SearchResult result;
+            if (mdView.EntryCount <= 400)
+            {
+                result = mdView.Search(query, matchCase, wholeWord, useRegex, token);
+            }
+            else
+            {
+                try
+                {
+                    result = await Task.Run(() => mdView.Search(query, matchCase, wholeWord, useRegex, token), token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+
+            if (token.IsCancellationRequested || FilePath != currentPath || !MarkdownScroll.IsVisible || _markdownView != mdView)
+                return;
+
+            FindBox.Classes.Set("invalid", !result.ValidRegex);
+            if (!result.ValidRegex)
+            {
+                mdView.ClearSearch();
+                _markdownMatches = [];
                 _activeMatchIndex = -1;
                 FindCountText.Text = "";
                 return;
             }
 
+            _markdownMatches = result.Locations;
             if (_markdownMatches.Count == 0)
             {
+                mdView.ApplySearchResult(result, -1);
                 _activeMatchIndex = -1;
                 FindCountText.Text = Loc.Get("ViewerFindNoMatches");
                 return;
@@ -1393,19 +1511,56 @@ public partial class FileViewerWindow : Window
             if (jumpToNearest || _activeMatchIndex >= _markdownMatches.Count || _activeMatchIndex < 0)
                 _activeMatchIndex = 0;
 
+            var (viewTop, viewBottom) = GetMarkdownViewport();
+            mdView.ApplySearchResult(result, _activeMatchIndex, viewTop, viewBottom);
             FindCountText.Text = Loc.Get("ViewerFindCount", _activeMatchIndex + 1, _markdownMatches.Count);
-            _markdownView.SetActiveMatch(_activeMatchIndex);
             if (jumpToNearest) ScrollMarkdownToMatch(_activeMatchIndex);
             return;
         }
 
         _markdownMatches = [];
-        _searchMatches = CodeEditorSearch.FindMatches(
-            GetEditorText(), query, matchCase, wholeWord, useRegex, out var validRegex);
+        if (query.Length == 0)
+        {
+            _searchMatches = [];
+            _activeMatchIndex = -1;
+            FindBox.Classes.Set("invalid", false);
+            FindCountText.Text = "";
+            _highlighter.SetMatches(Editor.TextArea.TextView, [], -1);
+            return;
+        }
 
+        var text = GetEditorText();
+        IReadOnlyList<TextSpan> matches;
+        bool validRegex;
+        if (text.Length <= 150_000)
+        {
+            matches = CodeEditorSearch.FindMatches(
+                text, query, matchCase, wholeWord, useRegex, CodeEditorSearch.DefaultMaxMatches, out validRegex, token);
+        }
+        else
+        {
+            try
+            {
+                (matches, validRegex) = await Task.Run(() =>
+                {
+                    var found = CodeEditorSearch.FindMatches(
+                        text, query, matchCase, wholeWord, useRegex, CodeEditorSearch.DefaultMaxMatches, out var valid, token);
+                    return (found, valid);
+                }, token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+
+        if (token.IsCancellationRequested || FilePath != currentPath || !EditorContainer.IsVisible)
+            return;
+
+        _searchMatches = matches;
         FindBox.Classes.Set("invalid", !validRegex);
 
-        if (query.Length == 0 || !validRegex)
+        if (!validRegex)
         {
             _activeMatchIndex = -1;
             FindCountText.Text = "";
@@ -1431,8 +1586,20 @@ public partial class FileViewerWindow : Window
         if (jumpToNearest) SelectSearchMatch(_activeMatchIndex);
     }
 
-    private void StepSearchMatch(bool backward)
+    private async void StepSearchMatch(bool backward)
     {
+        if (_findTimer.IsEnabled)
+        {
+            await UpdateFindMatchesAsync(jumpToNearest: true);
+            return;
+        }
+        if (_activeFindTask is { IsCompleted: false } pending)
+        {
+            var jumped = _activeFindJumps;
+            await pending;
+            if (!EditorFindBar.IsVisible || jumped) return;
+        }
+
         if (MarkdownScroll.IsVisible && _markdownView is not null)
         {
             if (_markdownMatches.Count == 0) return;
@@ -1456,6 +1623,21 @@ public partial class FileViewerWindow : Window
         SelectSearchMatch(_activeMatchIndex);
     }
 
+    private (double Top, double Bottom) GetMarkdownViewport()
+    {
+        var top = MarkdownScroll.Offset.Y;
+        var height = MarkdownScroll.Viewport.Height;
+        return height > 0 ? (top, top + height) : (0, 0);
+    }
+
+    private void UpdateMarkdownVisibleHighlights()
+    {
+        if (!MarkdownScroll.IsVisible || _markdownView is null) return;
+        var (top, bottom) = GetMarkdownViewport();
+        if (bottom > top)
+            _markdownView.UpdateViewport(top, bottom);
+    }
+
     private void ScrollMarkdownToMatch(int index)
     {
         if (index < 0 || index >= _markdownMatches.Count) return;
@@ -1463,6 +1645,22 @@ public partial class FileViewerWindow : Window
         Dispatcher.UIThread.Post(() =>
         {
             if (!MarkdownScroll.IsVisible) return;
+            var innerScroll = match.Block.FindAncestorOfType<ScrollViewer>();
+            if (innerScroll is not null && innerScroll != MarkdownScroll &&
+                match.Block.TranslatePoint(new Point(0, 0), innerScroll) is { } inScrollOrigin)
+            {
+                var charRectX = match.Block.TextLayout.HitTestTextPosition(match.OffsetInBlock);
+                var matchLeftInView = inScrollOrigin.X + charRectX.X;
+                var matchRightInView = inScrollOrigin.X + charRectX.Right;
+                var viewW = innerScroll.Viewport.Width;
+                if (viewW > 0 && (matchLeftInView < 20 || matchRightInView > viewW - 20))
+                {
+                    var absMatchX = innerScroll.Offset.X + matchLeftInView;
+                    var maxX = Math.Max(0, innerScroll.Extent.Width - viewW);
+                    innerScroll.Offset = new Vector(Math.Clamp(absMatchX - viewW / 3, 0, maxX), innerScroll.Offset.Y);
+                }
+            }
+
             if (match.Block.TranslatePoint(new Point(0, 0), MarkdownHost) is not { } origin) return;
             var charRect = match.Block.TextLayout.HitTestTextPosition(match.OffsetInBlock);
             var targetTop = origin.Y + charRect.Y;
@@ -1472,6 +1670,7 @@ public partial class FileViewerWindow : Window
             if (viewHeight <= 0) return;
             if (targetTop < viewTop + 20 || targetBottom > viewTop + viewHeight - 20)
                 MarkdownScroll.Offset = new Vector(MarkdownScroll.Offset.X, Math.Max(0, targetTop - viewHeight / 3));
+            UpdateMarkdownVisibleHighlights();
         }, DispatcherPriority.Background);
     }
 
@@ -1546,9 +1745,20 @@ public partial class FileViewerWindow : Window
         }
     }
 
-    private void ReplaceCurrentMatch()
+    private async void ReplaceCurrentMatch()
     {
-        if (!IsEditing || Editor.IsReadOnly || _searchMatches.Count == 0) return;
+        if (!IsEditing || Editor.IsReadOnly) return;
+        if (_findTimer.IsEnabled)
+        {
+            await UpdateFindMatchesAsync(jumpToNearest: true);
+            return;
+        }
+        if (_activeFindTask is { IsCompleted: false } pending)
+        {
+            await pending;
+            return;
+        }
+        if (_searchMatches.Count == 0) return;
 
         if (_activeMatchIndex < 0 || _activeMatchIndex >= _searchMatches.Count)
         {
@@ -1578,6 +1788,9 @@ public partial class FileViewerWindow : Window
     private void ReplaceAllMatches()
     {
         if (!IsEditing || Editor.IsReadOnly) return;
+        _findTimer.Stop();
+        _findCts?.Cancel();
+
         var query = FindBox.Text ?? "";
         if (query.Length == 0) return;
 
@@ -1714,7 +1927,7 @@ public partial class FileViewerWindow : Window
         var converted = CodeFormatter.ConvertLineEndings(text, toCrlf);
         if (converted != text)
             Editor.Document.Replace(0, Editor.Document.TextLength, converted);
-        UpdateEditorStatusBar();
+        UpdateEditorStatusBar(forceTextMetrics: true);
     }
 
     private void ShowEncodingMenu()
@@ -1801,7 +2014,8 @@ public partial class FileViewerWindow : Window
         if (!ctrl && !alt && e.Key == Key.F3)
         {
             var hasMatches = MarkdownScroll.IsVisible ? _markdownMatches.Count > 0 : _searchMatches.Count > 0;
-            if (hasMatches) StepSearchMatch(backward: shift);
+            var pendingSearch = EditorFindBar.IsVisible && (_findTimer.IsEnabled || _activeFindTask is { IsCompleted: false });
+            if (hasMatches || pendingSearch) StepSearchMatch(backward: shift);
             else OpenFindBar(replace: false, goToLine: false);
             e.Handled = true;
             return;
@@ -1911,7 +2125,9 @@ public partial class FileViewerWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _cts.Cancel();
+        _findCts?.Cancel();
         _structureTimer.Stop();
+        _findTimer.Stop();
         if (_foldingManager is not null)
         {
             FoldingManager.Uninstall(_foldingManager);

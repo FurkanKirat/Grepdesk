@@ -78,4 +78,29 @@ public class FileIndexTests
         Assert.DoesNotContain("b.txt", names);
         Assert.Contains("c.txt", names); // same prefix, different folder
     }
+
+    [Fact]
+    public async Task CoversFolder_and_SearchUnder_scope_to_the_target_subtree()
+    {
+        using var tmp = new TempDir();
+        tmp.WriteFile("docs/report.txt", "hello");
+        tmp.WriteFile("docs/sub/notes.txt", "world");
+        tmp.WriteFile("docs2/other.txt", "nope");
+
+        var index = await Build(tmp);
+
+        Assert.True(index.CoversFolder(tmp.Path));
+        Assert.True(index.CoversFolder(tmp.Combine("docs")));
+        Assert.False(index.CoversFolder(Path.GetDirectoryName(tmp.Path)!));
+
+        var allUnderDocs = index.SearchUnder(tmp.Combine("docs"), "").Select(r => r.FileName).ToList();
+        Assert.Contains("report.txt", allUnderDocs);
+        Assert.Contains("notes.txt", allUnderDocs);
+        Assert.DoesNotContain("other.txt", allUnderDocs);
+        Assert.DoesNotContain("docs", allUnderDocs);
+
+        var filtered = index.SearchUnder(tmp.Combine("docs"), "note");
+        Assert.Single(filtered);
+        Assert.Equal("notes.txt", filtered[0].FileName);
+    }
 }

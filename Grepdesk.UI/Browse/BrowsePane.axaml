@@ -1,0 +1,62 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Grepdesk.UI.Browse.BrowsePane"
+             Background="Transparent">
+
+    <UserControl.Styles>
+        <Style Selector="Button.tabNew">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+            <Setter Property="Padding" Value="7,4"/>
+            <Setter Property="CornerRadius" Value="5"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+        <Style Selector="Button.tabNew:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="ToggleButton.tabDual">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#a6adc8"/>
+            <Setter Property="Padding" Value="7,4"/>
+            <Setter Property="CornerRadius" Value="5"/>
+        </Style>
+        <Style Selector="ToggleButton.tabDual:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#313244"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+        <Style Selector="ToggleButton.tabDual:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#89b4fa"/>
+        </Style>
+        <Style Selector="Button.tabClose">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#6c7086"/>
+            <Setter Property="Padding" Value="3,1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#45475a"/>
+            <Setter Property="Foreground" Value="#cdd6f4"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Border x:Name="PaneFrame" BorderThickness="1" BorderBrush="Transparent" CornerRadius="8" Padding="2">
+        <DockPanel>
+            <!-- Tab strip -->
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <ToggleButton x:Name="DualPaneToggle" DockPanel.Dock="Right" Classes="tabDual" IsVisible="False" Margin="4,0,0,0">
+                    <PathIcon Data="M3 4h8v16H3V4zm10 0h8v16h-8V4z" Width="14" Height="14"/>
+                </ToggleButton>
+                <Button x:Name="NewTabButton" DockPanel.Dock="Left" Classes="tabNew" Content="+" Margin="4,0,0,0"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TabStrip" Orientation="Horizontal" Spacing="4"/>
+                </ScrollViewer>
+            </DockPanel>
+
+            <!-- Active tab's BrowseView -->
+            <Panel x:Name="TabHost"/>
+        </DockPanel>
+    </Border>
+</UserControl>

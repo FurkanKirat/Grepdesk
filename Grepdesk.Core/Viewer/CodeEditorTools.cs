@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -26,6 +27,110 @@ public static class CodeEditorSearch
     public const int DefaultMaxMatches = 10_000;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// Pre-compiled search query (literal or regex) that can be reused across many blocks
+    /// without re-compiling regexes or allocating per non-matching block.
+    /// </summary>
+    public sealed class PreparedSearch
+    {
+        private readonly string _query;
+        private readonly StringComparison _comparison;
+        private readonly bool _wholeWord;
+        private readonly Regex? _regex;
+
+        private PreparedSearch(string query, StringComparison comparison, bool wholeWord, Regex? regex)
+        {
+            _query = query;
+            _comparison = comparison;
+            _wholeWord = wholeWord;
+            _regex = regex;
+        }
+
+        public bool IsEmpty => _query.Length == 0;
+
+        public static bool TryCreate(
+            string query,
+            bool matchCase,
+            bool wholeWord,
+            bool useRegex,
+            out PreparedSearch? search)
+        {
+            if (string.IsNullOrEmpty(query))
+            {
+                search = new PreparedSearch("", StringComparison.Ordinal, false, null);
+                return true;
+            }
+
+            if (!useRegex)
+            {
+                var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+                search = new PreparedSearch(query, comparison, wholeWord, null);
+                return true;
+            }
+
+            var pattern = wholeWord ? $"(?<!\\w)(?:{query})(?!\\w)" : query;
+            var options = matchCase ? RegexOptions.Multiline : RegexOptions.IgnoreCase | RegexOptions.Multiline;
+            try
+            {
+                var regex = new Regex(pattern, options, RegexTimeout);
+                search = new PreparedSearch(query, StringComparison.Ordinal, wholeWord, regex);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                search = null;
+                return false;
+            }
+        }
+
+        public void FindInto(
+            string text,
+            List<TextSpan> output,
+            int maxMatches = DefaultMaxMatches,
+            CancellationToken cancellationToken = default)
+        {
+            if (IsEmpty || string.IsNullOrEmpty(text) || output.Count >= maxMatches)
+                return;
+
+            if (_regex is null)
+            {
+                var index = 0;
+                var checks = 0;
+                while (index <= text.Length - _query.Length)
+                {
+                    if ((checks++ & 63) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    var found = text.IndexOf(_query, index, _comparison);
+                    if (found < 0) break;
+
+                    if (!_wholeWord || IsWholeWord(text, found, _query.Length))
+                    {
+                        output.Add(new TextSpan(found, _query.Length));
+                        if (output.Count >= maxMatches) break;
+                    }
+
+                    index = found + Math.Max(1, _query.Length);
+                }
+                return;
+            }
+
+            try
+            {
+                var checks = 0;
+                for (var match = _regex.Match(text); match.Success; match = match.NextMatch())
+                {
+                    if ((checks++ & 63) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    if (match.Length == 0) continue;
+                    output.Add(new TextSpan(match.Index, match.Length));
+                    if (output.Count >= maxMatches) break;
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Return whatever matched before timeout so large regexes stay responsive.
+            }
+        }
+    }
+
     public static IReadOnlyList<TextSpan> FindMatches(
         string text,
         string query,
@@ -33,7 +138,7 @@ public static class CodeEditorSearch
         bool wholeWord,
         bool useRegex,
         out bool validRegex) =>
-        FindMatches(text, query, matchCase, wholeWord, useRegex, DefaultMaxMatches, out validRegex);
+        FindMatches(text, query, matchCase, wholeWord, useRegex, DefaultMaxMatches, out validRegex, CancellationToken.None);
 
     internal static IReadOnlyList<TextSpan> FindMatches(
         string text,
@@ -42,72 +147,31 @@ public static class CodeEditorSearch
         bool wholeWord,
         bool useRegex,
         int maxMatches,
-        out bool validRegex)
+        out bool validRegex) =>
+        FindMatches(text, query, matchCase, wholeWord, useRegex, maxMatches, out validRegex, CancellationToken.None);
+
+    public static IReadOnlyList<TextSpan> FindMatches(
+        string text,
+        string query,
+        bool matchCase,
+        bool wholeWord,
+        bool useRegex,
+        int maxMatches,
+        out bool validRegex,
+        CancellationToken cancellationToken)
     {
-        validRegex = true;
-        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(query))
-            return [];
-
-        if (!useRegex)
-            return FindLiteralMatches(text, query, matchCase, wholeWord, maxMatches);
-
-        var pattern = wholeWord ? $"(?<!\\w)(?:{query})(?!\\w)" : query;
-        var options = matchCase ? RegexOptions.Multiline : RegexOptions.IgnoreCase | RegexOptions.Multiline;
-
-        Regex regex;
-        try
-        {
-            regex = new Regex(pattern, options, RegexTimeout);
-        }
-        catch (ArgumentException)
+        if (!PreparedSearch.TryCreate(query, matchCase, wholeWord, useRegex, out var search) || search is null)
         {
             validRegex = false;
             return [];
         }
 
+        validRegex = true;
+        if (search.IsEmpty || string.IsNullOrEmpty(text) || maxMatches <= 0)
+            return [];
+
         var results = new List<TextSpan>();
-        try
-        {
-            foreach (Match match in regex.Matches(text))
-            {
-                if (match.Length == 0) continue;
-                results.Add(new TextSpan(match.Index, match.Length));
-                if (results.Count >= maxMatches) break;
-            }
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            // Return whatever matched before timeout so large regexes stay responsive.
-        }
-
-        return results;
-    }
-
-    private static List<TextSpan> FindLiteralMatches(
-        string text,
-        string query,
-        bool matchCase,
-        bool wholeWord,
-        int maxMatches)
-    {
-        var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        var results = new List<TextSpan>();
-        var index = 0;
-
-        while (index <= text.Length - query.Length)
-        {
-            var found = text.IndexOf(query, index, comparison);
-            if (found < 0) break;
-
-            if (!wholeWord || IsWholeWord(text, found, query.Length))
-            {
-                results.Add(new TextSpan(found, query.Length));
-                if (results.Count >= maxMatches) break;
-            }
-
-            index = found + Math.Max(1, query.Length);
-        }
-
+        search.FindInto(text, results, maxMatches, cancellationToken);
         return results;
     }
 

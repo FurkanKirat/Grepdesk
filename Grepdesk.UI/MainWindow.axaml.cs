@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource _searchCts = new();
     private string _lastQuery = "";
     private List<string>? _selectedRoots; // null = whole PC
+    private string? _searchScopeFolder; // sub-folder filter when searching inside an already-built index
     private bool _scopeChosen;
     private List<SearchResult> _allMatches = []; // every match for the last query (after filters), unsorted
     private ResultFilter _filter = new();
@@ -496,7 +497,7 @@ public partial class MainWindow : Window
         var visible = Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForPreview;
         NamePreview.IsVisible = ContentPreview.IsVisible = visible;
         // The browser also has its places column, so it needs more room before the preview fits.
-        BrowsePage.PreviewPanel.IsVisible = Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForBrowsePreview;
+        BrowsePage.SetPreviewVisible(Settings.ShowPreview && PageHost.Bounds.Width >= MinWidthForBrowsePreview);
     }
 
     /// <summary>
@@ -669,18 +670,19 @@ public partial class MainWindow : Window
     /// Launched with a folder (e.g. from Explorer's context menu): browse it,
     /// and have both search pages ready to look inside it.
     /// </summary>
-    private void OpenWithFolder(string folder)
+    private void OpenWithFolder(string folder, bool navigate = true)
     {
         _contentSearchFolder = folder;
         ContentFolderText.Text = folder;
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
+        _searchScopeFolder = null;
         _selectedRoots = [folder];
         _scopeChosen = true;
         UpdateScopeText();
         ReindexButton.IsEnabled = true;
         _ = StartIndexingIfSmallAsync(folder);
-        _ = BrowsePage.NavigateAsync(folder);
+        if (navigate) _ = BrowsePage.NavigateAsync(folder);
     }
 
     private async Task StartIndexingIfSmallAsync(string folder)
@@ -696,11 +698,13 @@ public partial class MainWindow : Window
 
     private void UpdateScopeText()
     {
-        ScopeText.Text = !_scopeChosen
-            ? Loc.Get("NotSelected")
-            : _selectedRoots is null
-                ? Loc.Get("ScopeEntirePc")
-                : string.Join(";  ", _selectedRoots);
+        ScopeText.Text = _searchScopeFolder is not null
+            ? _searchScopeFolder
+            : !_scopeChosen
+                ? Loc.Get("NotSelected")
+                : _selectedRoots is null
+                    ? Loc.Get("ScopeEntirePc")
+                    : string.Join(";  ", _selectedRoots);
     }
 
     // =====================================================================
@@ -728,12 +732,14 @@ public partial class MainWindow : Window
 
         if (paths.Count == 0) return;
 
+        _searchScopeFolder = null;
         _selectedRoots = paths;
         await StartIndexingAsync();
     }
 
     private async Task ScanWholeComputerAsync()
     {
+        _searchScopeFolder = null;
         _selectedRoots = null;
         await StartIndexingAsync();
     }
@@ -814,9 +820,12 @@ public partial class MainWindow : Window
 
         var sortMode = Settings.Sort;
         var filter = _filter;
+        var scopeFolder = _searchScopeFolder;
         var (all, firstPage) = await Task.Run(() =>
         {
-            var matches = _index.Search(query, token);
+            var matches = scopeFolder is not null
+                ? _index.SearchUnder(scopeFolder, query, token)
+                : _index.Search(query, token);
             if (!filter.IsEmpty)
                 matches = matches.Where(filter.ToPredicate()).ToList();
             return (matches, ResultOrdering.TakeSorted(matches, PageSize, ResultOrdering.For(sortMode), token));
@@ -1127,11 +1136,25 @@ public partial class MainWindow : Window
             _contentSearchFolder = folder;
             ContentFolderText.Text = folder;
             SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
-            _selectedRoots = [folder];
-            _updatingControls = true; // the scan below runs the search; don't start one per keystroke
+            _updatingControls = true; // the search/scan below runs the search; don't start one per keystroke
             SearchBox.Text = query;
             _lastQuery = query;
             _updatingControls = false;
+
+            if (_index.CoversFolder(folder))
+            {
+                _searchScopeFolder = folder;
+                _scopeChosen = true;
+                UpdateScopeText();
+                ReindexButton.IsEnabled = true;
+                await _searchCts.CancelAsync();
+                _searchCts = new CancellationTokenSource();
+                await RunSearchAsync(query, _searchCts.Token);
+                return;
+            }
+
+            _searchScopeFolder = null;
+            _selectedRoots = [folder];
             await StartIndexingAsync();
         };
         BrowsePage.Removed += paths =>
@@ -1150,13 +1173,11 @@ public partial class MainWindow : Window
 
         if (startFolder is not null)
         {
-            OpenWithFolder(startFolder);
+            _ = BrowsePage.RestoreOrInitAsync(startFolder);
+            OpenWithFolder(startFolder, navigate: false);
             return;
         }
-        var last = Settings.LastBrowseFolder;
-        _ = BrowsePage.NavigateAsync(last is not null && Directory.Exists(last)
-            ? last
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        _ = BrowsePage.RestoreOrInitAsync(null);
     }
 
     /// <summary>Switches to the Organize page showing <paramref name="folder"/>.</summary>
@@ -1222,6 +1243,8 @@ public partial class MainWindow : Window
         new("Ctrl+Shift+N", "ShortcutBrowseNewFolder"),
         new("Ctrl+Shift+S", "ShortcutBrowseCalculateSizes"),
         new("Ctrl+H", "ShortcutBrowseHidden"),
+        new("Ctrl+T / Ctrl+W / Ctrl+Tab", "ShortcutBrowseTabs"),
+        new("F3 / F6", "ShortcutBrowseDualPane"),
     ];
 
     private void FillShortcutsTable()

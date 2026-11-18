@@ -42,6 +42,13 @@ public static class AddressResolver
             }
             var full = Path.GetFullPath(text);
             if (Directory.Exists(full)) return new AddressTarget(AddressKind.Folder, PathUtil.Normalize(full));
+            if (ZipBrowsePath.TrySplit(full, out var archive, out var inner))
+            {
+                if (inner.Length == 0 || ZipFolderListing.DirectoryExists(archive, inner))
+                    return new AddressTarget(AddressKind.Folder, PathUtil.Normalize(full));
+                if (ZipFolderListing.EntryExists(archive, inner))
+                    return new AddressTarget(AddressKind.File, full);
+            }
             if (File.Exists(full)) return new AddressTarget(AddressKind.File, full);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or IOException) { }
