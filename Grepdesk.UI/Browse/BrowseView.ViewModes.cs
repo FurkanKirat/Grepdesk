@@ -59,7 +59,6 @@ public partial class BrowseView
     /// <summary>Makes the list match the chosen view; cheap when nothing changed. Called after every render.</summary>
     private void ApplyViewMode()
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew(); // TMP-TRACE
         var chosen = FolderViewModes.Normalize(Settings.BrowseViewMode);
         var mode = FolderViewModes.Effective(chosen, _totalRows);
         if (mode == _appliedMode) return;
@@ -89,7 +88,6 @@ public partial class BrowseView
         foreach (var row in selected)
             if (_rows.Contains(row)) FileList.SelectedItems!.Add(row);
         if (selected.Count > 0 && _rows.Contains(selected[0])) FileList.ScrollIntoView(selected[0]);
-        Tr.Log($"ApplyViewMode switched to {mode} in {sw.ElapsedMilliseconds} ms"); // TMP-TRACE
     }
 
     private void SetViewMode(FolderViewMode mode)
@@ -178,9 +176,7 @@ public partial class BrowseView
 
     private async Task SetThumbnailAsync(BrowseRow row, FolderViewMode mode, CancellationToken ct)
     {
-        var t0 = System.Diagnostics.Stopwatch.StartNew(); // TMP-TRACE
         var thumbnail = await _icons!.GetThumbnail(row.Entry, FolderViewModes.ThumbnailPixels(mode), ct);
-        if (t0.ElapsedMilliseconds > 400) Tr.Log($"slow thumbnail {t0.ElapsedMilliseconds} ms: {System.IO.Path.GetFileName(row.FullPath)}"); if (++Tr.Thumbs % 50 == 0) Tr.Log($"thumbnails done: {Tr.Thumbs}"); // TMP-TRACE
         if (thumbnail is null || ct.IsCancellationRequested) return;
 
         // How much the cell enlarges the picture (cells draw it fitted into 64 / 128 DIP).

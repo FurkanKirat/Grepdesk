@@ -236,7 +236,7 @@ public partial class BrowsePane : UserControl
 
     private static string FormatTabTitle(string path)
     {
-        if (string.IsNullOrEmpty(path)) return Loc.Get("BrowseThisPc");
+        if (string.IsNullOrEmpty(path)) return Loc.Get("PlaceThisPc");
         var name = Path.GetFileName(PathUtil.Normalize(path));
         return string.IsNullOrEmpty(name) ? path : name;
     }

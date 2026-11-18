@@ -258,7 +258,7 @@ public partial class BrowseView : UserControl
     /// <param name="select">Select this item once listed (the folder we came up from, a renamed file).</param>
     private async Task LoadAsync(bool folderChanged, string? select)
     {
-        var folder = _history.Current!; Tr.StartStallMonitor(); Tr.Log($"LoadAsync start {folder} (folderChanged={folderChanged})"); // TMP-TRACE
+        var folder = _history.Current!;
         // Opening a folder replaces the focused row; unless the focus was elsewhere, give it back to the list.
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Visual;
         var refocus = folderChanged && (focused is null || (this.IsVisualAncestorOf(focused) && focused != AddressBox && focused != FilterBox));
@@ -337,9 +337,7 @@ public partial class BrowseView : UserControl
         _calculatingSizes = hasUncalculated;
         _error = contents.Error;
         RefreshCutMarks();
-        Tr.Log($"listed {_entries.Count} entries"); // TMP-TRACE
         Render(reset: folderChanged);
-        Tr.Log("Render returned"); Dispatcher.UIThread.Post(() => Tr.Log("UI idle after Render (layout+paint done)"), DispatcherPriority.ApplicationIdle); // TMP-TRACE
         if (hasUncalculated)
             _ = ComputeFolderSizesAsync(_entries.Where(e => e.IsDirectory && e.Size < 0).ToList(), forceFull: false, ct);
         if (refocus && IsEffectivelyVisible)
@@ -703,7 +701,6 @@ public partial class BrowseView : UserControl
         // Icons only for rows that are actually on screen: a folder of 50,000
         // files shouldn't queue 50,000 icon requests.
         if (_icons is null || InZip || e.Container.DataContext is not BrowseRow { Icon: null } row) return;
-        if (++Tr.Prepared % 100 == 0 || Tr.Prepared == 1) Tr.Log($"container prepared #{Tr.Prepared}"); // TMP-TRACE
         if (InIconView)
         {
             ScheduleThumbnailPass(); // fetched for the cells that are (nearly) on screen
