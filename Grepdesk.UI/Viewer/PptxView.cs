@@ -59,7 +59,7 @@ internal sealed class PptxPreview : IDisposable
 /// speaker notes panel, keyboard slide navigation, zoom controls, and in-place
 /// text/shape editing with undo/redo.
 /// </summary>
-internal sealed class PptxView : DockPanel, IViewerBody
+internal sealed class PptxView : DockPanel, ISearchableViewerBody
 {
     private const double MinZoom = 0.25, MaxZoom = 3.0, ZoomStep = 1.15;
     private const double Dip = 96.0 / 72.0;
@@ -73,6 +73,7 @@ internal sealed class PptxView : DockPanel, IViewerBody
     private static readonly IBrush SelectedBorder = new ImmutableSolidColorBrush(Color.Parse("#89b4fa"));
     private static readonly IBrush SubtleEditBorder = new ImmutableSolidColorBrush(Color.Parse("#89b4fa"), 0.45);
     private static readonly IBrush HighlightBrush = new ImmutableSolidColorBrush(Color.Parse("#ffd400"), 0.55);
+    private static readonly IBrush ActiveHighlightBrush = new ImmutableSolidColorBrush(Color.Parse("#ff8c00"), 0.85);
     private static readonly IBrush DefaultSlideText = Brushes.Black;
 
     private PptxPreview _preview;
@@ -82,12 +83,18 @@ internal sealed class PptxView : DockPanel, IViewerBody
     private readonly List<PptxEditDocument.Snapshot> _undoStack = [];
     private readonly List<PptxEditDocument.Snapshot> _redoStack = [];
 
+    private bool _interactiveSearchActive;
+    private List<PptxSearchMatch> _searchMatches = [];
+    private int _activeSearchIndex = -1;
+
     private int _slideIndex;
     private int _selectedEditableShape = -1;
     private int _activeEdit = -1;
     private bool _fit = true;
     private double _zoom = 1.0;
     private bool _updatingControls;
+
+    public string? InitialSearchQuery => _highlight;
 
     private sealed class ThumbSlot
     {
@@ -537,10 +544,31 @@ internal sealed class PptxView : DockPanel, IViewerBody
         // Update speaker notes
         _updatingControls = true;
         var hasNotes = !string.IsNullOrWhiteSpace(slide.Notes);
+        var noteMatches = _interactiveSearchActive ? CollectMatches(_slideIndex, PptxSearchTarget.Notes, -1, 0) : [];
         var canEditNotes = _editDoc is not null && slide.NotesPartPath is not null;
-        _notesPanel.IsVisible = hasNotes || canEditNotes;
-        _notesReadBlock.IsVisible = _editDoc is null;
-        _notesReadBlock.Text = slide.Notes;
+        _notesPanel.IsVisible = hasNotes || noteMatches.Count > 0 || canEditNotes;
+        _notesReadBlock.IsVisible = !canEditNotes && (hasNotes || noteMatches.Count > 0);
+        _notesReadBlock.Inlines?.Clear();
+        _notesReadBlock.Text = null;
+        if (_notesReadBlock.IsVisible)
+        {
+            if (_interactiveSearchActive && noteMatches.Count > 0)
+            {
+                var noteInlines = new InlineCollection();
+                AppendMatchedPlainText(noteInlines, slide.Notes, noteMatches, _activeSearchIndex, ViewerBar.Text, 12, FontWeight.Normal);
+                _notesReadBlock.Inlines = noteInlines;
+            }
+            else if (!_interactiveSearchActive && _highlight is not null && slide.Notes.Contains(_highlight, StringComparison.OrdinalIgnoreCase))
+            {
+                var noteInlines = new InlineCollection();
+                AppendQueryHighlightPlainText(noteInlines, slide.Notes, _highlight, ViewerBar.Text, 12, FontWeight.Normal);
+                _notesReadBlock.Inlines = noteInlines;
+            }
+            else
+            {
+                _notesReadBlock.Text = slide.Notes;
+            }
+        }
         _notesEditBox.IsVisible = canEditNotes;
         _notesEditBox.Text = slide.Notes;
         UpdateToolbarState();
@@ -560,12 +588,21 @@ internal sealed class PptxView : DockPanel, IViewerBody
             ClipToBounds = true,
         };
 
-        var backdrop = new HashSet<PptxShape>(slide.Backdrop, ReferenceEqualityComparer.Instance);
-        foreach (var shape in slide.Backdrop.Concat(slide.Shapes))
+        foreach (var shape in slide.Backdrop)
         {
-            var control = BuildShapeControl(shape, defaultFg, interactive);
+            var control = BuildShapeControl(shape, -1, defaultFg, interactive);
             if (control is null) continue;
-            if (backdrop.Contains(shape)) control.IsHitTestVisible = false;
+            control.IsHitTestVisible = false;
+            Canvas.SetLeft(control, shape.X * Dip);
+            Canvas.SetTop(control, shape.Y * Dip);
+            canvas.Children.Add(control);
+        }
+
+        for (var i = 0; i < slide.Shapes.Count; i++)
+        {
+            var shape = slide.Shapes[i];
+            var control = BuildShapeControl(shape, i, defaultFg, interactive);
+            if (control is null) continue;
             Canvas.SetLeft(control, shape.X * Dip);
             Canvas.SetTop(control, shape.Y * Dip);
             canvas.Children.Add(control);
@@ -573,7 +610,7 @@ internal sealed class PptxView : DockPanel, IViewerBody
         return canvas;
     }
 
-    private Control? BuildShapeControl(PptxShape shape, IBrush defaultFg, bool interactive)
+    private Control? BuildShapeControl(PptxShape shape, int shapeIndex, IBrush defaultFg, bool interactive)
     {
         switch (shape)
         {
@@ -588,17 +625,17 @@ internal sealed class PptxView : DockPanel, IViewerBody
                 };
 
             case PptxTableShape tableShape:
-                return BuildTableControl(tableShape, defaultFg);
+                return BuildTableControl(tableShape, shapeIndex, defaultFg, interactive);
 
             case PptxLineShape lineShape:
                 return BuildLineControl(lineShape);
 
             case PptxTextShape textShape:
                 if (!interactive || _editDoc is null || textShape.EditableIndex < 0)
-                    return BuildReadOnlyTextShape(textShape, defaultFg);
+                    return BuildReadOnlyTextShape(textShape, shapeIndex, defaultFg, interactive);
                 return textShape.EditableIndex == _activeEdit
                     ? BuildEditableTextShape(textShape, defaultFg)
-                    : BuildClickToEditShape(textShape, defaultFg);
+                    : BuildClickToEditShape(textShape, shapeIndex, defaultFg);
 
             default:
                 return null;
@@ -627,9 +664,9 @@ internal sealed class PptxView : DockPanel, IViewerBody
     };
 
     /// <summary>An editable shape at rest looks like the slide (bullets and all); clicking it swaps in a text box.</summary>
-    private Control BuildClickToEditShape(PptxTextShape shape, IBrush defaultFg)
+    private Control BuildClickToEditShape(PptxTextShape shape, int shapeIndex, IBrush defaultFg)
     {
-        var visual = BuildReadOnlyTextShape(shape, defaultFg);
+        var visual = BuildReadOnlyTextShape(shape, shapeIndex, defaultFg, interactive: true);
         visual.IsHitTestVisible = false;
         var selected = shape.EditableIndex == _selectedEditableShape;
         var wrapper = new Border
@@ -670,7 +707,7 @@ internal sealed class PptxView : DockPanel, IViewerBody
         };
     }
 
-    private Control BuildReadOnlyTextShape(PptxTextShape shape, IBrush defaultFg)
+    private Control BuildReadOnlyTextShape(PptxTextShape shape, int shapeIndex, IBrush defaultFg, bool interactive)
     {
         var stack = new StackPanel
         {
@@ -682,8 +719,9 @@ internal sealed class PptxView : DockPanel, IViewerBody
                 _ => VerticalAlignment.Top
             }
         };
-        foreach (var para in shape.Paragraphs)
+        for (var pIdx = 0; pIdx < shape.Paragraphs.Count; pIdx++)
         {
+            var para = shape.Paragraphs[pIdx];
             if (para.Runs.Count == 0)
             {
                 stack.Children.Add(new Border { Height = 12 });
@@ -702,8 +740,21 @@ internal sealed class PptxView : DockPanel, IViewerBody
                 },
             };
             var inlines = new InlineCollection();
-            foreach (var run in para.Runs)
-                AppendHighlightedRuns(inlines, run, defaultFg);
+            if (interactive && _interactiveSearchActive)
+            {
+                var matches = shapeIndex >= 0 ? CollectMatches(_slideIndex, PptxSearchTarget.TextShape, shapeIndex, pIdx) : [];
+                AppendMatchedParagraphRuns(inlines, para.Runs, matches, defaultFg);
+            }
+            else if (interactive)
+            {
+                foreach (var run in para.Runs)
+                    AppendHighlightedRuns(inlines, run, defaultFg);
+            }
+            else
+            {
+                foreach (var run in para.Runs)
+                    inlines.Add(MakePlainRun(run, defaultFg));
+            }
             tb.Inlines = inlines;
 
             var marL = para.MarginLeft ?? para.Level * 13.5;
@@ -819,6 +870,143 @@ internal sealed class PptxView : DockPanel, IViewerBody
         }
     }
 
+    private Run MakePlainRun(PptxRun run, IBrush defaultFg) => MakeStyledRun(
+        run.Text,
+        run.FontSize * Dip,
+        Font(run.FontFamily) ?? FontFamily.Default,
+        run.Color is { } c && TryBrush(c, out var b) ? b : defaultFg,
+        background: null,
+        run.Bold ? FontWeight.Bold : FontWeight.Normal,
+        run.Italic ? FontStyle.Italic : FontStyle.Normal,
+        run.Underline ? TextDecorations.Underline : null);
+
+    private static Run MakeStyledRun(
+        string text,
+        double fontSize,
+        FontFamily family,
+        IBrush fg,
+        IBrush? background,
+        FontWeight weight,
+        FontStyle style,
+        TextDecorationCollection? decor) => new(text)
+    {
+        FontSize = fontSize,
+        FontFamily = family,
+        Foreground = fg,
+        Background = background,
+        FontWeight = weight,
+        FontStyle = style,
+        TextDecorations = decor
+    };
+
+    private void AppendMatchedParagraphRuns(
+        InlineCollection inlines,
+        IReadOnlyList<PptxRun> runs,
+        List<(int GlobalIndex, TextSpan Span)> matches,
+        IBrush defaultFg)
+    {
+        if (matches.Count == 0)
+        {
+            foreach (var run in runs)
+                inlines.Add(MakePlainRun(run, defaultFg));
+            return;
+        }
+
+        var runStart = 0;
+        foreach (var run in runs)
+        {
+            if (run.Text.Length == 0) continue;
+            var runEnd = runStart + run.Text.Length;
+            var fg = run.Color is { } c && TryBrush(c, out var b) ? b : defaultFg;
+            var fontSize = run.FontSize * Dip;
+            var weight = run.Bold ? FontWeight.Bold : FontWeight.Normal;
+            var style = run.Italic ? FontStyle.Italic : FontStyle.Normal;
+            var decor = run.Underline ? TextDecorations.Underline : null;
+            var family = Font(run.FontFamily) ?? FontFamily.Default;
+            var pos = 0;
+
+            foreach (var (globalIndex, span) in matches)
+            {
+                var spanEnd = span.Offset + span.Length;
+                if (spanEnd <= runStart) continue;
+                if (span.Offset >= runEnd) break;
+
+                var localStart = Math.Max(pos, span.Offset - runStart);
+                var localEnd = Math.Min(run.Text.Length, spanEnd - runStart);
+                if (localEnd <= localStart) continue;
+
+                if (localStart > pos)
+                    inlines.Add(MakeStyledRun(run.Text[pos..localStart], fontSize, family, fg, null, weight, style, decor));
+
+                var bg = globalIndex == _activeSearchIndex ? ActiveHighlightBrush : HighlightBrush;
+                inlines.Add(MakeStyledRun(run.Text[localStart..localEnd], fontSize, family, Brushes.Black, bg, FontWeight.Bold, style, decor));
+                pos = localEnd;
+            }
+
+            if (pos < run.Text.Length)
+                inlines.Add(MakeStyledRun(run.Text[pos..], fontSize, family, fg, null, weight, style, decor));
+
+            runStart = runEnd;
+        }
+    }
+
+    private static void AppendMatchedPlainText(
+        InlineCollection inlines,
+        string text,
+        List<(int GlobalIndex, TextSpan Span)> matches,
+        int activeGlobalIndex,
+        IBrush fg,
+        double fontSize,
+        FontWeight weight)
+    {
+        var pos = 0;
+        foreach (var (globalIndex, span) in matches)
+        {
+            var start = Math.Clamp(Math.Max(pos, span.Offset), 0, text.Length);
+            var end = Math.Clamp(span.Offset + span.Length, 0, text.Length);
+            if (end <= start) continue;
+            if (start > pos)
+                inlines.Add(new Run(text[pos..start]) { FontSize = fontSize, Foreground = fg, FontWeight = weight });
+            inlines.Add(new Run(text[start..end])
+            {
+                FontSize = fontSize,
+                Foreground = Brushes.Black,
+                Background = globalIndex == activeGlobalIndex ? ActiveHighlightBrush : HighlightBrush,
+                FontWeight = FontWeight.Bold
+            });
+            pos = end;
+        }
+        if (pos < text.Length)
+            inlines.Add(new Run(text[pos..]) { FontSize = fontSize, Foreground = fg, FontWeight = weight });
+    }
+
+    private static void AppendQueryHighlightPlainText(
+        InlineCollection inlines,
+        string text,
+        string query,
+        IBrush fg,
+        double fontSize,
+        FontWeight weight)
+    {
+        var start = 0;
+        int idx;
+        while ((idx = text.IndexOf(query, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            if (idx > start)
+                inlines.Add(new Run(text[start..idx]) { FontSize = fontSize, Foreground = fg, FontWeight = weight });
+            inlines.Add(new Run(text.Substring(idx, query.Length))
+            {
+                FontSize = fontSize,
+                Foreground = Brushes.Black,
+                Background = HighlightBrush,
+                FontWeight = FontWeight.Bold
+            });
+            start = idx + query.Length;
+        }
+        if (start < text.Length)
+            inlines.Add(new Run(text[start..]) { FontSize = fontSize, Foreground = fg, FontWeight = weight });
+    }
+
     private Control BuildEditableTextShape(PptxTextShape shape, IBrush defaultFg)
     {
         var firstPara = shape.Paragraphs.FirstOrDefault();
@@ -902,7 +1090,7 @@ internal sealed class PptxView : DockPanel, IViewerBody
         return box;
     }
 
-    private Control BuildTableControl(PptxTableShape tableShape, IBrush defaultFg)
+    private Control BuildTableControl(PptxTableShape tableShape, int shapeIndex, IBrush defaultFg, bool interactive)
     {
         var grid = new Grid
         {
@@ -916,21 +1104,40 @@ internal sealed class PptxView : DockPanel, IViewerBody
         for (var r = 0; r < tableShape.RowCount; r++)
             grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-        foreach (var cell in tableShape.Cells)
+        for (var cIdx = 0; cIdx < tableShape.Cells.Count; cIdx++)
         {
+            var cell = tableShape.Cells[cIdx];
             var bg = cell.FillColor is { } fill && TryBrush(fill, out var fb)
                 ? fb
                 : (cell.Row == 0 ? new ImmutableSolidColorBrush(Color.Parse("#e6e9ef")) : Brushes.Transparent);
 
             var tb = new SelectableTextBlock
             {
-                Text = cell.Text,
                 Foreground = defaultFg,
                 FontSize = 13 * Dip,
                 FontWeight = cell.Bold ? FontWeight.Bold : FontWeight.Normal,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(6, 4),
             };
+            var cellMatches = interactive && _interactiveSearchActive && shapeIndex >= 0
+                ? CollectMatches(_slideIndex, PptxSearchTarget.TableCell, shapeIndex, cIdx)
+                : [];
+            if (cellMatches.Count > 0)
+            {
+                var inlines = new InlineCollection();
+                AppendMatchedPlainText(inlines, cell.Text, cellMatches, _activeSearchIndex, defaultFg, 13 * Dip, cell.Bold ? FontWeight.Bold : FontWeight.Normal);
+                tb.Inlines = inlines;
+            }
+            else if (interactive && !_interactiveSearchActive && _highlight is not null && cell.Text.Contains(_highlight, StringComparison.OrdinalIgnoreCase))
+            {
+                var inlines = new InlineCollection();
+                AppendQueryHighlightPlainText(inlines, cell.Text, _highlight, defaultFg, 13 * Dip, cell.Bold ? FontWeight.Bold : FontWeight.Normal);
+                tb.Inlines = inlines;
+            }
+            else
+            {
+                tb.Text = cell.Text;
+            }
 
             var border = new Border
             {
@@ -1066,10 +1273,101 @@ internal sealed class PptxView : DockPanel, IViewerBody
         Changed?.Invoke();
     }
 
+    // =====================================================================
+    // In-document search
+    // =====================================================================
+
+    public async Task<ViewerSearchResult> SearchAsync(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct)
+    {
+        _interactiveSearchActive = true;
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(query, options.MatchCase, options.WholeWord, options.UseRegex, out var prepared) || prepared is null)
+        {
+            _searchMatches = [];
+            _activeSearchIndex = -1;
+            RebuildSlideStage();
+            return new ViewerSearchResult(ValidRegex: false, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        if (prepared.IsEmpty)
+        {
+            _searchMatches = [];
+            _activeSearchIndex = -1;
+            RebuildSlideStage();
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        var doc = _doc;
+        var matches = doc.Slides.Count <= 40
+            ? DocumentSearch.SearchPptx(doc, prepared, CodeEditorSearch.DefaultMaxMatches, ct)
+            : await Task.Run(() => DocumentSearch.SearchPptx(doc, prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+
+        ct.ThrowIfCancellationRequested();
+
+        int activeIndex;
+        if (matches.Count == 0)
+            activeIndex = -1;
+        else if (jumpToMatch)
+            activeIndex = DocumentSearch.FindFirstAtOrAfter(matches, m => m.SlideIndex >= _slideIndex);
+        else
+            activeIndex = _activeSearchIndex >= 0 && _activeSearchIndex < matches.Count ? _activeSearchIndex : 0;
+
+        _searchMatches = matches;
+        _activeSearchIndex = activeIndex;
+
+        if (jumpToMatch && activeIndex >= 0 && matches[activeIndex].SlideIndex != _slideIndex)
+        {
+            _slideIndex = matches[activeIndex].SlideIndex;
+            _selectedEditableShape = -1;
+            _activeEdit = -1;
+            UpdateSidebarSelection();
+        }
+
+        RebuildSlideStage();
+        return new ViewerSearchResult(ValidRegex: true, MatchCount: matches.Count, ActiveIndex: activeIndex);
+    }
+
+    public int StepMatch(bool backward)
+    {
+        var next = DocumentSearch.StepIndex(_activeSearchIndex, _searchMatches.Count, backward);
+        if (next < 0) return -1;
+
+        _activeSearchIndex = next;
+        var targetSlide = _searchMatches[next].SlideIndex;
+        if (targetSlide != _slideIndex)
+        {
+            _slideIndex = targetSlide;
+            _selectedEditableShape = -1;
+            _activeEdit = -1;
+            UpdateSidebarSelection();
+        }
+        RebuildSlideStage();
+        return next;
+    }
+
+    public void ClearSearch()
+    {
+        _interactiveSearchActive = false;
+        _searchMatches = [];
+        _activeSearchIndex = -1;
+        RebuildSlideStage();
+    }
+
+    private List<(int GlobalIndex, TextSpan Span)> CollectMatches(int slideIndex, PptxSearchTarget target, int shapeIndex, int subIndex)
+    {
+        var list = new List<(int GlobalIndex, TextSpan Span)>();
+        for (var i = 0; i < _searchMatches.Count; i++)
+        {
+            var m = _searchMatches[i];
+            if (m.SlideIndex == slideIndex && m.Target == target && m.ShapeIndex == shapeIndex && m.SubIndex == subIndex)
+                list.Add((i, m.Span));
+        }
+        return list;
+    }
+
     private void OnStageKeyDown(object? sender, KeyEventArgs e)
     {
         if (_editDoc is null) return;
-        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var ctrl = e.KeyModifiers.HasFlag(OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control);
         if (ctrl && e.Key == Key.Z) { Undo(); e.Handled = true; }
         else if (ctrl && e.Key == Key.Y) { Redo(); e.Handled = true; }
     }

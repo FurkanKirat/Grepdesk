@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using Avalonia.VisualTree;
 using Grepdesk.Core.Viewer;
 using Grepdesk.UI.Preview;
 
@@ -17,7 +18,7 @@ namespace Grepdesk.UI.Viewer;
 /// column/row headers, cell selection, formula bar, search highlighting,
 /// zoom controls, and in-place cell editing with undo/redo.
 /// </summary>
-internal sealed class XlsxView : DockPanel, IViewerBody
+internal sealed class XlsxView : DockPanel, ISearchableViewerBody
 {
     private const double MinZoom = 0.5, MaxZoom = 3.0, ZoomStep = 1.15;
     private const double RowHeaderWidth = 46;
@@ -39,6 +40,8 @@ internal sealed class XlsxView : DockPanel, IViewerBody
     private static readonly IBrush SelectedBorderBrush = new ImmutableSolidColorBrush(Color.Parse("#1a73e8"));
     private static readonly IBrush SelectedBgBrush = new ImmutableSolidColorBrush(Color.Parse("#1a73e8"), 0.12);
     private static readonly IBrush MatchBgBrush = new ImmutableSolidColorBrush(Color.Parse("#ffd400"), 0.55);
+    private static readonly IBrush ActiveMatchBgBrush = new ImmutableSolidColorBrush(Color.Parse("#ff8c00"), 0.42);
+    private static readonly IBrush ActiveMatchBorderBrush = new ImmutableSolidColorBrush(Color.Parse("#e67700"));
     private static readonly IBrush DefaultTextBrush = new ImmutableSolidColorBrush(Color.Parse("#1f1f1f"));
     private static readonly IBrush FormulaBadgeBrush = new ImmutableSolidColorBrush(Color.Parse("#a6e3a1"));
 
@@ -48,11 +51,18 @@ internal sealed class XlsxView : DockPanel, IViewerBody
     private readonly List<XlsxEditDocument.Snapshot> _undoStack = [];
     private readonly List<XlsxEditDocument.Snapshot> _redoStack = [];
 
+    private bool _interactiveSearchActive;
+    private List<XlsxSearchMatch> _searchMatches = [];
+    private Dictionary<int, HashSet<(int Row, int Col)>> _matchedCellsBySheet = new();
+    private int _activeSearchIndex = -1;
+
     private int _sheetIndex;
     private int _selectedRow;
     private int _selectedCol;
     private double _zoom = 1.0;
     private bool _updatingFormulaBar;
+
+    public string? InitialSearchQuery => _highlight;
 
     private readonly TextBlock _cellAddressText;
     private readonly TextBox _formulaBox;
@@ -217,6 +227,8 @@ internal sealed class XlsxView : DockPanel, IViewerBody
         RebuildSheetTabs();
         RebuildGrid();
         UpdateSelectionVisuals();
+        if (_highlight is not null)
+            ScrollToCell(_selectedRow, _selectedCol);
     }
 
     public bool IsEditing => _editDoc is not null;
@@ -405,7 +417,9 @@ internal sealed class XlsxView : DockPanel, IViewerBody
     private Border CreateCellControl(int row, int col, XlsxCell? cell)
     {
         var text = cell?.DisplayText ?? "";
-        var isMatch = _highlight is not null && text.Length > 0 && text.Contains(_highlight, StringComparison.OrdinalIgnoreCase);
+        var isMatch = _interactiveSearchActive
+            ? _matchedCellsBySheet.TryGetValue(_sheetIndex, out var matched) && matched.Contains((row, col))
+            : _highlight is not null && text.Length > 0 && text.Contains(_highlight, StringComparison.OrdinalIgnoreCase);
 
         IBrush bg = isMatch
             ? MatchBgBrush
@@ -500,11 +514,18 @@ internal sealed class XlsxView : DockPanel, IViewerBody
         _formulaBox.Text = cell?.FormulaBarText ?? "";
         _updatingFormulaBar = false;
 
+        var isActiveSearchCell = _interactiveSearchActive
+            && _activeSearchIndex >= 0 && _activeSearchIndex < _searchMatches.Count
+            && _searchMatches[_activeSearchIndex] is { } activeMatch
+            && activeMatch.SheetIndex == _sheetIndex
+            && activeMatch.Row == _selectedRow
+            && activeMatch.Column == _selectedCol;
+
         if (_cellBorders.TryGetValue((_selectedRow, _selectedCol), out var curBorder))
         {
-            curBorder.BorderBrush = SelectedBorderBrush;
+            curBorder.BorderBrush = isActiveSearchCell ? ActiveMatchBorderBrush : SelectedBorderBrush;
             curBorder.BorderThickness = new Thickness(2);
-            curBorder.Background = SelectedBgBrush;
+            curBorder.Background = isActiveSearchCell ? ActiveMatchBgBrush : SelectedBgBrush;
         }
         if (_rowHeaderBorders.TryGetValue(_selectedRow, out var curRH)) curRH.Background = HeaderActiveBg;
         if (_colHeaderBorders.TryGetValue(_selectedCol, out var curCH)) curCH.Background = HeaderActiveBg;
@@ -608,7 +629,7 @@ internal sealed class XlsxView : DockPanel, IViewerBody
 
     private async void OnGridKeyDown(object? sender, KeyEventArgs e)
     {
-        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var ctrl = e.KeyModifiers.HasFlag(OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control);
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
         if (ctrl && e.Key == Key.C)
@@ -707,6 +728,162 @@ internal sealed class XlsxView : DockPanel, IViewerBody
         _zoom = Math.Clamp(value, MinZoom, MaxZoom);
         _zoomHost.LayoutTransform = Math.Abs(_zoom - 1.0) < 0.01 ? null : new ScaleTransform(_zoom, _zoom);
         _zoomText.Text = $"{Math.Round(_zoom * 100)}%";
+    }
+
+    // =====================================================================
+    // In-document search
+    // =====================================================================
+
+    public async Task<ViewerSearchResult> SearchAsync(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct)
+    {
+        _interactiveSearchActive = true;
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(query, options.MatchCase, options.WholeWord, options.UseRegex, out var prepared) || prepared is null)
+        {
+            _searchMatches = [];
+            _matchedCellsBySheet.Clear();
+            _activeSearchIndex = -1;
+            RebuildGrid();
+            UpdateSelectionVisuals();
+            return new ViewerSearchResult(ValidRegex: false, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        if (prepared.IsEmpty)
+        {
+            _searchMatches = [];
+            _matchedCellsBySheet.Clear();
+            _activeSearchIndex = -1;
+            RebuildGrid();
+            UpdateSelectionVisuals();
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        var doc = _doc;
+        var totalCells = doc.Sheets.Sum(s => s.Cells.Count);
+        var matches = totalCells <= 10_000
+            ? DocumentSearch.SearchXlsx(doc, prepared, CodeEditorSearch.DefaultMaxMatches, ct)
+            : await Task.Run(() => DocumentSearch.SearchXlsx(doc, prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+
+        ct.ThrowIfCancellationRequested();
+
+        var bySheet = new Dictionary<int, HashSet<(int Row, int Col)>>();
+        foreach (var m in matches)
+        {
+            if (!bySheet.TryGetValue(m.SheetIndex, out var set))
+            {
+                set = [];
+                bySheet[m.SheetIndex] = set;
+            }
+            set.Add((m.Row, m.Column));
+        }
+
+        _searchMatches = matches;
+        _matchedCellsBySheet = bySheet;
+
+        int activeIndex;
+        if (matches.Count == 0)
+            activeIndex = -1;
+        else if (jumpToMatch)
+            activeIndex = DocumentSearch.FindFirstAtOrAfter(matches,
+                m => m.SheetIndex > _sheetIndex || (m.SheetIndex == _sheetIndex && (m.Row > _selectedRow || (m.Row == _selectedRow && m.Column >= _selectedCol))));
+        else
+            activeIndex = _activeSearchIndex >= 0 && _activeSearchIndex < matches.Count ? _activeSearchIndex : 0;
+
+        _activeSearchIndex = activeIndex;
+        if (jumpToMatch && activeIndex >= 0)
+        {
+            FocusSearchMatch(activeIndex, forceRebuild: true);
+        }
+        else
+        {
+            RebuildGrid();
+            UpdateSelectionVisuals();
+        }
+
+        return new ViewerSearchResult(ValidRegex: true, MatchCount: matches.Count, ActiveIndex: activeIndex);
+    }
+
+    public int StepMatch(bool backward)
+    {
+        var next = DocumentSearch.StepIndex(_activeSearchIndex, _searchMatches.Count, backward);
+        if (next < 0) return -1;
+
+        FocusSearchMatch(next, forceRebuild: false);
+        return next;
+    }
+
+    public void ClearSearch()
+    {
+        _interactiveSearchActive = false;
+        _searchMatches = [];
+        _matchedCellsBySheet.Clear();
+        _activeSearchIndex = -1;
+        RebuildGrid();
+        UpdateSelectionVisuals();
+    }
+
+    private void FocusSearchMatch(int index, bool forceRebuild)
+    {
+        if (index < 0 || index >= _searchMatches.Count) return;
+        _activeSearchIndex = index;
+        var match = _searchMatches[index];
+
+        if (match.SheetIndex != _sheetIndex)
+        {
+            _sheetIndex = match.SheetIndex;
+            _selectedRow = 0;
+            _selectedCol = 0;
+            RebuildSheetTabs();
+            RebuildGrid();
+        }
+        else if (forceRebuild)
+        {
+            RebuildGrid();
+        }
+
+        if (_cellBorders.ContainsKey((match.Row, match.Column)))
+        {
+            SelectCell(match.Row, match.Column);
+            ScrollToCell(match.Row, match.Column);
+        }
+        else
+        {
+            var cell = _doc.Sheets[_sheetIndex].GetCell(match.Row, match.Column);
+            _cellAddressText.Text = XlsxDocument.CellReference(match.Row, match.Column);
+            _updatingFormulaBar = true;
+            _formulaBox.Text = cell?.FormulaBarText ?? "";
+            _updatingFormulaBar = false;
+        }
+    }
+
+    private void ScrollToCell(int row, int col)
+    {
+        if (!_cellBorders.TryGetValue((row, col), out var border)) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (border.GetVisualRoot() is null || _zoomHost.Child is not Visual grid) return;
+            if (border.TranslatePoint(new Point(0, 0), grid) is not { } pos) return;
+
+            var viewW = _scroll.Viewport.Width;
+            var viewH = _scroll.Viewport.Height;
+            if (viewW <= 0 || viewH <= 0) return;
+
+            var cellLeft = pos.X * _zoom;
+            var cellTop = pos.Y * _zoom;
+            var cellRight = cellLeft + border.Bounds.Width * _zoom;
+            var cellBottom = cellTop + border.Bounds.Height * _zoom;
+
+            var nextX = _scroll.Offset.X;
+            var nextY = _scroll.Offset.Y;
+            var maxX = Math.Max(0, _scroll.Extent.Width - viewW);
+            var maxY = Math.Max(0, _scroll.Extent.Height - viewH);
+
+            if (cellLeft < nextX + RowHeaderWidth || cellRight > nextX + viewW - 16)
+                nextX = Math.Clamp(cellLeft - viewW / 3, 0, maxX);
+            if (cellTop < nextY + ColumnHeaderHeight || cellBottom > nextY + viewH - 16)
+                nextY = Math.Clamp(cellTop - viewH / 3, 0, maxY);
+
+            _scroll.Offset = new Vector(nextX, nextY);
+        }, Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private static bool TryBrush(string hex, out IBrush brush)

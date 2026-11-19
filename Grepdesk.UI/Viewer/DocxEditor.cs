@@ -47,6 +47,9 @@ internal sealed class DocxEditor : IDisposable
     private double? _desiredX;
     private bool _caretOn = true, _dragging;
     private EditableParagraph? _dragOrigin;
+    private List<DocxSearchMatch> _searchMatches = [];
+    private Dictionary<int, List<(int GlobalIndex, TextSpan Span)>> _searchByParagraph = new();
+    private int _activeSearchIndex = -1;
 
     /// <param name="images">Pictures decoded so far, which the editor now owns.</param>
     public DocxEditor(DocxEditDocument document, string path, Dictionary<byte[], Bitmap> images)
@@ -832,8 +835,133 @@ internal sealed class DocxEditor : IDisposable
     }
 
     // =====================================================================
-    // Toolbar state
+    // Toolbar state and in-document search
     // =====================================================================
+
+    internal IReadOnlyList<(int GlobalIndex, TextSpan Span)>? SearchMatchesIn(DocxEditParagraph p) =>
+        _searchByParagraph.TryGetValue(p.Index, out var list) ? list : null;
+
+    internal int ActiveSearchIndex => _activeSearchIndex;
+
+    public ViewerSearchResult Search(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct)
+    {
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(query, options.MatchCase, options.WholeWord, options.UseRegex, out var prepared) || prepared is null)
+        {
+            ApplySearch([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: false, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        if (prepared.IsEmpty)
+        {
+            ApplySearch([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        var blocks = Document.Paragraphs.Select(p => p.Text).ToList();
+        var matches = DocumentSearch.SearchBlocks(blocks, prepared, CodeEditorSearch.DefaultMaxMatches, ct);
+        ct.ThrowIfCancellationRequested();
+
+        int activeIndex;
+        if (matches.Count == 0)
+            activeIndex = -1;
+        else if (jumpToMatch)
+        {
+            var caret = Clamp(_caret);
+            activeIndex = DocumentSearch.FindFirstAtOrAfter(matches,
+                m => m.BlockIndex > caret.Paragraph || (m.BlockIndex == caret.Paragraph && m.Span.Offset >= caret.Offset));
+        }
+        else
+            activeIndex = _activeSearchIndex >= 0 && _activeSearchIndex < matches.Count ? _activeSearchIndex : 0;
+
+        ApplySearch(matches, activeIndex, scrollToActive: jumpToMatch && activeIndex >= 0);
+        return new ViewerSearchResult(ValidRegex: true, MatchCount: matches.Count, ActiveIndex: activeIndex);
+    }
+
+    public int StepSearch(bool backward)
+    {
+        var prevPara = _activeSearchIndex >= 0 && _activeSearchIndex < _searchMatches.Count
+            ? _searchMatches[_activeSearchIndex].BlockIndex
+            : -1;
+        var next = DocumentSearch.StepIndex(_activeSearchIndex, _searchMatches.Count, backward);
+        if (next < 0) return -1;
+
+        _activeSearchIndex = next;
+        var nextPara = _searchMatches[next].BlockIndex;
+        InvalidateSearchParagraph(prevPara);
+        if (nextPara != prevPara) InvalidateSearchParagraph(nextPara);
+        ScrollToSearchMatch(_searchMatches[next]);
+        return next;
+    }
+
+    public void ClearSearch() => ApplySearch([], -1, scrollToActive: false);
+
+    private void ApplySearch(List<DocxSearchMatch> matches, int activeIndex, bool scrollToActive)
+    {
+        var touched = new HashSet<int>(_searchByParagraph.Keys);
+        var byParagraph = new Dictionary<int, List<(int GlobalIndex, TextSpan Span)>>();
+        for (var i = 0; i < matches.Count; i++)
+        {
+            var m = matches[i];
+            if (!byParagraph.TryGetValue(m.BlockIndex, out var list))
+            {
+                list = [];
+                byParagraph[m.BlockIndex] = list;
+            }
+            list.Add((i, m.Span));
+            touched.Add(m.BlockIndex);
+        }
+
+        _searchMatches = matches;
+        _searchByParagraph = byParagraph;
+        _activeSearchIndex = activeIndex;
+
+        foreach (var paraIdx in touched)
+            InvalidateSearchParagraph(paraIdx);
+
+        if (scrollToActive && activeIndex >= 0 && activeIndex < _searchMatches.Count)
+            ScrollToSearchMatch(_searchMatches[activeIndex]);
+    }
+
+    private void InvalidateSearchParagraph(int paragraphIndex)
+    {
+        if (paragraphIndex < 0 || paragraphIndex >= Document.Paragraphs.Count) return;
+        if (_controls.TryGetValue(Paragraph(paragraphIndex), out var control))
+            control.InvalidateVisual();
+    }
+
+    private void ScrollToSearchMatch(DocxSearchMatch match)
+    {
+        if (_view is null || match.BlockIndex < 0 || match.BlockIndex >= Document.Paragraphs.Count) return;
+        if (!_controls.TryGetValue(Paragraph(match.BlockIndex), out var control)) return;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_view is null || control.GetVisualRoot() is null) return;
+            var offset = Math.Clamp(match.Span.Offset, 0, control.Model.Length);
+            var rect = control.CaretRect(offset);
+            var viewH = _view.Scroll.Viewport.Height;
+            var viewW = _view.Scroll.Viewport.Width;
+            if (viewH > 0 && control.TranslatePoint(rect.Position, _view.Pages) is { } pos)
+            {
+                var zoom = _view.Zoom;
+                var targetY = pos.Y * zoom;
+                var maxY = Math.Max(0, _view.Scroll.Extent.Height - viewH);
+                var nextY = Math.Clamp(targetY - viewH / 3, 0, maxY);
+
+                var targetX = pos.X * zoom;
+                var maxX = Math.Max(0, _view.Scroll.Extent.Width - viewW);
+                var nextX = _view.Scroll.Offset.X;
+                if (viewW > 0 && (targetX < nextX + 24 || targetX > nextX + viewW - 24))
+                    nextX = Math.Clamp(targetX - viewW / 3, 0, maxX);
+
+                _view.Scroll.Offset = new Vector(nextX, nextY);
+            }
+            else
+            {
+                control.BringIntoView(rect.Inflate(new Thickness(0, 48)));
+            }
+        }, DispatcherPriority.Background);
+    }
 
     private void RaiseState()
     {
@@ -932,6 +1060,20 @@ internal sealed class EditableParagraph : Control
         var layout = Layout(LayoutWidth);
         // Hit-testable everywhere, not just over the glyphs.
         context.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));
+
+        if (_editor.SearchMatchesIn(Model) is { Count: > 0 } searchMatches)
+        {
+            var active = _editor.ActiveSearchIndex;
+            foreach (var (globalIndex, span) in searchMatches)
+            {
+                var start = Math.Clamp(span.Offset, 0, Model.Length);
+                var end = Math.Clamp(span.Offset + span.Length, 0, Model.Length);
+                if (end <= start) continue;
+                var brush = globalIndex == active ? DocxView.ActiveSearchHighlight : DocxView.SearchHighlight;
+                foreach (var rect in layout.HitTestTextRange(start + Shift, end - start))
+                    context.FillRectangle(brush, rect);
+            }
+        }
 
         var (from, to, pastEnd) = _editor.SelectionIn(Model);
         if (to > from)

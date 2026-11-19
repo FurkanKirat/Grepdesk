@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
+using Avalonia.VisualTree;
 using Grepdesk.Core.Viewer;
 using Grepdesk.UI.Preview;
 
@@ -89,7 +90,7 @@ internal sealed class DocxPreview : IDisposable
 /// toolbar sits on top; headers, footers and notes stay as they are, dimmed.
 /// </para>
 /// </summary>
-internal sealed class DocxView : DockPanel, IViewerBody
+internal sealed class DocxView : DockPanel, ISearchableViewerBody
 {
     private const double MinZoom = 0.25, MaxZoom = 4, Step = 1.15;
     private const double PageGap = 20;
@@ -101,9 +102,17 @@ internal sealed class DocxView : DockPanel, IViewerBody
     private static readonly IBrush PageBrush = Brushes.White;
     private static readonly IBrush TableBorder = Brush.Parse("#a0a0a0");
     internal static readonly IBrush SelectionBrush = new ImmutableSolidColorBrush(Color.Parse("#3390ff"), 0.35);
-    private static readonly IBrush SearchHighlight = new ImmutableSolidColorBrush(Color.Parse("#ffd400"), 0.6);
+    internal static readonly IBrush SearchHighlight = new ImmutableSolidColorBrush(Color.Parse("#ffd400"), 0.55);
+    internal static readonly IBrush ActiveSearchHighlight = new ImmutableSolidColorBrush(Color.Parse("#ff8c00"), 0.80);
     private static readonly Dictionary<string, IBrush> ColorBrushes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, FontFamily> Fonts = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record SearchEntry(
+        DocxTextBlock Block,
+        List<DocxText> Pieces,
+        DocxRunStyle ParagraphStyle,
+        int IndentChars,
+        string FullText);
 
     private DocxPreview _preview;
     private DocxDocument _doc;
@@ -113,9 +122,17 @@ internal sealed class DocxView : DockPanel, IViewerBody
     private readonly ScrollViewer _scroll;
     private readonly LayoutTransformControl _zoomHost;
     private readonly TextBlock _zoomText;
+    private readonly List<SearchEntry> _searchEntries = [];
+    private List<DocxSearchMatch> _readMatches = [];
+    private Dictionary<int, List<(int GlobalIndex, TextSpan Span)>> _readMatchesByEntry = new();
+    private readonly HashSet<int> _highlightedEntries = [];
+    private int _activeReadMatch = -1;
+    private bool _interactiveSearchActive;
     private bool _fit = true;
     private string _pageLabel = "1", _pageCount = "1"; // what PAGE and NUMPAGES fields show on the page being built
     private double _zoom = 1;
+
+    public string? InitialSearchQuery => _highlight;
 
     public DocxView(DocxPreview preview, string? highlight, Action<string> open, Action<string> reveal, DocxEditor? editor = null)
     {
@@ -159,6 +176,8 @@ internal sealed class DocxView : DockPanel, IViewerBody
         Children.Add(_scroll);
         ApplyZoom();
         editor?.Attach(this);
+        if (editor is null && _highlight is not null)
+            ScrollToInitialHighlight();
     }
 
     public bool IsEditing => _editor is not null;
@@ -172,6 +191,7 @@ internal sealed class DocxView : DockPanel, IViewerBody
 
     private StackPanel BuildPages()
     {
+        _searchEntries.Clear();
         _editor?.BeginBuild();
         var pages = new StackPanel { Spacing = PageGap, Margin = new Thickness(PageGap), HorizontalAlignment = HorizontalAlignment.Center };
         var split = SplitPages();
@@ -355,7 +375,7 @@ internal sealed class DocxView : DockPanel, IViewerBody
         if (content.Children.Count > 0 && pieces.All(t => string.IsNullOrWhiteSpace(t.Text))) pieces.Clear();
         Flush();
         // An empty paragraph is still a line of its font's height.
-        if (content.Children.Count == 0) content.Children.Add(BuildText([new DocxText(" ", p.MarkStyle, null)], f.Alignment, p.MarkStyle, 0));
+        if (content.Children.Count == 0) content.Children.Add(BuildText([new DocxText(" ", p.MarkStyle, null)], f.Alignment, p.MarkStyle, 0, registerSearch: false));
         return content;
     }
 
@@ -369,7 +389,7 @@ internal sealed class DocxView : DockPanel, IViewerBody
             // The marker hangs in the indent: Word's usual "left 0.5in, hanging 0.25in".
             var hanging = f.FirstLine < 0 ? -f.FirstLine : 0;
             left = Math.Max(0, f.IndentLeft - hanging);
-            var markerBlock = BuildText([new DocxText(marker, p.MarkStyle, null)], DocxAlignment.Left, p.MarkStyle, 0);
+            var markerBlock = BuildText([new DocxText(marker, p.MarkStyle, null)], DocxAlignment.Left, p.MarkStyle, 0, registerSearch: false);
             markerBlock.Margin = new Thickness(0, 0, 6, 0);
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
             var column = new Border { MinWidth = Math.Max(hanging, 0) * Dip, Child = markerBlock };
@@ -445,7 +465,7 @@ internal sealed class DocxView : DockPanel, IViewerBody
 
     private sealed record LinkSpan(int Start, int End, string Url);
 
-    private DocxTextBlock BuildText(List<DocxText> pieces, DocxAlignment alignment, DocxRunStyle paragraph, double firstLine)
+    private DocxTextBlock BuildText(List<DocxText> pieces, DocxAlignment alignment, DocxRunStyle paragraph, double firstLine, bool registerSearch = true)
     {
         var block = new DocxTextBlock
         {
@@ -463,71 +483,129 @@ internal sealed class DocxView : DockPanel, IViewerBody
             },
         };
 
-        var inlines = new InlineCollection();
+        var indentChars = firstLine > 0 ? Math.Max(1, (int)Math.Round(firstLine / Math.Max(1, paragraph.Size))) : 0;
+        var copiedPieces = pieces.ToList();
         var links = new List<LinkSpan>();
-        var offset = 0;
+        var offset = indentChars;
 
-        if (firstLine > 0)
-        {
-            var ems = Math.Max(1, (int)Math.Round(firstLine / paragraph.Size));
-            var indent = new string(' ', ems);
-            inlines.Add(new Run(indent) { FontSize = paragraph.Size * Dip });
-            offset += indent.Length;
-        }
-
-        foreach (var piece in pieces)
+        foreach (var piece in copiedPieces)
         {
             if (piece.Text.Length == 0) continue;
-            var style = piece.Style;
-            foreach (var (part, marked) in SplitHighlight(piece.Text))
-            {
-                var run = new Run(part)
-                {
-                    FontSize = style.Size * Dip * (style.Baseline == DocxBaseline.Normal ? 1 : 0.65),
-                    FontWeight = style.Bold ? FontWeight.Bold : FontWeight.Normal,
-                    FontStyle = style.Italic ? FontStyle.Italic : FontStyle.Normal,
-                    Foreground = BrushOf(style.Color) ?? Ink,
-                    Background = marked ? SearchHighlight : BrushOf(style.Highlight),
-                    BaselineAlignment = style.Baseline switch
-                    {
-                        DocxBaseline.Superscript => BaselineAlignment.Superscript,
-                        DocxBaseline.Subscript => BaselineAlignment.Subscript,
-                        _ => BaselineAlignment.Baseline,
-                    },
-                };
-                if (Font(style.Font) is { } font) run.FontFamily = font;
-                if (style.Underline || style.Strike)
-                {
-                    var decorations = new TextDecorationCollection();
-                    if (style.Underline) decorations.AddRange(TextDecorations.Underline);
-                    if (style.Strike) decorations.AddRange(TextDecorations.Strikethrough);
-                    run.TextDecorations = decorations;
-                }
-                inlines.Add(run);
-            }
             if (piece.Link is not null) links.Add(new LinkSpan(offset, offset + piece.Text.Length, piece.Link));
             offset += piece.Text.Length;
         }
 
-        block.Inlines = inlines;
+        var entry = new SearchEntry(block, copiedPieces, paragraph, indentChars, string.Concat(copiedPieces.Select(p => p.Text)));
+        PopulateInlines(entry, matches: null, activeGlobalIndex: -1, fallbackHighlight: _interactiveSearchActive ? null : _highlight);
+        if (registerSearch && _editor is null)
+            _searchEntries.Add(entry);
+
         if (links.Count > 0) AttachLinks(block, links);
         return block;
     }
 
-    private IEnumerable<(string Text, bool Marked)> SplitHighlight(string text)
+    private void PopulateInlines(
+        SearchEntry entry,
+        List<(int GlobalIndex, TextSpan Span)>? matches,
+        int activeGlobalIndex,
+        string? fallbackHighlight)
     {
-        if (_highlight is null)
+        var inlines = new InlineCollection();
+        if (entry.IndentChars > 0)
+            inlines.Add(new Run(new string(' ', entry.IndentChars)) { FontSize = entry.ParagraphStyle.Size * Dip });
+
+        if (matches is null || matches.Count == 0)
+        {
+            foreach (var piece in entry.Pieces)
+            {
+                if (piece.Text.Length == 0) continue;
+                foreach (var (part, marked) in SplitHighlight(piece.Text, fallbackHighlight))
+                    inlines.Add(MakeRun(part, piece.Style, marked ? 1 : 0));
+            }
+            entry.Block.Inlines = inlines;
+            return;
+        }
+
+        var pieceStart = 0;
+        foreach (var piece in entry.Pieces)
+        {
+            if (piece.Text.Length == 0) continue;
+            var pieceEnd = pieceStart + piece.Text.Length;
+            var pos = 0;
+
+            foreach (var (globalIndex, span) in matches)
+            {
+                var spanEnd = span.Offset + span.Length;
+                if (spanEnd <= pieceStart) continue;
+                if (span.Offset >= pieceEnd) break;
+
+                var localStart = Math.Max(pos, span.Offset - pieceStart);
+                var localEnd = Math.Min(piece.Text.Length, spanEnd - pieceStart);
+                if (localEnd <= localStart) continue;
+
+                if (localStart > pos)
+                    inlines.Add(MakeRun(piece.Text[pos..localStart], piece.Style, 0));
+
+                var state = globalIndex == activeGlobalIndex ? 2 : 1;
+                inlines.Add(MakeRun(piece.Text[localStart..localEnd], piece.Style, state));
+                pos = localEnd;
+            }
+
+            if (pos < piece.Text.Length)
+                inlines.Add(MakeRun(piece.Text[pos..], piece.Style, 0));
+
+            pieceStart = pieceEnd;
+        }
+
+        entry.Block.Inlines = inlines;
+    }
+
+    private static Run MakeRun(string text, DocxRunStyle style, int highlightState)
+    {
+        var run = new Run(text)
+        {
+            FontSize = style.Size * Dip * (style.Baseline == DocxBaseline.Normal ? 1 : 0.65),
+            FontWeight = style.Bold ? FontWeight.Bold : FontWeight.Normal,
+            FontStyle = style.Italic ? FontStyle.Italic : FontStyle.Normal,
+            Foreground = BrushOf(style.Color) ?? Ink,
+            Background = highlightState switch
+            {
+                2 => ActiveSearchHighlight,
+                1 => SearchHighlight,
+                _ => BrushOf(style.Highlight),
+            },
+            BaselineAlignment = style.Baseline switch
+            {
+                DocxBaseline.Superscript => BaselineAlignment.Superscript,
+                DocxBaseline.Subscript => BaselineAlignment.Subscript,
+                _ => BaselineAlignment.Baseline,
+            },
+        };
+        if (Font(style.Font) is { } font) run.FontFamily = font;
+        if (style.Underline || style.Strike)
+        {
+            var decorations = new TextDecorationCollection();
+            if (style.Underline) decorations.AddRange(TextDecorations.Underline);
+            if (style.Strike) decorations.AddRange(TextDecorations.Strikethrough);
+            run.TextDecorations = decorations;
+        }
+        return run;
+    }
+
+    private static IEnumerable<(string Text, bool Marked)> SplitHighlight(string text, string? highlight)
+    {
+        if (string.IsNullOrEmpty(highlight))
         {
             yield return (text, false);
             yield break;
         }
 
         int start = 0, index;
-        while ((index = text.IndexOf(_highlight, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+        while ((index = text.IndexOf(highlight, start, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
             if (index > start) yield return (text[start..index], false);
-            yield return (text.Substring(index, _highlight.Length), true);
-            start = index + _highlight.Length;
+            yield return (text.Substring(index, highlight.Length), true);
+            start = index + highlight.Length;
         }
         if (start < text.Length) yield return (text[start..], false);
     }
@@ -643,6 +721,191 @@ internal sealed class DocxView : DockPanel, IViewerBody
             case Key.D0 or Key.NumPad0: _fit = true; ApplyZoom(); return true;
             default: return false;
         }
+    }
+
+    // =====================================================================
+    // In-document search
+    // =====================================================================
+
+    private void ScrollToInitialHighlight()
+    {
+        if (_highlight is null) return;
+        for (var i = 0; i < _searchEntries.Count; i++)
+        {
+            var idx = _searchEntries[i].FullText.IndexOf(_highlight, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) continue;
+            var entryIndex = i;
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => ScrollToEntryOffset(entryIndex, idx), Avalonia.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+    }
+
+    public async Task<ViewerSearchResult> SearchAsync(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct)
+    {
+        if (_editor is not null)
+            return _editor.Search(query, options, jumpToMatch, ct);
+
+        _interactiveSearchActive = true;
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(query, options.MatchCase, options.WholeWord, options.UseRegex, out var prepared) || prepared is null)
+        {
+            ApplyReadSearch([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: false, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        if (prepared.IsEmpty)
+        {
+            ApplyReadSearch([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        var texts = _searchEntries.Select(e => e.FullText).ToList();
+        var matches = texts.Count <= 250
+            ? DocumentSearch.SearchBlocks(texts, prepared, CodeEditorSearch.DefaultMaxMatches, ct)
+            : await Task.Run(() => DocumentSearch.SearchBlocks(texts, prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+
+        ct.ThrowIfCancellationRequested();
+
+        var activeIndex = matches.Count == 0
+            ? -1
+            : jumpToMatch
+                ? 0
+                : (_activeReadMatch >= 0 && _activeReadMatch < matches.Count ? _activeReadMatch : 0);
+
+        ApplyReadSearch(matches, activeIndex, scrollToActive: jumpToMatch && activeIndex >= 0);
+        return new ViewerSearchResult(ValidRegex: true, MatchCount: matches.Count, ActiveIndex: activeIndex);
+    }
+
+    public int StepMatch(bool backward)
+    {
+        if (_editor is not null)
+            return _editor.StepSearch(backward);
+
+        var prevEntry = _activeReadMatch >= 0 && _activeReadMatch < _readMatches.Count
+            ? _readMatches[_activeReadMatch].BlockIndex
+            : -1;
+        var next = DocumentSearch.StepIndex(_activeReadMatch, _readMatches.Count, backward);
+        if (next < 0) return -1;
+
+        _activeReadMatch = next;
+        var nextEntry = _readMatches[next].BlockIndex;
+        if (prevEntry >= 0 && prevEntry != nextEntry && _readMatchesByEntry.TryGetValue(prevEntry, out var prevList))
+            PopulateInlines(_searchEntries[prevEntry], prevList, _activeReadMatch, fallbackHighlight: null);
+        if (_readMatchesByEntry.TryGetValue(nextEntry, out var nextList))
+            PopulateInlines(_searchEntries[nextEntry], nextList, _activeReadMatch, fallbackHighlight: null);
+
+        ScrollToReadMatch(next);
+        return next;
+    }
+
+    public void ClearSearch()
+    {
+        if (_editor is not null)
+        {
+            _editor.ClearSearch();
+            return;
+        }
+
+        _interactiveSearchActive = false;
+        _readMatches = [];
+        _readMatchesByEntry.Clear();
+        _activeReadMatch = -1;
+
+        foreach (var entryIdx in _highlightedEntries)
+        {
+            if (entryIdx >= 0 && entryIdx < _searchEntries.Count)
+                PopulateInlines(_searchEntries[entryIdx], matches: null, activeGlobalIndex: -1, fallbackHighlight: _highlight);
+        }
+        _highlightedEntries.Clear();
+    }
+
+    private void ApplyReadSearch(List<DocxSearchMatch> matches, int activeIndex, bool scrollToActive)
+    {
+        var previous = _highlightedEntries.ToList();
+        _highlightedEntries.Clear();
+
+        var byEntry = new Dictionary<int, List<(int GlobalIndex, TextSpan Span)>>();
+        for (var i = 0; i < matches.Count; i++)
+        {
+            var m = matches[i];
+            if (!byEntry.TryGetValue(m.BlockIndex, out var list))
+            {
+                list = [];
+                byEntry[m.BlockIndex] = list;
+            }
+            list.Add((i, m.Span));
+        }
+
+        _readMatches = matches;
+        _readMatchesByEntry = byEntry;
+        _activeReadMatch = activeIndex;
+
+        foreach (var idx in previous)
+        {
+            if (!byEntry.ContainsKey(idx) && idx >= 0 && idx < _searchEntries.Count)
+                PopulateInlines(_searchEntries[idx], matches: null, activeGlobalIndex: -1, fallbackHighlight: null);
+        }
+        if (_highlight is not null)
+        {
+            // Clear initial search-result highlights while interactive search is active.
+            for (var i = 0; i < _searchEntries.Count; i++)
+            {
+                if (!byEntry.ContainsKey(i) && _searchEntries[i].FullText.Contains(_highlight, StringComparison.OrdinalIgnoreCase))
+                {
+                    PopulateInlines(_searchEntries[i], matches: null, activeGlobalIndex: -1, fallbackHighlight: null);
+                    _highlightedEntries.Add(i);
+                }
+            }
+        }
+
+        foreach (var (entryIdx, list) in byEntry)
+        {
+            if (entryIdx >= 0 && entryIdx < _searchEntries.Count)
+            {
+                PopulateInlines(_searchEntries[entryIdx], list, _activeReadMatch, fallbackHighlight: null);
+                _highlightedEntries.Add(entryIdx);
+            }
+        }
+
+        if (scrollToActive && activeIndex >= 0 && activeIndex < _readMatches.Count)
+            ScrollToReadMatch(activeIndex);
+    }
+
+    private void ScrollToReadMatch(int index)
+    {
+        if (index < 0 || index >= _readMatches.Count) return;
+        var match = _readMatches[index];
+        ScrollToEntryOffset(match.BlockIndex, match.Span.Offset);
+    }
+
+    private void ScrollToEntryOffset(int entryIndex, int offsetInText)
+    {
+        if (entryIndex < 0 || entryIndex >= _searchEntries.Count) return;
+        var entry = _searchEntries[entryIndex];
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (entry.Block.GetVisualRoot() is null) return;
+            var charRect = entry.Block.TextLayout.HitTestTextPosition(Math.Clamp(offsetInText, 0, entry.FullText.Length) + entry.IndentChars);
+            var viewH = _scroll.Viewport.Height;
+            var viewW = _scroll.Viewport.Width;
+            if (viewH > 0 && entry.Block.TranslatePoint(new Point(charRect.X, charRect.Y), Pages) is { } pos)
+            {
+                var targetY = pos.Y * _zoom;
+                var maxY = Math.Max(0, _scroll.Extent.Height - viewH);
+                var nextY = Math.Clamp(targetY - viewH / 3, 0, maxY);
+
+                var targetX = pos.X * _zoom;
+                var maxX = Math.Max(0, _scroll.Extent.Width - viewW);
+                var nextX = _scroll.Offset.X;
+                if (viewW > 0 && (targetX < nextX + 24 || targetX > nextX + viewW - 24))
+                    nextX = Math.Clamp(targetX - viewW / 3, 0, maxX);
+
+                _scroll.Offset = new Vector(nextX, nextY);
+            }
+            else
+            {
+                entry.Block.BringIntoView(charRect.Inflate(new Thickness(0, 40)));
+            }
+        }, Avalonia.Threading.DispatcherPriority.Background);
     }
 
     public void Dispose()

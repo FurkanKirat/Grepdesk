@@ -93,4 +93,41 @@ public class PdfTextSelectionTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Render_and_dispose_survive_compacting_gc_and_scale_changes()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"grepdesk-pdfrender-{Guid.NewGuid():N}.pdf");
+        try
+        {
+            var builder = new PdfDocumentBuilder();
+            var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+            builder.AddPage(PageSize.A4).AddText("Render me", 12, new PdfPoint(50, 700), font);
+            File.WriteAllBytes(path, builder.Build());
+
+            using var renderer = PdfRenderer.Open(path, CancellationToken.None);
+            var img1 = renderer.Render(0, 1.5);
+            Assert.NotNull(img1);
+            Assert.True(img1!.Width > 0 && img1.Height > 0);
+
+            // Force compacting GC to verify FPDF_FORMFILLINFO stays pinned across collections and scale changes.
+            var pressure = new List<byte[]>(64);
+            for (var i = 0; i < 64; i++) pressure.Add(new byte[32_768]);
+            pressure.Clear();
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+            var img2 = renderer.Render(0, 2.0);
+            Assert.NotNull(img2);
+            Assert.True(img2!.Width > img1.Width);
+
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

@@ -18,7 +18,7 @@ namespace Grepdesk.UI.Viewer;
 /// zooms. Every page gets a placeholder of its size up front, but only the
 /// pages on screen (and their neighbours) are drawn and kept in memory.
 /// </summary>
-internal sealed class PdfView : DockPanel, IViewerBody
+internal sealed class PdfView : DockPanel, ISearchableViewerBody
 {
     private const double PointsToDips = 96.0 / 72.0;
     private const double PageGap = 12, SideMargin = 24;
@@ -68,11 +68,23 @@ internal sealed class PdfView : DockPanel, IViewerBody
     private (int Page, int Caret) _anchor, _focus;
     private bool _dragging;
 
+    private readonly string? _initialHighlight;
+    private List<PdfSearchMatch>? _initialMatches;
+    private List<PdfSearchMatch> _searchMatches = [];
+    private Dictionary<int, (int FirstGlobal, List<PdfSearchMatch> Matches)> _matchesByPage = new();
+    private int _activeSearchIndex = -1;
+    private int? _pendingScrollToMatch;
+    private bool _interactiveSearchActive;
+    private CancellationTokenSource? _initialSearchCts;
+
     private bool HasSelection => _anchor != _focus;
 
-    public PdfView(PdfRenderer renderer)
+    public string? InitialSearchQuery => _initialHighlight;
+
+    public PdfView(PdfRenderer renderer, string? highlight = null)
     {
         _renderer = renderer;
+        _initialHighlight = string.IsNullOrEmpty(highlight) ? null : highlight;
         var count = renderer.PageSizes.Count;
         _images = new Image[count];
         _renderedZoom = new double[count];
@@ -132,6 +144,9 @@ internal sealed class PdfView : DockPanel, IViewerBody
 
         Children.Add(ViewerBar.Create(bar));
         Children.Add(_scroll);
+
+        if (_initialHighlight is not null)
+            _ = RunInitialHighlightAsync(scrollToFirst: true);
     }
 
     public void FocusContent() => _scroll.Focus();
@@ -175,6 +190,12 @@ internal sealed class PdfView : DockPanel, IViewerBody
 
         Dispatcher.UIThread.Post(() =>
         {
+            if (_pendingScrollToMatch is { } pending && pending >= 0 && pending < _searchMatches.Count)
+            {
+                _pendingScrollToMatch = null;
+                ScrollToMatch(pending);
+                return;
+            }
             if (oldHeight > 0) _scroll.Offset = _scroll.Offset.WithY(anchor * _pages.Bounds.Height);
             OnScrolled();
         }, DispatcherPriority.Loaded);
@@ -474,7 +495,8 @@ internal sealed class PdfView : DockPanel, IViewerBody
 
     private void OnSelectionKey(object? sender, KeyEventArgs e)
     {
-        if (e.KeyModifiers != KeyModifiers.Control) return;
+        var cmdMod = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        if (e.KeyModifiers != cmdMod) return;
         switch (e.Key)
         {
             case Key.C or Key.Insert when HasSelection:
@@ -490,13 +512,199 @@ internal sealed class PdfView : DockPanel, IViewerBody
 
     private ContextMenu BuildContextMenu()
     {
-        var copy = new MenuItem { Header = Loc.Get("PdfCopy"), InputGesture = new KeyGesture(Key.C, KeyModifiers.Control) };
-        var selectAll = new MenuItem { Header = Loc.Get("PdfSelectAll"), InputGesture = new KeyGesture(Key.A, KeyModifiers.Control) };
+        var cmdMod = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        var copy = new MenuItem { Header = Loc.Get("PdfCopy"), InputGesture = new KeyGesture(Key.C, cmdMod) };
+        var selectAll = new MenuItem { Header = Loc.Get("PdfSelectAll"), InputGesture = new KeyGesture(Key.A, cmdMod) };
         copy.Click += (_, _) => _ = CopyAsync();
         selectAll.Click += (_, _) => SelectAll();
         var menu = new ContextMenu { Items = { copy, selectAll } };
         menu.Opening += (_, _) => copy.IsEnabled = HasSelection;
         return menu;
+    }
+
+    // =====================================================================
+    // In-document search
+    // =====================================================================
+
+    private async Task RunInitialHighlightAsync(bool scrollToFirst)
+    {
+        if (_initialHighlight is null) return;
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(_initialHighlight, matchCase: false, wholeWord: false, useRegex: false, out var prepared) || prepared is null)
+            return;
+
+        _initialSearchCts?.Cancel();
+        _initialSearchCts?.Dispose();
+        var cts = _initialSearchCts = new CancellationTokenSource();
+        var ct = cts.Token;
+
+        var known = (PdfPageText?[])_texts.Clone();
+        var pageCount = _images.Length;
+        List<PdfSearchMatch> matches;
+        try
+        {
+            matches = await Task.Run(() =>
+                DocumentSearch.SearchPdf(pageCount, i => known[i] ?? LoadText(i), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception e)
+        {
+            ErrorLog.Write(e, "pdf initial highlight");
+            return;
+        }
+
+        if (_disposed || ct.IsCancellationRequested || _interactiveSearchActive)
+            return;
+
+        _initialMatches = matches;
+        if (matches.Count > 0)
+            ApplySearchMatches(matches, activeIndex: 0, scrollToActive: scrollToFirst);
+    }
+
+    public async Task<ViewerSearchResult> SearchAsync(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct)
+    {
+        _initialSearchCts?.Cancel();
+        _interactiveSearchActive = true;
+
+        if (!CodeEditorSearch.PreparedSearch.TryCreate(query, options.MatchCase, options.WholeWord, options.UseRegex, out var prepared) || prepared is null)
+        {
+            ApplySearchMatches([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: false, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        if (prepared.IsEmpty)
+        {
+            ApplySearchMatches([], -1, scrollToActive: false);
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+        }
+
+        var known = (PdfPageText?[])_texts.Clone();
+        var pageCount = _images.Length;
+        var matches = await Task.Run(() =>
+            DocumentSearch.SearchPdf(pageCount, i => known[i] ?? LoadText(i), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+
+        ct.ThrowIfCancellationRequested();
+        if (_disposed)
+            return new ViewerSearchResult(ValidRegex: true, MatchCount: 0, ActiveIndex: -1);
+
+        int activeIndex;
+        if (matches.Count == 0)
+            activeIndex = -1;
+        else if (jumpToMatch)
+        {
+            var firstVisible = VisiblePages().First;
+            activeIndex = DocumentSearch.FindFirstAtOrAfter(matches, m => m.PageIndex >= firstVisible);
+        }
+        else
+            activeIndex = _activeSearchIndex >= 0 && _activeSearchIndex < matches.Count ? _activeSearchIndex : 0;
+
+        ApplySearchMatches(matches, activeIndex, scrollToActive: jumpToMatch && activeIndex >= 0);
+        return new ViewerSearchResult(ValidRegex: true, MatchCount: matches.Count, ActiveIndex: activeIndex);
+    }
+
+    public int StepMatch(bool backward)
+    {
+        var oldPage = _activeSearchIndex >= 0 && _activeSearchIndex < _searchMatches.Count
+            ? _searchMatches[_activeSearchIndex].PageIndex
+            : -1;
+        var next = DocumentSearch.StepIndex(_activeSearchIndex, _searchMatches.Count, backward);
+        if (next < 0) return -1;
+
+        _activeSearchIndex = next;
+        var newPage = _searchMatches[next].PageIndex;
+        if (oldPage >= 0 && oldPage != newPage) UpdateLayerHighlights(oldPage);
+        UpdateLayerHighlights(newPage);
+        ScrollToMatch(next);
+        return next;
+    }
+
+    public void ClearSearch()
+    {
+        _interactiveSearchActive = false;
+        _pendingScrollToMatch = null;
+        if (_initialMatches is { Count: > 0 } cached)
+        {
+            ApplySearchMatches(cached, activeIndex: 0, scrollToActive: false);
+            return;
+        }
+        ApplySearchMatches([], -1, scrollToActive: false);
+        if (_initialHighlight is not null)
+            _ = RunInitialHighlightAsync(scrollToFirst: false);
+    }
+
+    private void ApplySearchMatches(List<PdfSearchMatch> matches, int activeIndex, bool scrollToActive)
+    {
+        var previouslyHighlighted = _matchesByPage.Keys.ToList();
+        var nextByPage = new Dictionary<int, (int FirstGlobal, List<PdfSearchMatch> Matches)>();
+
+        for (var i = 0; i < matches.Count; i++)
+        {
+            var m = matches[i];
+            if (!nextByPage.TryGetValue(m.PageIndex, out var entry))
+            {
+                entry = (i, new List<PdfSearchMatch>());
+                nextByPage[m.PageIndex] = entry;
+            }
+            entry.Matches.Add(m);
+        }
+
+        _searchMatches = matches;
+        _matchesByPage = nextByPage;
+        _activeSearchIndex = activeIndex;
+
+        foreach (var page in previouslyHighlighted)
+        {
+            if (!_matchesByPage.ContainsKey(page) && page >= 0 && page < _layers.Length)
+                _layers[page].SetSearchMatches(null, -1);
+        }
+        foreach (var page in _matchesByPage.Keys)
+            UpdateLayerHighlights(page);
+
+        if (scrollToActive && activeIndex >= 0 && activeIndex < _searchMatches.Count)
+            ScrollToMatch(activeIndex);
+    }
+
+    private void UpdateLayerHighlights(int page)
+    {
+        if (page < 0 || page >= _layers.Length) return;
+        if (!_matchesByPage.TryGetValue(page, out var entry))
+        {
+            _layers[page].SetSearchMatches(null, -1);
+            return;
+        }
+
+        var local = _activeSearchIndex >= entry.FirstGlobal && _activeSearchIndex < entry.FirstGlobal + entry.Matches.Count
+            ? _activeSearchIndex - entry.FirstGlobal
+            : -1;
+        _layers[page].SetSearchMatches(entry.Matches, local);
+    }
+
+    private void ScrollToMatch(int index)
+    {
+        if (_disposed || index < 0 || index >= _searchMatches.Count) return;
+        var match = _searchMatches[index];
+        if (match.PageIndex < 0 || match.PageIndex >= _pages.Children.Count) return;
+
+        var pageControl = _pages.Children[match.PageIndex];
+        if (_pages.Bounds.Height <= 0 || pageControl.Bounds.Height <= 0)
+        {
+            _pendingScrollToMatch = index;
+            return;
+        }
+
+        var pageTop = pageControl.Bounds.Y + _pages.Margin.Top;
+        var (_, pageHeight) = _renderer.PageSizes[match.PageIndex];
+        var scaleY = pageHeight > 0 ? pageControl.Bounds.Height / pageHeight : 1;
+        var targetY = pageTop + match.TopPoints * scaleY;
+
+        var viewH = _scroll.Viewport.Height;
+        var extentH = Math.Max(_pages.Bounds.Height, _scroll.Extent.Height);
+        var maxY = Math.Max(0, extentH - viewH);
+        var y = viewH > 0 ? Math.Clamp(targetY - viewH / 3, 0, maxY) : Math.Max(0, targetY - 40);
+        _scroll.Offset = _scroll.Offset.WithY(y);
+        OnScrolled();
     }
 
     private void OnWheel(object? sender, PointerWheelEventArgs e)
@@ -522,6 +730,8 @@ internal sealed class PdfView : DockPanel, IViewerBody
     public void Dispose()
     {
         _disposed = true;
+        _initialSearchCts?.Cancel();
+        _initialSearchCts?.Dispose();
         for (var i = 0; i < _images.Length; i++) Release(i);
         _renderer.Dispose();
     }

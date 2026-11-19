@@ -13,6 +13,7 @@ Welcome to the **Grepdesk** documentation. Grepdesk is a fast, native desktop fi
 | **[Build & Packaging Guide](BUILD.md)** | Contributors & Maintainers | Prerequisites, local development, running unit and performance tests, `build.py` / `build.ps1` automation, self-contained publishing, and Inno Setup installer compilation. |
 | **[CLI Specification](CLI.md)** | Developers & AI Agents | Design and command specification for the headless `grepdesk` command-line interface (`find`, `grep`, `zip`, `unzip`, `duplicates`, `du`). |
 | **[Roadmap](ROADMAP.md)** | Everyone | Project milestones, Explorer-replacement phases, planned features, and code health goals. |
+| **[Office & PDF Roadmap](OFFICE_PDF_ROADMAP.md)** | Contributors & Users | Prioritized audit and phase-by-phase plan for missing PDF, Word, Excel, PowerPoint, and document-search capabilities. |
 | **[Release Checklist](RELEASE_CHECKLIST.md)** | Maintainers | Step-by-step manual verification checklist for builds, installers, shell integration, and data-sensitive file operations prior to publishing a release. |
 | **[AGENTS.md](../AGENTS.md)** | AI Coding Agents | Repository rules, build/test commands, architectural boundaries, and mandatory invariants for AI assistants. |
 

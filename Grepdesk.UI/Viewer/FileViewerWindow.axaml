@@ -161,7 +161,7 @@
             </Grid>
         </Border>
 
-        <!-- Find / Replace / Go to Line bar (shared by Editor and Rendered Markdown) -->
+        <!-- Find / Replace / Go to Line bar (shared by Editor, Markdown, PDF, and Office views) -->
         <Border x:Name="EditorFindBar"
                 DockPanel.Dock="Top"
                 Background="#181825"

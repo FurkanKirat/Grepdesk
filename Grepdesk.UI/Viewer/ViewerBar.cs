@@ -19,6 +19,19 @@ internal interface IViewerBody : IDisposable
     void FocusContent();
 }
 
+internal sealed record ViewerSearchOptions(bool MatchCase, bool WholeWord, bool UseRegex);
+
+internal sealed record ViewerSearchResult(bool ValidRegex, int MatchCount, int ActiveIndex);
+
+/// <summary>A viewer body that integrates with the window's Find bar.</summary>
+internal interface ISearchableViewerBody : IViewerBody
+{
+    string? InitialSearchQuery { get; }
+    Task<ViewerSearchResult> SearchAsync(string query, ViewerSearchOptions options, bool jumpToMatch, CancellationToken ct);
+    int StepMatch(bool backward);
+    void ClearSearch();
+}
+
 /// <summary>The bottom toolbar of the image, PDF and media views, styled like the window's header.</summary>
 internal static class ViewerBar
 {

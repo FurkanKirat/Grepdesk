@@ -144,10 +144,11 @@ order; each one is usable on its own.
 
 Position: a fast viewer with light edits, not a replacement for Office.
 Fidelity gaps will look like bugs next to the real application, so cap the
-scope and say so in the README.
+scope and say so in the README. See [OFFICE_PDF_ROADMAP.md](OFFICE_PDF_ROADMAP.md)
+for the prioritized breakdown across PDF, Word, Excel, PowerPoint, preview, and CLI.
 
-- [ ] **Legacy formats**: read `.doc`, `.xls`, `.ppt`, `.rtf`, `.odt`, `.ods`,
-  `.odp` (view and content search). Common in school and government files.
+- [ ] **Legacy formats**: read `.doc`, `.xls`, `.rtf`, `.odt`, `.ods`,
+  `.odp` (view and content search). Common in school and government files. (`.ppt` is supported read-only.)
 - [ ] **PowerPoint fidelity**: charts and OLE objects (the EMF preview picture
   can't be decoded by Skia, a placeholder is shown), SmartArt, gradients,
   shape geometry, transitions, fonts that are not installed.
