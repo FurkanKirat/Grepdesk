@@ -9,10 +9,7 @@ name or by what's inside them, see what fills your disk and get the space
 back, tidy up Downloads, and zip, unzip, copy or move big folders, right from
 Explorer's right-click menu.
 
-<!-- SCREENSHOT: a 10–15 s GIF here (type in the search box, results appear, Space opens the viewer),
-     saved as docs/images/demo.gif, then:
-![Grepdesk](docs/images/demo.gif)
--->
+![Grepdesk](Media/grepdesk.gif)
 
 **[Download for Windows](https://github.com/FurkanKirat/Grepdesk/releases/latest)** ·
 [Features](#features) · [Benchmarks](#benchmarks) · [Build from source](#build-from-source) · [Documentation](#documentation)
