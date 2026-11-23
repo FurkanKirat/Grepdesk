@@ -148,7 +148,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void InitNavigation()
     {
-        Control[] featurePages = [BrowsePage, NameSearchPage, ContentSearchPage, DiskPage, CleanupPage, OrganizePage];
+        Control[] featurePages = [BrowsePage, NameSearchPage, ContentSearchPage, DiskPage, CleanupPage, OrganizePage, ProgramsPage];
 
         FeatureNav.SelectionChanged += (_, _) =>
         {
@@ -175,11 +175,13 @@ public partial class MainWindow : Window
         DiskPage.IsVisible = page == DiskPage;
         CleanupPage.IsVisible = page == CleanupPage;
         OrganizePage.IsVisible = page == OrganizePage;
+        ProgramsPage.IsVisible = page == ProgramsPage;
         SettingsPage.IsVisible = page == SettingsPage;
 
         if (page == BrowsePage) Dispatcher.UIThread.Post(() => BrowsePage.FocusList(selectFirst: false), DispatcherPriority.Loaded);
         else if (page == NameSearchPage) SearchBox.Focus();
         else if (page == ContentSearchPage) ContentSearchBox.Focus();
+        else if (page == ProgramsPage) _ = ProgramsPage.OnShownAsync();
     }
 
     /// <summary>
@@ -196,6 +198,7 @@ public partial class MainWindow : Window
         BrowsePage.IsVisible ? BrowsePage.StatusLine
         : ContentSearchPage.IsVisible ? ContentStatusText
         : DiskPage.IsVisible ? DiskPage.StatusLine
+        : ProgramsPage.IsVisible ? ProgramsPage.StatusLine
         : StatusText;
 
     private void InitLanguageSetting()
@@ -230,6 +233,7 @@ public partial class MainWindow : Window
             NavDiskText.Text = Loc.Get("DiskTab");
             NavCleanupText.Text = Loc.Get("CleanupTab");
             NavOrganizeText.Text = Loc.Get("OrganizeTab");
+            NavProgramsText.Text = Loc.Get("ProgramsTab");
             NavSettingsText.Text = SettingsTitle.Text = Loc.Get("SettingsTab");
             NameSearchSubtitle.Text = Loc.Get("NameSearchSubtitle");
             ContentSearchSubtitle.Text = Loc.Get("ContentSearchSubtitle");
@@ -337,6 +341,7 @@ public partial class MainWindow : Window
             DiskPage.ApplyLanguage();
             CleanupPage.ApplyLanguage();
             OrganizePage.ApplyLanguage();
+            ProgramsPage.ApplyLanguage();
         }
         finally
         {
@@ -1102,6 +1107,7 @@ public partial class MainWindow : Window
         CleanupPage.Scans = _driveScans;
         CleanupPage.Shell = _shell;
         OrganizePage.Shell = _shell;
+        ProgramsPage.Shell = _shell;
         CleanupPage.OrganizeRequested += async folder => await OpenOrganizeAsync(folder);
         CleanupPage.Removed += paths =>
         {
@@ -1223,7 +1229,7 @@ public partial class MainWindow : Window
     private static readonly Shortcut[] Shortcuts =
     [
         new("Ctrl+F", "ShortcutFocusSearch"),
-        new("Ctrl+1 … Ctrl+6", "ShortcutPages"),
+        new("Ctrl+1 … Ctrl+7", "ShortcutPages"),
         new("Ctrl+,", "ShortcutSettings"),
         new("↓ / ↑", "ShortcutMoveToResults"),
         new("Enter", "ShortcutOpen"),
@@ -1311,12 +1317,15 @@ public partial class MainWindow : Window
             case Key.F when ctrl && BrowsePage.IsVisible:
                 BrowsePage.FocusFilter();
                 break;
+            case Key.F when ctrl && ProgramsPage.IsVisible:
+                ProgramsPage.FocusSearch();
+                break;
             case Key.F when ctrl:
                 if (ActiveSearchBox is null) FeatureNav.SelectedIndex = PageNameSearch;
                 ActiveSearchBox?.Focus();
                 ActiveSearchBox?.SelectAll();
                 break;
-            case >= Key.D1 and <= Key.D6 when ctrl:
+            case >= Key.D1 and <= Key.D7 when ctrl:
                 FeatureNav.SelectedIndex = e.Key - Key.D1;
                 break;
             case Key.OemComma when ctrl:

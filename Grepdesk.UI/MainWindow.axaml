@@ -4,6 +4,7 @@
         xmlns:disk="using:Grepdesk.UI.DiskUsage"
         xmlns:cleanup="using:Grepdesk.UI.Cleanup"
         xmlns:organize="using:Grepdesk.UI.Organize"
+        xmlns:programs="using:Grepdesk.UI.Programs"
         xmlns:browse="using:Grepdesk.UI.Browse"
         x:Class="Grepdesk.UI.MainWindow"
         Title="Grepdesk"
@@ -325,6 +326,12 @@
                             <TextBlock x:Name="NavOrganizeText" Classes="navText" Text="Organize"/>
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem>
+                        <StackPanel Orientation="Horizontal">
+                            <PathIcon Classes="navIcon" Data="{StaticResource IconApps}"/>
+                            <TextBlock x:Name="NavProgramsText" Classes="navText" Text="Programs"/>
+                        </StackPanel>
+                    </ListBoxItem>
                 </ListBox>
             </DockPanel>
         </Border>
@@ -443,6 +450,9 @@
 
             <!-- ===================== PAGE : ORGANIZE ===================== -->
             <organize:OrganizeView x:Name="OrganizePage" IsVisible="False"/>
+
+            <!-- ===================== PAGE : PROGRAMS ===================== -->
+            <programs:ProgramsView x:Name="ProgramsPage" IsVisible="False"/>
 
             <!-- ===================== PAGE : SETTINGS ===================== -->
             <ScrollViewer x:Name="SettingsPage" IsVisible="False">

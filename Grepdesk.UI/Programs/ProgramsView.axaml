@@ -1,0 +1,88 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:p="using:Grepdesk.UI.Programs"
+             x:Class="Grepdesk.UI.Programs.ProgramsView"
+             DragDrop.AllowDrop="True"
+             Background="Transparent">
+
+    <DockPanel>
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,14">
+            <TextBlock x:Name="TitleText" Classes="pageTitle"/>
+            <TextBlock x:Name="SubtitleText" Classes="pageSubtitle"/>
+        </StackPanel>
+
+        <!-- Search + Actions -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="10,0,0,0" VerticalAlignment="Center">
+                <Button x:Name="AddButton"/>
+                <Button x:Name="RefreshButton"/>
+            </StackPanel>
+            <TextBox x:Name="SearchBox" Classes="search"/>
+        </DockPanel>
+
+        <!-- Filter chips + Status -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
+                <Button x:Name="ClearRecentButton" IsVisible="False" Padding="10,3" FontSize="12"/>
+                <TextBlock x:Name="StatusText" Classes="label" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+            <ListBox x:Name="FilterList" Classes="chips"/>
+        </DockPanel>
+
+        <!-- Body -->
+        <Panel>
+            <Border x:Name="EmptyState" Classes="card" Padding="24" IsVisible="False">
+                <TextBlock x:Name="EmptyText" Foreground="#7f849c" FontSize="13" TextWrapping="Wrap"
+                           TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="480"/>
+            </Border>
+
+            <ListBox x:Name="ProgramList" Classes="results">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="p:ProgramRow">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="2,4" ToolTip.Tip="{Binding TooltipText}">
+                            <!-- Favorite toggle button -->
+                            <Button Grid.Column="0" Classes="rowAction" Tag="fav" ToolTip.Tip="{Binding FavoriteTip}"
+                                    Margin="0,0,6,0" VerticalAlignment="Center">
+                                <Panel Width="16" Height="16">
+                                    <PathIcon Data="{StaticResource IconStar}" Width="15" Height="15"
+                                              Foreground="{Binding StarForeground}" IsVisible="{Binding IsFavorite}"/>
+                                    <PathIcon Data="{StaticResource IconStarOutline}" Width="15" Height="15"
+                                              Foreground="{Binding StarForeground}" IsVisible="{Binding IsNotFavorite}"/>
+                                </Panel>
+                            </Button>
+
+                            <!-- Program icon -->
+                            <Panel Grid.Column="1" Width="28" Height="28" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <Image Source="{Binding Icon}" Width="24" Height="24"
+                                       RenderOptions.BitmapInterpolationMode="HighQuality"/>
+                                <Border IsVisible="{Binding ShowFallbackIcon}" Width="24" Height="24"
+                                        Background="#252538" BorderBrush="#45475a" BorderThickness="1" CornerRadius="5">
+                                    <PathIcon Data="{StaticResource IconApps}" Width="13" Height="13" Foreground="#89b4fa"/>
+                                </Border>
+                            </Panel>
+
+                            <!-- Name & details -->
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
+                                <TextBlock Foreground="#cdd6f4" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding NameBefore}"/><Run Classes="match" Text="{Binding NameMatch}"/><Run Text="{Binding NameAfter}"/>
+                                </TextBlock>
+                                <TextBlock Text="{Binding Subtitle}" Foreground="#6c7086" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+
+                            <!-- Quick actions -->
+                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="12,0,2,0">
+                                <Button Classes="rowAction" Tag="show" ToolTip.Tip="{Binding ShowTip}">
+                                    <PathIcon Data="{StaticResource IconFolder}" Width="14" Height="14"/>
+                                </Button>
+                                <Button Classes="rowAction" Tag="open" ToolTip.Tip="{Binding OpenTip}">
+                                    <PathIcon Data="{StaticResource IconOpen}" Width="13" Height="13"/>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Panel>
+    </DockPanel>
+</UserControl>

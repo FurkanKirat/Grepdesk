@@ -47,6 +47,15 @@ internal sealed class AppSettings
     /// <summary>Recently visited folders in the folder browser, most recent first.</summary>
     public List<string> RecentFolders { get; set; } = [];
 
+    /// <summary>Programs pinned to the Favorites section on the Programs page.</summary>
+    public List<string> FavoritePrograms { get; set; } = [];
+
+    /// <summary>Recently launched programs on the Programs page, most recent first.</summary>
+    public List<string> RecentPrograms { get; set; } = [];
+
+    /// <summary>User-added custom or portable program paths on the Programs page.</summary>
+    public List<string> CustomPrograms { get; set; } = [];
+
     public Core.Browse.FolderSortColumn BrowseSortColumn { get; set; }
     public bool BrowseSortDescending { get; set; }
 
