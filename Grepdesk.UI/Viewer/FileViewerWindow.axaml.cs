@@ -2,6 +2,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -2351,6 +2352,48 @@ public partial class FileViewerWindow : Window
         Editor.Select(newSelStart, newSelLen);
     }
 
+    private async Task PasteIntoEditorAsync()
+    {
+        if (!EditorContainer.IsVisible || !IsEditing || Editor.IsReadOnly) return;
+        var doc = Editor.Document;
+        var path = FilePath;
+
+        string? text;
+        try
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            text = clipboard is null ? null : await clipboard.TryGetTextAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Write(ex, "editor paste");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(text)
+            || !ReferenceEquals(Editor.Document, doc)
+            || FilePath != path
+            || !EditorContainer.IsVisible
+            || !IsEditing
+            || Editor.IsReadOnly)
+        {
+            return;
+        }
+
+        var caretLine = Math.Clamp(Editor.TextArea.Caret.Line, 1, Math.Max(1, doc.LineCount));
+        var newLine = TextUtilities.GetNewLineFromDocument(doc, caretLine);
+        var normalized = TextUtilities.NormalizeNewLines(text, newLine);
+        if (Editor.Options.ConvertTabsToSpaces)
+            normalized = normalized.Replace("\t", new string(' ', Editor.Options.IndentationSize));
+
+        using (doc.RunUpdate())
+        {
+            Editor.TextArea.Selection.ReplaceSelectionWithText(normalized);
+        }
+
+        Editor.TextArea.Caret.BringCaretToView();
+    }
+
     private void ToggleLineEnding()
     {
         if (!IsEditing || Editor.IsReadOnly) return;
@@ -2479,6 +2522,13 @@ public partial class FileViewerWindow : Window
         {
             ToggleLineComment();
             e.Handled = true;
+            return;
+        }
+        if (((ctrl && !alt && !shift && e.Key == Key.V) || (!ctrl && !alt && shift && e.Key == Key.Insert))
+            && EditorContainer.IsVisible && IsEditing && !Editor.IsReadOnly && Editor.IsKeyboardFocusWithin)
+        {
+            e.Handled = true;
+            _ = PasteIntoEditorAsync();
             return;
         }
         if (ctrl && !alt && EditorContainer.IsVisible)

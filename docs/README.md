@@ -15,6 +15,7 @@ Welcome to the **Grepdesk** documentation. Grepdesk is a fast, native desktop fi
 | **[Roadmap](ROADMAP.md)** | Everyone | Project milestones, Explorer-replacement phases, planned features, and code health goals. |
 | **[Office & PDF Roadmap](OFFICE_PDF_ROADMAP.md)** | Contributors & Users | Prioritized audit and phase-by-phase plan for missing PDF, Word, Excel, PowerPoint, and document-search capabilities. |
 | **[Release Checklist](RELEASE_CHECKLIST.md)** | Maintainers | Step-by-step manual verification checklist for builds, installers, shell integration, and data-sensitive file operations prior to publishing a release. |
+| **[Bugfix Log](BUGFIX_LOG.md)** | Maintainers & AI Agents | Maps each `<InternalBuildNumber>` (`#1`, `#2`, ...) to the log signatures, root causes, and fixes it resolved so regressions and false alarms are easy to distinguish. |
 | **[AGENTS.md](../AGENTS.md)** | AI Coding Agents | Repository rules, build/test commands, architectural boundaries, and mandatory invariants for AI assistants. |
 
 ---

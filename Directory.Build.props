@@ -8,7 +8,7 @@
 <Project>
   <PropertyGroup>
     <Version>0.2.0</Version>
-    <InternalBuildNumber>1</InternalBuildNumber>
+    <InternalBuildNumber>2</InternalBuildNumber>
     <Product>Grepdesk</Product>
     <Authors>Furkan Kırat</Authors>
     <Company>Furkan Kırat</Company>

@@ -91,7 +91,7 @@ Grepdesk.UI ──► Grepdesk.Core ◄── Grepdesk.Windows / Grepdesk.Linux 
 
 ### 4.3 Single Source of Truth for Version
 - The product version is defined **only** in `Directory.Build.props` (`<Version>`).
-- `<InternalBuildNumber>` in `Directory.Build.props` is a monotonically increasing integer (`1, 2, 3, ...`) embedded in `AssemblyMetadata` and written to `AppInfo.Display`, `ErrorLog`, and `SessionTrail` headers. Increment it by `1` whenever fixing logged errors or crashes; when inspecting `%LOCALAPPDATA%\Grepdesk\logs`, compare each entry's `#N` against `<InternalBuildNumber>` so already-fixed logs from older numbers are not treated as false alarms.
+- `<InternalBuildNumber>` in `Directory.Build.props` is a monotonically increasing integer (`1, 2, 3, ...`) embedded in `AssemblyMetadata` and written to `AppInfo.Display`, `ErrorLog`, and `SessionTrail` headers. Increment it by `1` whenever fixing logged errors or crashes and record the bug signature, root cause, and fix in `docs/BUGFIX_LOG.md`; when inspecting `%LOCALAPPDATA%\Grepdesk\logs`, consult `docs/BUGFIX_LOG.md` and compare each entry's `#N` against `<InternalBuildNumber>` so already-fixed logs from older numbers are not treated as false alarms.
 - Never add `<Version>` tags to individual `.csproj` files or hardcode version strings in `setup.iss`.
 
 ### 4.4 Data Safety & Non-Destructive Defaults
@@ -136,4 +136,4 @@ Grepdesk.UI ──► Grepdesk.Core ◄── Grepdesk.Windows / Grepdesk.Linux 
 | **Standalone CLI** | `Grepdesk.Cli/Program.cs`, `CliRunner.cs`, `Commands/*` |
 | **Platform Implementations** | `Grepdesk.UI/Helpers/PlatformShellFactory.cs`, `Grepdesk.Windows/*`, `Grepdesk.Linux/*`, `Grepdesk.MacOS/*` |
 | **Build & Packaging** | `Directory.Build.props`, `build.py`, `build.ps1`, `setup.iss` |
-| **Further Documentation** | `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/BUILD.md`, `docs/CLI.md`, `docs/ROADMAP.md` |
+| **Further Documentation** | `docs/README.md`, `docs/BUGFIX_LOG.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/BUILD.md`, `docs/CLI.md`, `docs/ROADMAP.md` |

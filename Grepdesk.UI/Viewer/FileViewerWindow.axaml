@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ae="using:AvaloniaEdit"
+        xmlns:viewer="using:Grepdesk.UI.Viewer"
         x:Class="Grepdesk.UI.Viewer.FileViewerWindow"
         Title="Grepdesk"
         Width="1000"
@@ -226,7 +227,7 @@
                     </Grid>
                 </Border>
 
-                <ae:TextEditor x:Name="Editor"
+                <viewer:GrepdeskTextEditor x:Name="Editor"
                                IsReadOnly="True"
                                ShowLineNumbers="True"
                                FontSize="12.5"

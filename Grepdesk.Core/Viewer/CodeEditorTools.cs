@@ -706,7 +706,8 @@ public static class CodeFolder
         while (pos < text.Length)
         {
             var lineEnd = FindLineEnd(text, pos);
-            var span = text.AsSpan(pos, lineEnd - pos).TrimEnd('\r');
+            var contentEnd = lineEnd > pos && text[lineEnd - 1] == '\r' ? lineEnd - 1 : lineEnd;
+            var span = text.AsSpan(pos, contentEnd - pos);
             var trimmed = span.TrimStart();
 
             if (trimmed.Length >= 3 && ((trimmed[0] == '`' && trimmed[1] == '`' && trimmed[2] == '`')
@@ -735,11 +736,11 @@ public static class CodeFolder
                         if (prevLineEnd > closed.HeaderEndOffset)
                             spans.Add(new FoldSpan(closed.HeaderEndOffset, prevLineEnd, closed.Title));
                     }
-                    openHeadings.Push((level, lineEnd, title));
+                    openHeadings.Push((level, contentEnd, title));
                 }
             }
 
-            prevLineEnd = lineEnd;
+            prevLineEnd = contentEnd;
             pos = lineEnd < text.Length && text[lineEnd] == '\n' ? lineEnd + 1 : lineEnd;
         }
 

@@ -1,4 +1,6 @@
+using Avalonia;
 using Grepdesk.Core.Viewer;
+using Grepdesk.UI.Viewer;
 
 namespace Grepdesk.Tests;
 
@@ -270,5 +272,41 @@ public class CodeEditorToolsTests
         var line = string.Join(" ", Enumerable.Repeat("a<b,c>", 400));
         var symbols = CodeSymbolExtractor.ExtractSymbols(line, ".cs");
         Assert.Empty(symbols);
+    }
+
+    [Fact]
+    public void CodeFolder_markdown_crlf_does_not_split_line_endings()
+    {
+        var md = "# H1\r\nbody 1\r\n## H2\r\nbody 2\r\n";
+        var folds = CodeFolder.GetFoldings(md, ".md");
+        Assert.NotEmpty(folds);
+        foreach (var f in folds)
+        {
+            if (f.StartOffset > 0 && f.StartOffset < md.Length)
+                Assert.False(md[f.StartOffset - 1] == '\r' && md[f.StartOffset] == '\n');
+            if (f.EndOffset > 0 && f.EndOffset < md.Length)
+                Assert.False(md[f.EndOffset - 1] == '\r' && md[f.EndOffset] == '\n');
+        }
+    }
+
+    [Fact]
+    public void ClampToScrollBounds_prevents_horizontal_and_vertical_overshoots()
+    {
+        var extent = new Size(800, 400);
+        var viewport = new Size(500, 300);
+
+        // 5px caret inflation past the right/bottom edge of extent
+        var clampedRightBottom = GrepdeskTextView.ClampToScrollBounds(
+            new Rect(790, 390, 15, 15), extent, viewport);
+        Assert.Equal(800, clampedRightBottom.Right);
+        Assert.Equal(400, clampedRightBottom.Bottom);
+
+        // Negative left/top inflation
+        var clampedTopLeft = GrepdeskTextView.ClampToScrollBounds(
+            new Rect(-5, -5, 10, 10), extent, viewport);
+        Assert.Equal(0, clampedTopLeft.X);
+        Assert.Equal(0, clampedTopLeft.Y);
+        Assert.Equal(5, clampedTopLeft.Right);
+        Assert.Equal(5, clampedTopLeft.Bottom);
     }
 }
