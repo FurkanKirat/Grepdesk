@@ -79,4 +79,43 @@ public class SessionTrailTests
         Assert.Contains("access violation", report);
         Assert.DoesNotContain("other.dll", report);
     }
+
+    [Fact]
+    public void Trail_header_records_internal_build_and_filters_older_builds()
+    {
+        using var dir = new TempDir();
+        File.WriteAllLines(
+            Path.Combine(dir.Path, "session-4242.trail"),
+            [$"4242 {Boot.AddHours(1):O} #3 0.2.0 #3 (abc1234)", "10:00:00.000 viewer: opened"]);
+
+        var crashes = SessionTrail.TakeCrashes(dir.Path, isRunning: (_, _) => false, bootUtc: Boot);
+
+        var crash = Assert.Single(crashes);
+        Assert.Equal(3, crash.InternalBuild);
+        Assert.Equal("0.2.0 #3 (abc1234)", crash.AppDisplay);
+        Assert.Contains("build 0.2.0 #3 (abc1234)", crash.ToString());
+
+        Assert.True(CrashHandling.IsFromCurrentBuild(crash, currentBuild: 3));
+        Assert.False(CrashHandling.IsFromCurrentBuild(crash, currentBuild: 4));
+
+        var legacy = new SessionTrail.Crash(100, Boot, Boot, ["step"]);
+        Assert.Null(legacy.InternalBuild);
+        Assert.False(CrashHandling.IsFromCurrentBuild(legacy, currentBuild: 1));
+    }
+
+    [Fact]
+    public void Windows_hang_record_is_parsed_for_matching_process()
+    {
+        const string xml = """
+            <Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Hang'/><EventID>1002</EventID></System><EventData><Data Name='AppName'>Other.exe</Data><Data Name='ProcessId'>0x10</Data><Data Name='HangType'>Unknown</Data><Data Name='TerminationTime'>42</Data></EventData></Event>
+            <Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Hang'/><EventID>1002</EventID></System><EventData><Data Name='AppName'>Grepdesk.UI.exe</Data><Data Name='ProcessId'>0x1092</Data><Data Name='HangType'>Top level window is idle</Data><Data Name='TerminationTime'>71</Data></EventData></Event>
+            """;
+
+        var report = SessionTrail.ParseEvents(xml, 0x1092);
+
+        Assert.NotNull(report);
+        Assert.Contains("Application Hang", report);
+        Assert.Contains("Top level window is idle", report);
+        Assert.DoesNotContain("Other.exe", report);
+    }
 }

@@ -263,4 +263,12 @@ public class CodeEditorToolsTests
         Assert.Throws<OperationCanceledException>(() =>
             CodeEditorSearch.FindMatches("foo foo foo", "foo", false, false, false, 10, out _, cts.Token));
     }
+
+    [Fact]
+    public void ExtractSymbols_handles_pathological_method_like_lines_without_hanging()
+    {
+        var line = string.Join(" ", Enumerable.Repeat("a<b,c>", 400));
+        var symbols = CodeSymbolExtractor.ExtractSymbols(line, ".cs");
+        Assert.Empty(symbols);
+    }
 }

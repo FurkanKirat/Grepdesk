@@ -141,6 +141,9 @@ public partial class FileViewerWindow : Window
         Editor.TextArea.SelectionForeground = null;
         Editor.TextArea.SelectionBorder = null;
         Editor.Options.HighlightCurrentLine = true;
+        // Workaround for AvaloniaEdit #614: with AllowScrollBelowDocument=false and TextMate
+        // active, dragging a selection past the last line causes an infinite layout/scroll loop.
+        Editor.Options.AllowScrollBelowDocument = true;
         foreach (var margin in Editor.TextArea.LeftMargins.OfType<LineNumberMargin>())
             margin.Margin = new Thickness(0, 0, 14, 0);
         _textMate = Editor.InstallTextMate(Grammars.Value);
@@ -153,11 +156,14 @@ public partial class FileViewerWindow : Window
         {
             if (_loading) return;
             _preferRendered = RenderedToggle.IsChecked == true;
+            SessionTrail.Note($"viewer: rendered {(_preferRendered ? "on" : "off")}");
             if (_preferRendered && EditToggle.IsChecked == true) EditToggle.IsChecked = false;
             ShowTextBody();
         };
         EditToggle.IsCheckedChanged += async (_, _) =>
         {
+            if (!_loading)
+                SessionTrail.Note($"viewer: edit {(IsEditing ? "on" : "off")}");
             if (_word)
             {
                 SaveButton.IsVisible = IsEditing;

@@ -803,38 +803,39 @@ public static class CodeSymbolExtractor
 {
     public const int MaxSymbols = 500;
     public const int MaxTextLength = 4_000_000;
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
 
     private static readonly Regex CStyleTypeRegex = new(
         @"^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial|readonly|ref|unsafe|export|default|declare)\s+)*(?<kind>namespace|class|struct|interface|enum|record|trait|module)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex CStyleMethodRegex = new(
         @"^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|async|extern|unsafe|new|partial|readonly|export|inline|constexpr|suspend)\s+)*(?:function\s+|fn\s+|func\s+(?:\([^)]*\)\s+)?|(?:[A-Za-z_][A-Za-z0-9_<>\[\],\?\.\*\s&]*?)\s+)(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]+>)?\s*\(",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex PythonRegex = new(
         @"^\s*(?:async\s+)?(?<kind>class|def)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex SqlRegex = new(
         @"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?<kind>TABLE|VIEW|PROCEDURE|PROC|FUNCTION|INDEX|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?(?<name>[A-Za-z_\[""`][A-Za-z0-9_\.\[\]""`]*)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        RegexOptions.Compiled | RegexOptions.IgnoreCase, RegexTimeout);
 
     private static readonly Regex JsonKeyRegex = new(
         @"^(?<indent>\s*)""(?<name>[^""\\]{1,80})""\s*:",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex IniSectionRegex = new(
         @"^\s*\[(?<name>[^\]\r\n]{1,80})\]\s*(?:[#;].*)?$",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex XmlNamedElementRegex = new(
         @"^\s*<(?<tag>[A-Za-z_][A-Za-z0-9_:\.-]*)\b[^>]*(?:x:Name|Name|id)\s*=\s*[""'](?<name>[^""']+)[""']",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly Regex XmlMajorElementRegex = new(
         @"^\s*<(?<tag>Project|PropertyGroup|ItemGroup|Target|Window|UserControl|Grid|DockPanel|StackPanel)\b(?:\s+[^>]*?Name\s*=\s*[""'](?<name>[^""']+)[""'])?",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, RegexTimeout);
 
     private static readonly HashSet<string> ControlKeywords = new(StringComparer.Ordinal)
     {
@@ -907,11 +908,17 @@ public static class CodeSymbolExtractor
         });
     }
 
+    private static Match SafeMatch(Regex regex, string input)
+    {
+        try { return regex.Match(input); }
+        catch (RegexMatchTimeoutException) { return Match.Empty; }
+    }
+
     private static void ExtractJson(string text, List<CodeSymbol> symbols)
     {
         ForEachLine(text, (lineText, lineNumber, offset) =>
         {
-            var m = JsonKeyRegex.Match(lineText);
+            var m = SafeMatch(JsonKeyRegex, lineText);
             if (!m.Success) return true;
             var indent = m.Groups["indent"].Value.Length;
             if (indent <= 4)
@@ -926,14 +933,14 @@ public static class CodeSymbolExtractor
     {
         ForEachLine(text, (lineText, lineNumber, offset) =>
         {
-            var m = XmlNamedElementRegex.Match(lineText);
+            var m = SafeMatch(XmlNamedElementRegex, lineText);
             if (m.Success)
             {
                 symbols.Add(new CodeSymbol(m.Groups["name"].Value, m.Groups["tag"].Value, lineNumber, offset));
                 return symbols.Count < MaxSymbols;
             }
 
-            var major = XmlMajorElementRegex.Match(lineText);
+            var major = SafeMatch(XmlMajorElementRegex, lineText);
             if (major.Success)
             {
                 var tag = major.Groups["tag"].Value;
@@ -948,7 +955,7 @@ public static class CodeSymbolExtractor
     {
         ForEachLine(text, (lineText, lineNumber, offset) =>
         {
-            var m = IniSectionRegex.Match(lineText);
+            var m = SafeMatch(IniSectionRegex, lineText);
             if (m.Success)
                 symbols.Add(new CodeSymbol(m.Groups["name"].Value, "Section", lineNumber, offset));
             return symbols.Count < MaxSymbols;
@@ -959,7 +966,7 @@ public static class CodeSymbolExtractor
     {
         ForEachLine(text, (lineText, lineNumber, offset) =>
         {
-            var m = PythonRegex.Match(lineText);
+            var m = SafeMatch(PythonRegex, lineText);
             if (m.Success)
             {
                 var kind = m.Groups["kind"].Value == "class" ? "class" : "def";
@@ -973,7 +980,7 @@ public static class CodeSymbolExtractor
     {
         ForEachLine(text, (lineText, lineNumber, offset) =>
         {
-            var m = SqlRegex.Match(lineText);
+            var m = SafeMatch(SqlRegex, lineText);
             if (m.Success)
             {
                 symbols.Add(new CodeSymbol(
@@ -1005,7 +1012,7 @@ public static class CodeSymbolExtractor
             if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('#'))
                 return true;
 
-            var typeMatch = CStyleTypeRegex.Match(lineText);
+            var typeMatch = SafeMatch(CStyleTypeRegex, lineText);
             if (typeMatch.Success)
             {
                 symbols.Add(new CodeSymbol(
@@ -1018,7 +1025,7 @@ public static class CodeSymbolExtractor
 
             if (trimmed.EndsWith(';')) return true;
 
-            var methodMatch = CStyleMethodRegex.Match(lineText);
+            var methodMatch = SafeMatch(CStyleMethodRegex, lineText);
             if (methodMatch.Success)
             {
                 var name = methodMatch.Groups["name"].Value;

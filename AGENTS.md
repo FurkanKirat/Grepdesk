@@ -91,6 +91,7 @@ Grepdesk.UI ──► Grepdesk.Core ◄── Grepdesk.Windows / Grepdesk.Linux 
 
 ### 4.3 Single Source of Truth for Version
 - The product version is defined **only** in `Directory.Build.props` (`<Version>`).
+- `<InternalBuildNumber>` in `Directory.Build.props` is a monotonically increasing integer (`1, 2, 3, ...`) embedded in `AssemblyMetadata` and written to `AppInfo.Display`, `ErrorLog`, and `SessionTrail` headers. Increment it by `1` whenever fixing logged errors or crashes; when inspecting `%LOCALAPPDATA%\Grepdesk\logs`, compare each entry's `#N` against `<InternalBuildNumber>` so already-fixed logs from older numbers are not treated as false alarms.
 - Never add `<Version>` tags to individual `.csproj` files or hardcode version strings in `setup.iss`.
 
 ### 4.4 Data Safety & Non-Destructive Defaults

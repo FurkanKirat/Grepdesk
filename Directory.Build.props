@@ -2,13 +2,20 @@
   Shared by every project. The version is set here only: the exe's file and
   product version, Settings → About, the error log and the installer (which
   reads it back from the published exe) all come from it.
+  InternalBuildNumber is a monotonically increasing integer (1, 2, 3...) bumped
+  when fixing logged issues so old log entries aren't mistaken for false alarms.
 -->
 <Project>
   <PropertyGroup>
     <Version>0.2.0</Version>
+    <InternalBuildNumber>1</InternalBuildNumber>
     <Product>Grepdesk</Product>
     <Authors>Furkan Kırat</Authors>
     <Company>Furkan Kırat</Company>
     <Copyright>Copyright (c) 2026 Furkan Kırat</Copyright>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="InternalBuildNumber" Value="$(InternalBuildNumber)" />
+  </ItemGroup>
 </Project>

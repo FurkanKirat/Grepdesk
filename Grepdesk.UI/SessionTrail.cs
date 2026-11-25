@@ -23,15 +23,24 @@ internal static class SessionTrail
     private static string _header = "";
 
     /// <summary>A process that ended without closing its trail.</summary>
-    public sealed record Crash(int ProcessId, DateTime StartedUtc, DateTime LastWriteUtc, IReadOnlyList<string> Trail)
+    public sealed record Crash(
+        int ProcessId,
+        DateTime StartedUtc,
+        DateTime LastWriteUtc,
+        IReadOnlyList<string> Trail,
+        int? InternalBuild = null,
+        string? AppDisplay = null)
     {
         /// <summary>What Windows recorded about it, if it recorded anything.</summary>
         public string? SystemReport { get; init; }
 
         public override string ToString()
         {
+            var build = !string.IsNullOrWhiteSpace(AppDisplay)
+                ? $", build {AppDisplay}"
+                : InternalBuild is { } n ? $", build #{n}" : "";
             var text = new StringBuilder()
-                .AppendLine($"Process {ProcessId}, started {StartedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}, last activity {LastWriteUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+                .AppendLine($"Process {ProcessId}{build}, started {StartedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}, last activity {LastWriteUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
             if (SystemReport is not null) text.AppendLine().AppendLine(SystemReport.TrimEnd());
             text.AppendLine().AppendLine("Last steps:");
             foreach (var line in Trail) text.AppendLine("  " + line);
@@ -49,7 +58,9 @@ internal static class SessionTrail
             lock (Gate)
             {
                 _path = Path.Combine(directory, $"session-{Environment.ProcessId}.trail");
-                _header = $"{Environment.ProcessId} {self.StartTime.ToUniversalTime():O}";
+                _header = AppInfo.InternalBuild > 0
+                    ? $"{Environment.ProcessId} {self.StartTime.ToUniversalTime():O} #{AppInfo.InternalBuild} {AppInfo.Display}"
+                    : $"{Environment.ProcessId} {self.StartTime.ToUniversalTime():O}";
                 Lines.Clear();
             }
             Note($"start: Grepdesk {AppInfo.Display}");
@@ -154,7 +165,7 @@ internal static class SessionTrail
             {
                 var lines = File.ReadAllLines(file);
                 var lastWrite = File.GetLastWriteTimeUtc(file);
-                if (!TryParseHeader(lines, out var pid, out var started))
+                if (!TryParseHeader(lines, out var pid, out var started, out var internalBuild, out var appDisplay))
                 {
                     File.Delete(file);
                     continue;
@@ -165,7 +176,7 @@ internal static class SessionTrail
                 var claimed = file + ".taken";
                 File.Move(file, claimed);
                 File.Delete(claimed);
-                if (started > bootUtc) crashes.Add(new Crash(pid, started, lastWrite, lines[1..]));
+                if (started > bootUtc) crashes.Add(new Crash(pid, started, lastWrite, lines[1..], internalBuild, appDisplay));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -175,14 +186,30 @@ internal static class SessionTrail
         return crashes;
     }
 
-    private static bool TryParseHeader(string[] lines, out int pid, out DateTime startedUtc)
+    private static bool TryParseHeader(string[] lines, out int pid, out DateTime startedUtc, out int? internalBuild, out string? appDisplay)
     {
         pid = 0;
         startedUtc = default;
-        var parts = lines.Length > 0 ? lines[0].Split(' ') : [];
-        return parts.Length == 2
-            && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out pid)
-            && DateTime.TryParse(parts[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out startedUtc);
+        internalBuild = null;
+        appDisplay = null;
+        var parts = lines.Length > 0 ? lines[0].Split(' ', 4) : [];
+        if (parts.Length < 2
+            || !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out pid)
+            || !DateTime.TryParse(parts[1], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out startedUtc))
+        {
+            return false;
+        }
+        if (parts.Length >= 3 && parts[2].StartsWith('#')
+            && int.TryParse(parts[2].AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedBuild)
+            && parsedBuild > 0)
+        {
+            internalBuild = parsedBuild;
+        }
+        if (parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]))
+        {
+            appDisplay = parts[3].Trim();
+        }
+        return true;
     }
 
     /// <summary>The same process, not a new one that was given the same id.</summary>
@@ -216,7 +243,7 @@ internal static class SessionTrail
             var since = crash.StartedUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
             var xml = RunWevtutil(
                 "qe", "Application", "/f:xml", "/c:50",
-                $"/q:*[System[(EventID=1000 or EventID=1026) and TimeCreated[@SystemTime>='{since}']]]");
+                $"/q:*[System[(EventID=1000 or EventID=1002 or EventID=1026) and TimeCreated[@SystemTime>='{since}']]]");
             return xml is null ? crash : crash with { SystemReport = ParseEvents(xml, crash.ProcessId) };
         }
         catch
@@ -244,6 +271,12 @@ internal static class SessionTrail
                 report.AppendLine($"Windows: {Field("AppName")} crashed in {Field("ModuleName")} {Field("ModuleVersion")}")
                       .AppendLine($"  exception 0x{code} ({ExceptionName(code)}), offset 0x{Field("FaultingOffset")}")
                       .AppendLine($"  module: {Field("ModulePath")}");
+            }
+            else if (id == "1002" && string.Equals(Field("ProcessId"), hexPid, StringComparison.OrdinalIgnoreCase))
+            {
+                var hangType = Field("HangType");
+                var termination = Field("TerminationTime");
+                report.AppendLine($"Windows: {Field("AppName")} hung (Application Hang, type {(string.IsNullOrEmpty(hangType) ? "Unknown" : hangType)}, termination {termination})");
             }
             else if (id == "1026" && data.FirstOrDefault()?.Value is { } text
                      && text.Contains(exeName, StringComparison.OrdinalIgnoreCase) && report.Length == 0)

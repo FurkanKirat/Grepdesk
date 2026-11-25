@@ -61,6 +61,9 @@ internal static class CrashHandling
         };
     }
 
+    internal static bool IsFromCurrentBuild(SessionTrail.Crash crash, int currentBuild) =>
+        currentBuild <= 0 || crash.InternalBuild == currentBuild;
+
     /// <summary>
     /// Looks for runs that ended in a crash nothing could catch, logs them with
     /// Windows' record of the crash, and shows what was found. Off the UI thread:
@@ -75,7 +78,12 @@ internal static class CrashHandling
             {
                 var found = SessionTrail.TakeCrashes().Select(SessionTrail.WithSystemReport).ToList();
                 foreach (var crash in found)
-                    ErrorLog.Write("crash found at next start", crash.ToString());
+                {
+                    var source = IsFromCurrentBuild(crash, AppInfo.InternalBuild)
+                        ? "crash found at next start"
+                        : $"crash found at next start (older build{(crash.InternalBuild is { } n ? $" #{n}" : "")})";
+                    ErrorLog.Write(source, crash.ToString());
+                }
                 return found;
             });
         }
@@ -84,14 +92,15 @@ internal static class CrashHandling
             ErrorLog.Write(e, "crash report");
             return;
         }
-        if (crashes.Count == 0 || _openDialog is not null) return;
+        var currentCrashes = crashes.Where(c => IsFromCurrentBuild(c, AppInfo.InternalBuild)).ToList();
+        if (currentCrashes.Count == 0 || _openDialog is not null) return;
 
-        var newest = crashes.MaxBy(c => c.LastWriteUtc)!;
+        var newest = currentCrashes.MaxBy(c => c.LastWriteUtc)!;
         var summary = newest.SystemReport?.Split('\n')[0].Trim()
                       ?? newest.Trail.LastOrDefault()
                       ?? "";
         ShowDialog(Text("CrashTitle"), Text("CrashMessage"), summary,
-            string.Join(Environment.NewLine + Environment.NewLine, crashes.Select(c => c.ToString())));
+            string.Join(Environment.NewLine + Environment.NewLine, currentCrashes.Select(c => c.ToString())));
     }
 
     /// <param name="summary">One line, shown as is.</param>

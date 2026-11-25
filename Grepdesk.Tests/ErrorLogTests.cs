@@ -43,4 +43,20 @@ public class ErrorLogTests
 
         Assert.Null(ErrorLog.Write(new Exception("x"), "test", blocker));
     }
+
+    [Fact]
+    public void Internal_build_number_is_present_and_logged()
+    {
+        Assert.True(AppInfo.InternalBuild >= 1);
+        Assert.Equal("0.2.0 #3 (abc1234)", AppInfo.FormatDisplay("0.2.0", 3, "abc1234"));
+        Assert.Equal("0.2.0 #3", AppInfo.FormatDisplay("0.2.0", 3, null));
+        Assert.Equal("0.2.0 (abc1234)", AppInfo.FormatDisplay("0.2.0", 0, "abc1234"));
+
+        using var dir = new TempDir();
+        var path = ErrorLog.Write("test", "details", dir.Path);
+
+        Assert.NotNull(path);
+        var text = File.ReadAllText(path!);
+        Assert.Contains($"#{AppInfo.InternalBuild}", text);
+    }
 }
