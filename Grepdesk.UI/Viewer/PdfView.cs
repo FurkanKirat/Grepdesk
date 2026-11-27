@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -9,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Grepdesk.Core.Ocr;
 using Grepdesk.Core.Viewer;
 
 namespace Grepdesk.UI.Viewer;
@@ -41,11 +43,13 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
     private static LocalizationService Loc => LocalizationService.Instance;
 
     private readonly PdfRenderer _renderer;
+    private readonly IOcrEngine? _ocr;
     private readonly ScrollViewer _scroll;
     private readonly StackPanel _pages = new() { Spacing = PageGap, Margin = new Thickness(SideMargin, PageGap) };
     private readonly Image[] _images;
     private readonly double[] _renderedZoom;
     private readonly TextBlock _pageText;
+    private readonly TextBlock _ocrStatusText;
     private readonly TextBlock _zoomText;
 
     private bool _fit = true;
@@ -57,6 +61,11 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
     private List<int> _wanted = [];
     private double _wantedZoom, _wantedScaling = 1;
     private bool _rendering;
+    private bool _ocrLoopRunning;
+    private int _ocrActiveCount;
+    private readonly ConcurrentDictionary<int, PdfPageText> _ocrCache = new();
+    private readonly ConcurrentDictionary<int, byte> _ocrDone = new();
+    private readonly CancellationTokenSource _disposeCts = new();
 
     private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
 
@@ -81,9 +90,10 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
 
     public string? InitialSearchQuery => _initialHighlight;
 
-    public PdfView(PdfRenderer renderer, string? highlight = null)
+    public PdfView(PdfRenderer renderer, string? highlight = null, IOcrEngine? ocr = null)
     {
         _renderer = renderer;
+        _ocr = ocr;
         _initialHighlight = string.IsNullOrEmpty(highlight) ? null : highlight;
         var count = renderer.PageSizes.Count;
         _images = new Image[count];
@@ -126,6 +136,14 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
         _scroll.AddHandler(PointerWheelChangedEvent, OnWheel, RoutingStrategies.Tunnel);
 
         _pageText = ViewerBar.Label();
+        _ocrStatusText = new TextBlock
+        {
+            FontSize = 12,
+            Foreground = Brush.Parse("#89b4fa"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            IsVisible = false,
+        };
         _zoomText = ViewerBar.Label("", 52);
         var zoomOut = ViewerBar.Button("−", Loc.Get("ViewerZoomOut"));
         var zoomIn = ViewerBar.Button("+", Loc.Get("ViewerZoomIn"));
@@ -137,10 +155,16 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
         var info = renderer.TotalPages > count
             ? ViewerBar.Label(Loc.Get("ViewerPdfFirstPages", count, renderer.TotalPages))
             : _pageText;
+        var left = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Children = { info, _ocrStatusText },
+        };
         var zoom = ViewerBar.Row(zoomOut, _zoomText, zoomIn, fit);
         zoom.HorizontalAlignment = HorizontalAlignment.Right;
-        var bar = new DockPanel { Children = { info, zoom } };
-        SetDock(info, Dock.Left);
+        var bar = new DockPanel { Children = { left, zoom } };
+        SetDock(left, Dock.Left);
 
         Children.Add(ViewerBar.Create(bar));
         Children.Add(_scroll);
@@ -244,6 +268,7 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
         _wantedZoom = _zoom;
         _wantedScaling = renderScaling;
         if (!_rendering) _ = RenderAsync();
+        UpdateOcrStatus(first);
     }
 
     /// <summary>How many pages each side of the visible ones keep their bitmap within <see cref="KeptPixelsBudget"/>.</summary>
@@ -280,7 +305,7 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
                 try
                 {
                     (bitmap, text) = await Task.Run(() =>
-                        (ToBitmap(_renderer.Render(index, scale)), needText ? LoadText(index) : null));
+                        (ToBitmap(_renderer.Render(index, scale)), needText ? LoadFastText(index) : null));
                 }
                 catch (Exception e)
                 {
@@ -307,6 +332,12 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
                     _texts[index] = text;
                     _layers[index].Text = text;
                 }
+                if (_texts[index] is { } currentText && !OcrPdfText.HasMeaningfulText(currentText) &&
+                    _ocr is { IsAvailable: true } && !_ocrDone.ContainsKey(index))
+                {
+                    EnsureOcrLoop();
+                }
+                UpdateOcrStatus();
             }
         }
         finally
@@ -349,8 +380,15 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
     // Text selection: drag over the page to highlight, Ctrl+C to copy
     // =====================================================================
 
-    /// <summary>Reads a page's characters; a page PDFium can't read just can't be selected.</summary>
-    private PdfPageText? LoadText(int index)
+    /// <summary>Reads a page's fast text (cached OCR or native PDFium characters).</summary>
+    private PdfPageText? LoadFastText(int index)
+    {
+        if (_ocrCache.TryGetValue(index, out var cached))
+            return cached;
+        return LoadNativeText(index);
+    }
+
+    private PdfPageText? LoadNativeText(int index)
     {
         try
         {
@@ -361,6 +399,176 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
             ErrorLog.Write(e, $"pdf text, page {index + 1}");
             return PdfPageText.Empty;
         }
+    }
+
+    private PdfPageText? GetPageTextForOperation(int index, CancellationToken ct)
+    {
+        if (_ocrCache.TryGetValue(index, out var cached))
+            return cached;
+
+        var native = LoadNativeText(index);
+        if (native is null || OcrPdfText.HasMeaningfulText(native))
+            return native;
+
+        if (_ocr is not { IsAvailable: true } || _ocrDone.ContainsKey(index))
+            return native;
+
+        Interlocked.Increment(ref _ocrActiveCount);
+        Dispatcher.UIThread.Post(() => UpdateOcrStatus());
+        try
+        {
+            var recognized = OcrPageAsync(index, ct).GetAwaiter().GetResult();
+            if (OcrPdfText.HasMeaningfulText(recognized))
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_disposed) return;
+                    if (_texts[index] is not null && !OcrPdfText.HasMeaningfulText(_texts[index]))
+                    {
+                        _texts[index] = recognized;
+                        _layers[index].Text = recognized;
+                    }
+                    UpdateOcrStatus();
+                });
+            }
+            return recognized;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _ocrActiveCount);
+            Dispatcher.UIThread.Post(() => UpdateOcrStatus());
+        }
+    }
+
+    private void EnsureOcrLoop()
+    {
+        if (_ocrLoopRunning || _disposed || _ocr is not { IsAvailable: true }) return;
+        _ = RunOcrLoopAsync();
+    }
+
+    private int? NextWantedForOcr()
+    {
+        foreach (var i in _wanted)
+        {
+            if (!_ocrDone.ContainsKey(i) && _texts[i] is { } t && !OcrPdfText.HasMeaningfulText(t))
+                return i;
+        }
+        return null;
+    }
+
+    private async Task RunOcrLoopAsync()
+    {
+        _ocrLoopRunning = true;
+        try
+        {
+            while (!_disposed && NextWantedForOcr() is { } index)
+            {
+                Interlocked.Increment(ref _ocrActiveCount);
+                UpdateOcrStatus();
+                PdfPageText recognized;
+                try
+                {
+                    recognized = await OcrPageAsync(index, _disposeCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _ocrActiveCount);
+                    UpdateOcrStatus();
+                }
+
+                if (_disposed) break;
+                if (OcrPdfText.HasMeaningfulText(recognized) && _texts[index] is not null)
+                {
+                    _texts[index] = recognized;
+                    _layers[index].Text = recognized;
+                }
+                UpdateOcrStatus();
+            }
+        }
+        finally
+        {
+            _ocrLoopRunning = false;
+        }
+    }
+
+    private async Task<PdfPageText> OcrPageAsync(int index, CancellationToken ct)
+    {
+        if (_ocrCache.TryGetValue(index, out var cached))
+            return cached;
+        if (_ocrDone.ContainsKey(index) || _ocr is not { IsAvailable: true })
+            return PdfPageText.Empty;
+
+        try
+        {
+            var (pageWidth, pageHeight) = _renderer.PageSizes[index];
+            var scale = OcrPdfText.OcrScaleForPage(pageWidth, pageHeight, _ocr.MaxImageDimension);
+
+            var rendered = await Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return _renderer.Render(index, scale);
+            }, ct);
+
+            if (rendered is null)
+            {
+                _ocrDone[index] = 1;
+                return PdfPageText.Empty;
+            }
+
+            var ocrImage = await Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return OcrPdfText.CompositeOnWhite(rendered.Pixels, rendered.Width, rendered.Height);
+            }, ct);
+
+            var result = await _ocr.RecognizeAsync(ocrImage, ct);
+            var pageText = OcrPdfText.ToPdfPageText(result, ocrImage.Width, ocrImage.Height, pageWidth, pageHeight);
+
+            _ocrCache[index] = pageText;
+            _ocrDone[index] = 1;
+            SessionTrail.Note($"pdf: ocr page {index + 1} ({pageText.Length} chars)");
+            return pageText;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception e)
+        {
+            ErrorLog.Write(e, $"pdf ocr, page {index + 1}");
+            _ocrDone[index] = 1;
+            return PdfPageText.Empty;
+        }
+    }
+
+    private void UpdateOcrStatus(int? visibleFirst = null)
+    {
+        if (_disposed) return;
+
+        if (Volatile.Read(ref _ocrActiveCount) > 0)
+        {
+            _ocrStatusText.Text = Loc.Get("ViewerPdfOcrRunning");
+            _ocrStatusText.Foreground = Brush.Parse("#89b4fa");
+            ToolTip.SetTip(_ocrStatusText, null);
+            _ocrStatusText.IsVisible = true;
+            return;
+        }
+
+        var page = visibleFirst ?? VisiblePages().First;
+        if (_ocrCache.TryGetValue(page, out var text) && OcrPdfText.HasMeaningfulText(text))
+        {
+            _ocrStatusText.Text = Loc.Get("ViewerPdfOcrBadge");
+            _ocrStatusText.Foreground = Brush.Parse("#a6e3a1");
+            ToolTip.SetTip(_ocrStatusText, Loc.Get("ViewerPdfOcrTip"));
+            _ocrStatusText.IsVisible = true;
+            return;
+        }
+
+        _ocrStatusText.IsVisible = false;
     }
 
     /// <summary>
@@ -476,7 +684,9 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
                 var sb = new System.Text.StringBuilder();
                 for (var page = start.Page; page <= end.Page; page++)
                 {
-                    var text = known[page - start.Page] ?? LoadText(page);
+                    var text = known[page - start.Page];
+                    if (text is null || (!OcrPdfText.HasMeaningfulText(text) && _ocr is { IsAvailable: true } && !_ocrDone.ContainsKey(page)))
+                        text = GetPageTextForOperation(page, _disposeCts.Token);
                     if (text is null) break; // closed meanwhile
                     if (page > start.Page && sb.Length > 0 && sb[^1] != '\n') sb.AppendLine();
                     text.AppendText(sb, page == start.Page ? start.Caret : 0, page == end.Page ? end.Caret : int.MaxValue);
@@ -543,7 +753,7 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
         try
         {
             matches = await Task.Run(() =>
-                DocumentSearch.SearchPdf(pageCount, i => known[i] ?? LoadText(i), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+                DocumentSearch.SearchPdf(pageCount, i => known[i] is { } t && OcrPdfText.HasMeaningfulText(t) ? t : GetPageTextForOperation(i, ct), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
         }
         catch (OperationCanceledException)
         {
@@ -583,7 +793,7 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
         var known = (PdfPageText?[])_texts.Clone();
         var pageCount = _images.Length;
         var matches = await Task.Run(() =>
-            DocumentSearch.SearchPdf(pageCount, i => known[i] ?? LoadText(i), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
+            DocumentSearch.SearchPdf(pageCount, i => known[i] is { } t && OcrPdfText.HasMeaningfulText(t) ? t : GetPageTextForOperation(i, ct), prepared, CodeEditorSearch.DefaultMaxMatches, ct), ct);
 
         ct.ThrowIfCancellationRequested();
         if (_disposed)
@@ -730,6 +940,8 @@ internal sealed class PdfView : DockPanel, ISearchableViewerBody
     public void Dispose()
     {
         _disposed = true;
+        _disposeCts.Cancel();
+        _disposeCts.Dispose();
         _initialSearchCts?.Cancel();
         _initialSearchCts?.Dispose();
         for (var i = 0; i < _images.Length; i++) Release(i);

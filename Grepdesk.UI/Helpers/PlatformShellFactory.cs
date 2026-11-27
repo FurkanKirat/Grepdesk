@@ -1,6 +1,8 @@
 using System;
 using Grepdesk.Core;
+using Grepdesk.Core.Ocr;
 using Grepdesk.Core.Preview;
+using Grepdesk.Core.SystemInfo;
 using Grepdesk.Core.Transfer;
 using Grepdesk.Core.Viewer;
 #if PLATFORM_WINDOWS
@@ -96,5 +98,24 @@ public static class PlatformShellFactory
         new MediaFoundationPlayback();
 #else
         null;
+#endif
+
+    /// <summary>On-device OCR for scanned documents; null where not supported.</summary>
+    public static IOcrEngine? CreateOcrEngine() =>
+#if PLATFORM_WINDOWS
+        new WindowsOcrEngine();
+#else
+        null;
+#endif
+
+    public static ISystemInfoProvider CreateSystemInfoProvider() =>
+#if PLATFORM_WINDOWS
+        new WindowsSystemInfoProvider();
+#elif PLATFORM_LINUX
+        new LinuxSystemInfoProvider();
+#elif PLATFORM_MACOS
+        new MacSystemInfoProvider();
+#else
+        new BasicSystemInfoProvider();
 #endif
 }

@@ -14,6 +14,7 @@ using AvaloniaEdit.Editing;
 using AvaloniaEdit.Folding;
 using AvaloniaEdit.TextMate;
 using Grepdesk.Core.ContentSearch;
+using Grepdesk.Core.Ocr;
 using Grepdesk.Core.Preview;
 using Grepdesk.Core.Viewer;
 using Grepdesk.UI.Helpers;
@@ -56,6 +57,7 @@ public partial class FileViewerWindow : Window
     private static readonly Lazy<RegistryOptions> Grammars = new(() => new RegistryOptions(ThemeName.DarkPlus));
     private static readonly IShellPreview? ShellPreview = PlatformShellFactory.CreateShellPreview();
     private static readonly IMediaPlayback? Playback = PlatformShellFactory.CreateMediaPlayback();
+    private static readonly IOcrEngine? OcrEngine = PlatformShellFactory.CreateOcrEngine();
 
     /// <summary>Extensions the grammars don't list under their own name.</summary>
     private static readonly Dictionary<string, string> GrammarAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -1197,7 +1199,7 @@ public partial class FileViewerWindow : Window
             return;
         }
         SetInfo(Loc.Get("ViewerPages", renderer.TotalPages), Format.Size(new FileInfo(path).Length));
-        ShowBody(new PdfView(renderer, _highlight));
+        ShowBody(new PdfView(renderer, _highlight, OcrEngine));
     }
 
     private async Task LoadMediaAsync(string path, bool video, CancellationToken token)

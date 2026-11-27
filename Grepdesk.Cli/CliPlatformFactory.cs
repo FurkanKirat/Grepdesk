@@ -1,4 +1,5 @@
 using Grepdesk.Core;
+using Grepdesk.Core.SystemInfo;
 #if PLATFORM_WINDOWS
 using Grepdesk.Windows;
 #elif PLATFORM_LINUX
@@ -38,4 +39,15 @@ internal static class CliPlatformFactory
         return new BasicDriveKindProvider();
 #endif
     }
+
+    public static ISystemInfoProvider CreateSystemInfoProvider() =>
+#if PLATFORM_WINDOWS
+        new WindowsSystemInfoProvider();
+#elif PLATFORM_LINUX
+        new LinuxSystemInfoProvider();
+#elif PLATFORM_MACOS
+        new MacSystemInfoProvider();
+#else
+        new BasicSystemInfoProvider();
+#endif
 }

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Grepdesk.Cli;
 using Grepdesk.Core;
+using Grepdesk.Core.SystemInfo;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
@@ -28,7 +29,8 @@ public class CliTests : IDisposable
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCliAsync(
         string[] args,
         string? stdinText = null,
-        IPlatformShell? shell = null)
+        IPlatformShell? shell = null,
+        ISystemInfoProvider? sysInfo = null)
     {
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -40,6 +42,7 @@ public class CliTests : IDisposable
             stdin,
             platformShell: shell,
             driveKindProvider: new BasicDriveKindProvider(),
+            systemInfoProvider: sysInfo,
             isInteractive: stdinText is not null,
             showProgress: false);
         return (code, stdout.ToString(), stderr.ToString());
@@ -253,6 +256,38 @@ public class CliTests : IDisposable
         var (revCode, _, _) = await RunCliAsync(["open", txtPath, "--reveal"], shell: fakeShell);
         Assert.Equal(0, revCode);
         Assert.Contains(txtPath, fakeShell.RevealedPaths);
+    }
+
+    [Fact]
+    public async Task SysInfo_outputs_summary_details_and_json()
+    {
+        var fake = new FakeSystemInfoProvider(SystemInfoTests.CreateSampleSnapshot());
+
+        var (helpCode, helpOut, _) = await RunCliAsync(["sysinfo", "--help"], sysInfo: fake);
+        Assert.Equal(0, helpCode);
+        Assert.Contains("--details", helpOut);
+
+        var (textCode, textOut, _) = await RunCliAsync(["sysinfo"], sysInfo: fake);
+        Assert.Equal(0, textCode);
+        Assert.Contains("Intel Core i7-13650HX", textOut);
+        Assert.Contains("NVIDIA GeForce RTX 4060", textOut);
+        Assert.Contains("Samsung 990 PRO", textOut);
+
+        var (detailCode, detailOut, _) = await RunCliAsync(["sysinfo", "--details"], sysInfo: fake);
+        Assert.Equal(0, detailCode);
+        Assert.Contains("L3 Cache:  24 MB", detailOut);
+        Assert.Contains("BIOS:      Insyde F.24", detailOut);
+
+        var (jsonCode, jsonOut, _) = await RunCliAsync(["sysinfo", "--json"], sysInfo: fake);
+        Assert.Equal(0, jsonCode);
+        using var doc = JsonDocument.Parse(jsonOut);
+        Assert.Equal("Intel Core i7-13650HX", doc.RootElement.GetProperty("cpu").GetProperty("name").GetString());
+        Assert.Equal(1, doc.RootElement.GetProperty("storage_drives").GetArrayLength());
+    }
+
+    private sealed class FakeSystemInfoProvider(SystemInfoSnapshot snapshot) : ISystemInfoProvider
+    {
+        public SystemInfoSnapshot GetSystemInfo() => snapshot;
     }
 
     private static void CreateSampleDocx(string path, params string[] paragraphs)

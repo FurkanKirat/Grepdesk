@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Grepdesk.UI.SystemInfo.SystemInfoView"
+             Background="Transparent">
+
+    <DockPanel>
+        <!-- Header -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,14">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0,0,0">
+                <TextBlock x:Name="StatusText" Classes="label" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <Button x:Name="ExpandAllButton"/>
+                <Button x:Name="CopyButton"/>
+                <Button x:Name="RefreshButton"/>
+            </StackPanel>
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="TitleText" Classes="pageTitle"/>
+                <TextBlock x:Name="SubtitleText" Classes="pageSubtitle"/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Cards -->
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="CardsHost" Spacing="10" MaxWidth="960" HorizontalAlignment="Stretch" Margin="0,0,4,12"/>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

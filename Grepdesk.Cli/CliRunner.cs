@@ -1,6 +1,7 @@
 using System.Reflection;
 using Grepdesk.Cli.Commands;
 using Grepdesk.Core;
+using Grepdesk.Core.SystemInfo;
 
 namespace Grepdesk.Cli;
 
@@ -13,6 +14,7 @@ public static class CliRunner
         TextReader? stdin = null,
         IPlatformShell? platformShell = null,
         IDriveKindProvider? driveKindProvider = null,
+        ISystemInfoProvider? systemInfoProvider = null,
         bool? isInteractive = null,
         bool showProgress = false,
         CancellationToken ct = default)
@@ -22,6 +24,7 @@ public static class CliRunner
         stdin ??= Console.In;
         platformShell ??= CliPlatformFactory.CreatePlatformShell();
         driveKindProvider ??= CliPlatformFactory.CreateDriveKindProvider();
+        systemInfoProvider ??= CliPlatformFactory.CreateSystemInfoProvider();
         bool interactive = isInteractive ?? (!Console.IsInputRedirected && !Console.IsOutputRedirected);
 
         if (args.Length == 0)
@@ -46,6 +49,7 @@ public static class CliRunner
                 "unzip" => await UnzipCommand.ExecuteAsync(subArgs, stdout, stderr, stdin, driveKindProvider, showProgress, interactive, ct),
                 "duplicates" or "dup" or "dups" => await DuplicatesCommand.ExecuteAsync(subArgs, stdout, stderr, stdin, platformShell, ct),
                 "du" => await DuCommand.ExecuteAsync(subArgs, stdout, stderr, ct),
+                "sysinfo" or "system" or "hwinfo" => await SysInfoCommand.ExecuteAsync(subArgs, stdout, stderr, systemInfoProvider, ct),
                 _ => FailUnknownCommand(stderr, args[0])
             };
         }
@@ -108,6 +112,7 @@ public static class CliRunner
               unzip <archive.zip>           Multi-core parallel zip extraction
               duplicates [path]             Identify duplicate files by size and content hash
               du [path]                     Disk usage summary and largest space consumers
+              sysinfo                       Show CPU, GPU, RAM, storage, display, and OS information
 
             Global Options:
               -h, --help                    Show help information
