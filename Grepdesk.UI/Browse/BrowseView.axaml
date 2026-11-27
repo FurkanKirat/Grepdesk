@@ -306,6 +306,9 @@
                 <Button x:Name="SearchBelowButton" Classes="tool">
                     <PathIcon Data="{StaticResource IconSearch}"/>
                 </Button>
+                <Button x:Name="NewFileButton" Classes="tool">
+                    <PathIcon Data="{StaticResource IconFilePlus}"/>
+                </Button>
                 <Button x:Name="NewFolderButton" Classes="tool">
                     <PathIcon Data="{StaticResource IconFolderPlus}"/>
                 </Button>

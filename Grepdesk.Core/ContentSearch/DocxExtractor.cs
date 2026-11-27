@@ -42,7 +42,10 @@ public class DocxExtractor : IContentExtractor
 
     private static readonly string[] PrefixParts = ["word/header", "word/footer"];
 
-    public Task<string?> ExtractTextAsync(string path, CancellationToken ct) => Task.Run(() =>
+    public async Task<string?> ExtractTextAsync(string path, CancellationToken ct) =>
+        (await ExtractDetailedAsync(path, ct)).Text;
+
+    public Task<ExtractionResult> ExtractDetailedAsync(string path, CancellationToken ct) => Task.Run(() =>
     {
         try
         {
@@ -66,12 +69,31 @@ public class DocxExtractor : IContentExtractor
                 any = true;
             }
 
-            return any ? sb.ToString() : null;
+            return any
+                ? ExtractionResult.Ok(sb.ToString())
+                : ExtractionResult.Fail(SkipReason.NoExtractableText);
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Corrupt zip, password-protected, locked file, etc. — just skip it.
-            return null;
+            throw;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ExtractionResult.Fail(SkipReason.AccessDenied, ex.Message);
+        }
+        catch (IOException ex)
+        {
+            return ExtractionResult.Fail(SkipClassifier.FromIoException(ex), ex.Message);
+        }
+        catch (InvalidDataException ex)
+        {
+            return SkipClassifier.IsOle2Container(path)
+                ? ExtractionResult.Fail(SkipReason.PasswordProtected)
+                : ExtractionResult.Fail(SkipReason.CorruptOrUnsupported, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return ExtractionResult.Fail(SkipReason.CorruptOrUnsupported, ex.Message);
         }
     }, ct);
 

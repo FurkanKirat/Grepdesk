@@ -408,6 +408,21 @@ public class BrowseTests
     }
 
     [Fact]
+    public void Creates_a_file_with_a_free_name()
+    {
+        using var dir = new TempDir();
+        var first = FileNames.CreateFile(dir.Path, "New file.txt");
+        var second = FileNames.CreateFile(dir.Path, "New file.txt");
+
+        Assert.Equal(dir.Combine("New file.txt"), first);
+        Assert.Equal(dir.Combine("New file (2).txt"), second);
+        Assert.True(System.IO.File.Exists(first));
+        Assert.True(System.IO.File.Exists(second));
+        Assert.Equal(0, new FileInfo(first).Length);
+        Assert.Equal(0, new FileInfo(second).Length);
+    }
+
+    [Fact]
     public void Renames_files_and_folders()
     {
         using var dir = new TempDir();

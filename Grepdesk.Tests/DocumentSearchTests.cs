@@ -259,4 +259,49 @@ public class DocumentSearchTests
         Assert.Equal(3, counts.Count);
         Assert.Equal(3, counts.Max());
     }
+
+    [Fact]
+    public async Task ContentSearcher_reports_skip_reasons_and_file_paths()
+    {
+        using var dir = new TempDir();
+
+        var corruptDocx = dir.Combine("corrupt.docx");
+        File.WriteAllBytes(corruptDocx, [0x01, 0x02, 0x03, 0x04]);
+
+        var encryptedDocx = dir.Combine("encrypted.docx");
+        File.WriteAllBytes(encryptedDocx, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00, 0x00]);
+
+        var blankPdf = dir.Combine("scanned.pdf");
+        var builder = new PdfDocumentBuilder();
+        builder.AddPage(PageSize.A4);
+        File.WriteAllBytes(blankPdf, builder.Build());
+
+        var lockedTxt = dir.WriteFile("locked.txt", "secret text");
+        FileStream? lockStream = OperatingSystem.IsWindows()
+            ? new FileStream(lockedTxt, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            : null;
+
+        try
+        {
+            var inputs = OperatingSystem.IsWindows()
+                ? new[] { corruptDocx, encryptedDocx, blankPdf, lockedTxt }
+                : new[] { corruptDocx, encryptedDocx, blankPdf };
+
+            var skipped = new System.Collections.Concurrent.ConcurrentBag<Grepdesk.Core.ContentSearch.SkippedFile>();
+            await foreach (var _ in Grepdesk.Core.ContentSearch.ContentSearcher.SearchAsync(inputs, "secret", s => skipped.Add(s)))
+            {
+            }
+
+            var byPath = skipped.ToDictionary(s => s.FullPath, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(Grepdesk.Core.ContentSearch.SkipReason.CorruptOrUnsupported, byPath[corruptDocx].Reason);
+            Assert.Equal(Grepdesk.Core.ContentSearch.SkipReason.PasswordProtected, byPath[encryptedDocx].Reason);
+            Assert.Equal(Grepdesk.Core.ContentSearch.SkipReason.NoExtractableText, byPath[blankPdf].Reason);
+            if (OperatingSystem.IsWindows())
+                Assert.Equal(Grepdesk.Core.ContentSearch.SkipReason.LockedOrInUse, byPath[lockedTxt].Reason);
+        }
+        finally
+        {
+            lockStream?.Dispose();
+        }
+    }
 }

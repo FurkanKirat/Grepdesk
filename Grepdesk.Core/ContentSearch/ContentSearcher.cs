@@ -11,13 +11,58 @@ namespace Grepdesk.Core.ContentSearch;
 
 public record ContentMatch(string FullPath, string Snippet);
 
-public enum SkipReason { TooLarge, ExtractionFailed }
+public enum SkipReason
+{
+    TooLarge,
+    ExtractionFailed,
+    AccessDenied,
+    LockedOrInUse,
+    PasswordProtected,
+    CorruptOrUnsupported,
+    NoExtractableText,
+}
 
-public record SkippedFile(string FullPath, SkipReason Reason);
+public record SkippedFile(string FullPath, SkipReason Reason, string? Detail = null, long? FileSizeBytes = null);
+
+internal static class SkipClassifier
+{
+    private static readonly byte[] Ole2Magic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+    public static SkipReason FromIoException(IOException ex)
+    {
+        var win32Code = ex.HResult & 0xFFFF;
+        if (win32Code is 32 or 33) // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+            return SkipReason.LockedOrInUse;
+
+        var msg = ex.Message;
+        if (msg.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("locked", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("sharing violation", StringComparison.OrdinalIgnoreCase))
+            return SkipReason.LockedOrInUse;
+
+        return SkipReason.ExtractionFailed;
+    }
+
+    public static bool IsOle2Container(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length < Ole2Magic.Length) return false;
+            Span<byte> header = stackalloc byte[Ole2Magic.Length];
+            return fs.ReadAtLeast(header, Ole2Magic.Length, throwOnEndOfStream: false) == Ole2Magic.Length &&
+                   header.SequenceEqual(Ole2Magic);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+}
 
 public static class ContentSearcher
 {
-    private const long MaxFileSizeBytes = 20 * 1024 * 1024; // 20 MB safety cap
+    public const long MaxFileSizeBytes = 20 * 1024 * 1024; // 20 MB safety cap
     private const int SnippetContextChars = 40;
 
     // Each file's extraction is largely I/O + one-off CPU work (unzip, regex,
@@ -77,13 +122,13 @@ public static class ContentSearcher
                             var result = await SearchSingleFileAsync(path, query, ct);
                             if (result.Match is not null)
                                 await channel.Writer.WriteAsync(result.Match, ct);
-                            else if (result.SkipReason is { } reason)
-                                onSkipped?.Invoke(new SkippedFile(path, reason));
+                            else if (result.Skipped is { } skipped)
+                                onSkipped?.Invoke(skipped);
                         }
                         catch (OperationCanceledException) { /* expected on cancel */ }
-                        catch
+                        catch (Exception ex)
                         {
-                            onSkipped?.Invoke(new SkippedFile(path, SkipReason.ExtractionFailed));
+                            onSkipped?.Invoke(new SkippedFile(path, SkipReason.ExtractionFailed, ex.Message));
                         }
                         finally
                         {
@@ -108,20 +153,35 @@ public static class ContentSearcher
         await producer; // surface any unexpected producer-level exception
     }
 
-    private static async Task<(ContentMatch? Match, SkipReason? SkipReason)> SearchSingleFileAsync(
+    private static async Task<(ContentMatch? Match, SkippedFile? Skipped)> SearchSingleFileAsync(
         string path, string query, CancellationToken ct)
     {
         var ext = Path.GetExtension(path);
         if (!ExtractorRegistry.TryGetExtractor(ext, out var extractor))
             return (null, null); // unsupported extension — caller already filters these, not a "skip"
 
-        var info = new FileInfo(path);
-        if (!info.Exists) return (null, null);
-        if (info.Length > MaxFileSizeBytes) return (null, SkipReason.TooLarge);
+        FileInfo info;
+        try
+        {
+            info = new FileInfo(path);
+            if (!info.Exists) return (null, null);
+            if (info.Length > MaxFileSizeBytes)
+                return (null, new SkippedFile(path, SkipReason.TooLarge, FileSizeBytes: info.Length));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return (null, new SkippedFile(path, SkipReason.AccessDenied, ex.Message));
+        }
+        catch (IOException ex)
+        {
+            return (null, new SkippedFile(path, SkipClassifier.FromIoException(ex), ex.Message));
+        }
 
-        var content = await extractor.ExtractTextAsync(path, ct);
-        if (content is null) return (null, SkipReason.ExtractionFailed);
+        var extracted = await extractor.ExtractDetailedAsync(path, ct);
+        if (!extracted.IsSuccess)
+            return (null, new SkippedFile(path, extracted.FailureReason ?? SkipReason.ExtractionFailed, extracted.Detail));
 
+        var content = extracted.Text!;
         var idx = content.IndexOf(query, StringComparison.OrdinalIgnoreCase);
         if (idx < 0) return (null, null); // read fine, just no match — not a skip
 

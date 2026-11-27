@@ -431,7 +431,19 @@
                         <TextBlock x:Name="ContentSortLabel" Classes="label" Text="Sort:"/>
                         <ComboBox x:Name="ContentSortBox" MinWidth="200" FontSize="12"/>
                     </StackPanel>
-                    <TextBlock x:Name="ContentStatusText" Classes="label" TextTrimming="CharacterEllipsis"/>
+                    <DockPanel HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <Button x:Name="ContentSkippedDetailsButton"
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Padding="9,2"
+                                FontSize="12"
+                                Background="#313244"
+                                Foreground="#f9e2af"
+                                BorderBrush="#45475a"
+                                BorderThickness="1"
+                                IsVisible="False"/>
+                        <TextBlock x:Name="ContentStatusText" Classes="label" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
                 </DockPanel>
 
                 <TextBlock x:Name="SupportedFormatsText" DockPanel.Dock="Bottom" Classes="hint" Margin="2,8,0,0"/>

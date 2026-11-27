@@ -60,6 +60,34 @@ public class UndoHistoryTests
     }
 
     [Fact]
+    public void Undoing_a_new_file_removes_it_only_while_empty()
+    {
+        using var dir = new TempDir();
+        var empty = FileNames.CreateFile(dir.Path, "New file.txt");
+        var written = FileNames.CreateFile(dir.Path, "New file.txt");
+        var missing = FileNames.CreateFile(dir.Path, "New file.txt");
+        File.WriteAllText(written, "hello");
+        File.Delete(missing);
+
+        var history = new UndoHistory();
+        history.Push(new CreatedFileAction(missing));
+        history.Push(new CreatedFileAction(written));
+        history.Push(new CreatedFileAction(empty));
+
+        Assert.Equal(UndoOutcome.Done, history.Undo().Outcome);
+        Assert.False(File.Exists(empty));
+
+        var notEmpty = history.Undo();
+        Assert.Equal(UndoOutcome.Blocked, notEmpty.Outcome);
+        Assert.Equal(UndoBlock.NotEmpty, notEmpty.Block);
+        Assert.Equal("hello", File.ReadAllText(written));
+
+        var gone = history.Undo();
+        Assert.Equal(UndoOutcome.Blocked, gone.Outcome);
+        Assert.Equal(UndoBlock.Missing, gone.Block);
+    }
+
+    [Fact]
     public void Undo_goes_newest_first_and_an_empty_history_has_nothing_to_undo()
     {
         using var dir = new TempDir();

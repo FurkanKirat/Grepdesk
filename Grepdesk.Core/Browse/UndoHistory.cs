@@ -54,6 +54,29 @@ public sealed record CreatedFolderAction(string FolderPath) : UndoAction
     }
 }
 
+/// <summary>
+/// A new file, undone by removing it again, but only while it is still empty:
+/// undo never deletes content the user wrote since.
+/// </summary>
+public sealed record CreatedFileAction(string FilePath) : UndoAction
+{
+    internal override UndoResult Undo()
+    {
+        if (!File.Exists(FilePath)) return new UndoResult(UndoOutcome.Blocked, this, FilePath, UndoBlock.Missing);
+        try
+        {
+            if (new FileInfo(FilePath).Length > 0)
+                return new UndoResult(UndoOutcome.Blocked, this, FilePath, UndoBlock.NotEmpty);
+            File.Delete(FilePath);
+            return new UndoResult(UndoOutcome.Done, this, FilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new UndoResult(UndoOutcome.Failed, this, FilePath, Error: ex);
+        }
+    }
+}
+
 /// <summary>The browser's Ctrl+Z stack, newest action first out. Kept small: old actions rarely still apply.</summary>
 public sealed class UndoHistory
 {

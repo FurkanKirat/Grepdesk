@@ -101,6 +101,7 @@ public partial class BrowseView : UserControl
         HistoryButton.Click += (_, _) => ShowHistoryMenu();
         FavoriteButton.Click += (_, _) => ToggleFavorite(CurrentFolder);
         ClearHistoryButton.Click += (_, _) => ClearHistory();
+        NewFileButton.Click += (_, _) => NewFile();
         NewFolderButton.Click += (_, _) => NewFolder();
         SearchBelowButton.Click += (_, _) => RequestSearch();
         CalculateSizesButton.Click += async (_, _) => await CalculateFolderSizesAsync(forceFull: true);
@@ -196,6 +197,7 @@ public partial class BrowseView : UserControl
         ToolTip.SetTip(UpButton, Loc.Get("BrowseUp"));
         ToolTip.SetTip(RefreshButton, Loc.Get("BrowseRefresh"));
         ToolTip.SetTip(HistoryButton, Loc.Get("BrowseHistory"));
+        ToolTip.SetTip(NewFileButton, Loc.Get("BrowseNewFile"));
         ToolTip.SetTip(NewFolderButton, Loc.Get("BrowseNewFolder"));
         ToolTip.SetTip(SearchBelowButton, Loc.Get("BrowseSearchBelow"));
         ToolTip.SetTip(HiddenToggle, Loc.Get("BrowseShowHidden"));
@@ -501,7 +503,7 @@ public partial class BrowseView : UserControl
         UpButton.IsEnabled = InFolder;
         HistoryButton.IsEnabled = _bookmarks.Recent.Count > 0;
         FavoriteButton.IsEnabled = InWritableFolder;
-        NewFolderButton.IsEnabled = SearchBelowButton.IsEnabled = InWritableFolder;
+        NewFileButton.IsEnabled = NewFolderButton.IsEnabled = SearchBelowButton.IsEnabled = InWritableFolder;
         FilterBox.IsEnabled = true;
         UpdateFavoriteButton();
     }
@@ -1368,6 +1370,7 @@ public partial class BrowseView : UserControl
             Key.D when alt => Do(BeginEditAddress),
             Key.F4 when mods == KeyModifiers.None => Do(BeginEditAddress),
             Key.H when ctrl => () => SetShowHiddenAsync(!Settings.ShowHiddenFiles),
+            Key.N when ctrl && !shift && !alt && InWritableFolder => Do(NewFile),
             Key.N when ctrl && shift && InWritableFolder => Do(NewFolder),
             Key.S when ctrl && shift && InWritableFolder => () => CalculateFolderSizesAsync(forceFull: true),
             Key.Enter when mods == KeyModifiers.None && hasSelection => OpenSelectionAsync,
@@ -1589,6 +1592,7 @@ public partial class BrowseView : UserControl
         var menu = new List<Control>();
         if (ClipboardHasFiles())
             menu.Add(Item("BrowsePaste", () => _ = PasteAsync(folder), new KeyGesture(Key.V, KeyModifiers.Control)));
+        menu.Add(Item("BrowseNewFile", NewFile, new KeyGesture(Key.N, KeyModifiers.Control)));
         menu.Add(Item("BrowseNewFolder", NewFolder, new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)));
         menu.Add(Item("BrowseRefresh", () => _ = ReloadAsync(clearSizeCache: true), new KeyGesture(Key.F5)));
 
@@ -1796,9 +1800,29 @@ public partial class BrowseView : UserControl
         FocusList();
     }
 
+    private void NewFile()
+    {
+        if (!InWritableFolder) return;
+        try
+        {
+            var path = FileNames.CreateFile(CurrentFolder!, Loc.Get("BrowseNewFileName"));
+            SizeCache.Invalidate(path);
+            SizeCache.Invalidate(CurrentFolder!);
+            _undo.Push(new CreatedFileAction(path));
+            _selectAfterLoad = path;
+            _renameAfterLoad = true;
+            FilterBox.Text = ""; // a filter would hide the new file
+            _ = ReloadAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SetMessage(() => $"{Loc.Get("BrowseNewFileFailed")}: {ex.Message}");
+        }
+    }
+
     private void NewFolder()
     {
-        if (!InFolder) return;
+        if (!InWritableFolder) return;
         try
         {
             var path = FileNames.CreateFolder(CurrentFolder!, Loc.Get("BrowseNewFolderName"));
@@ -1816,7 +1840,7 @@ public partial class BrowseView : UserControl
         }
     }
 
-    /// <summary>Ctrl+Z: takes back the last rename or new folder.</summary>
+    /// <summary>Ctrl+Z: takes back the last rename, new file, or new folder.</summary>
     private void UndoLast()
     {
         var result = _undo.Undo();
@@ -1843,6 +1867,11 @@ public partial class BrowseView : UserControl
                     Removed?.Invoke([renamed.NewPath]);
                     SetMessage(() => Loc.Get("BrowseUndoRename", name));
                 }
+                else if (result.Action is CreatedFileAction)
+                {
+                    Removed?.Invoke([path]);
+                    SetMessage(() => Loc.Get("BrowseUndoNewFile", name));
+                }
                 else
                 {
                     _bookmarks.Forget(path);
@@ -1859,6 +1888,7 @@ public partial class BrowseView : UserControl
                 var key = result.Block switch
                 {
                     UndoBlock.NameTaken => "BrowseUndoNameTaken",
+                    UndoBlock.NotEmpty when result.Action is CreatedFileAction => "BrowseUndoFileNotEmpty",
                     UndoBlock.NotEmpty => "BrowseUndoNotEmpty",
                     _ => "BrowseUndoMissing",
                 };

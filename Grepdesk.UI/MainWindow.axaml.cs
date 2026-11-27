@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Grepdesk.Core;
 using Grepdesk.Core.ContentSearch;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using Grepdesk.Core.Editor;
 using Grepdesk.Core.Viewer;
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
 
     // ---- content search ----
     private readonly ObservableCollection<ResultItem> _contentResults = [];
+    private readonly ConcurrentQueue<SkippedFile> _contentSkipped = new();
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
     private string? _contentQuery;
@@ -115,6 +117,7 @@ public partial class MainWindow : Window
         ContentResultsList.PointerReleased += OnAnyResultRightClick;
         ContentCurrentFolderButton.Click += (_, _) => UseCurrentBrowseFolderForContentSearch();
         ContentChooseFolderButton.Click += async (_, _) => await ChooseContentFolderAsync();
+        ContentSkippedDetailsButton.Click += async (_, _) => await ShowUnreadableFilesAsync();
         ContentSearchBox.KeyDown += OnContentSearchKeyDown;
         SetStatus(ContentStatusText, () => Loc.Get("SelectFolderFirst"));
 
@@ -271,6 +274,7 @@ public partial class MainWindow : Window
             ContentSearchBox.Watermark = Loc.Get("ContentSearchWatermark");
             SupportedFormatsText.Text = Loc.Get("SupportedFormats");
             ContentChooseFolderButton.Content = Loc.Get("ChooseFolder");
+            ContentSkippedDetailsButton.Content = Loc.Get("ContentSkippedDetails");
 
             // Sorting
             NameSortLabel.Text = ContentSortLabel.Text = Loc.Get("SortLabel");
@@ -699,6 +703,7 @@ public partial class MainWindow : Window
         _contentSearchFolder = folder;
         _contentFolderExplicit = true;
         ContentFolderText.Text = folder;
+        ClearContentSkipped();
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
         _searchScopeFolder = null;
@@ -1202,6 +1207,7 @@ public partial class MainWindow : Window
             FeatureNav.SelectedIndex = PageNameSearch;
             _contentSearchFolder = folder;
             ContentFolderText.Text = folder;
+            ClearContentSkipped();
             SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
             _updatingControls = true; // the search/scan below runs the search; don't start one per keystroke
             SearchBox.Text = query;
@@ -1266,7 +1272,10 @@ public partial class MainWindow : Window
             _contentSearchFolder = folder;
             ContentFolderText.Text = folder;
             if (_contentResults.Count == 0)
+            {
+                ClearContentSkipped();
                 SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
+            }
         }
     }
 
@@ -1341,6 +1350,7 @@ public partial class MainWindow : Window
         new("Ctrl+X / Ctrl+C / Ctrl+V", "ShortcutBrowseClipboard"),
         new("Ctrl+Shift+C", "ShortcutBrowseCopyPath"),
         new("F2", "ShortcutBrowseRename"),
+        new("Ctrl+N", "ShortcutBrowseNewFile"),
         new("Ctrl+Shift+N", "ShortcutBrowseNewFolder"),
         new("Ctrl+Shift+S", "ShortcutBrowseCalculateSizes"),
         new("Ctrl+H", "ShortcutBrowseHidden"),
@@ -1537,6 +1547,7 @@ public partial class MainWindow : Window
             Settings.LastContentSearchFolder = folders[0];
             Settings.Save();
             ContentFolderText.Text = folders[0];
+            ClearContentSkipped();
             SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
             ContentSearchBox.Focus();
         }
@@ -1575,6 +1586,7 @@ public partial class MainWindow : Window
         Settings.LastContentSearchFolder = path;
         Settings.Save();
         ContentFolderText.Text = path;
+        ClearContentSkipped();
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
     }
 
@@ -1586,7 +1598,21 @@ public partial class MainWindow : Window
         Settings.LastContentSearchFolder = path;
         Settings.Save();
         ContentFolderText.Text = path;
+        ClearContentSkipped();
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
+    }
+
+    private void ClearContentSkipped()
+    {
+        _contentSkipped.Clear();
+        ContentSkippedDetailsButton.IsVisible = false;
+    }
+
+    private async Task ShowUnreadableFilesAsync()
+    {
+        var items = _contentSkipped.ToArray();
+        if (items.Length == 0) return;
+        await UnreadableFilesDialog.ShowAsync(this, items, _shell);
     }
 
     private async void OnContentSearchKeyDown(object? sender, KeyEventArgs e)
@@ -1610,6 +1636,7 @@ public partial class MainWindow : Window
         var token = _contentSearchCts.Token;
 
         _contentResults.Clear();
+        ClearContentSkipped();
         _contentQuery = query;
         SetStatus(ContentStatusText, () => Loc.Get("ScanningFiles"));
 
@@ -1646,14 +1673,16 @@ public partial class MainWindow : Window
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (token.IsCancellationRequested) return;
+                    ContentSkippedDetailsButton.IsVisible = skipped > 0;
                     SetStatus(ContentStatusText, () => skipped == 0
                         ? Loc.Get("ScanningMatches", matches, fraction, scanned, totalFiles)
                         : Loc.Get("ScanningProgress", matches, skipped, fraction, scanned, totalFiles));
                 });
             }
 
-            void OnSkipped(SkippedFile _)
+            void OnSkipped(SkippedFile skipped)
             {
+                _contentSkipped.Enqueue(skipped);
                 Interlocked.Increment(ref skippedCount);
                 PostScanStatus(force: true);
             }
@@ -1676,6 +1705,7 @@ public partial class MainWindow : Window
 
             if (!token.IsCancellationRequested)
             {
+                ContentSkippedDetailsButton.IsVisible = skippedCount > 0;
                 SetStatus(ContentStatusText, () =>
                 {
                     var summary = matchCount == 0 ? Loc.Get("NoMatchesFound") : Loc.Get("MatchesFound", matchCount);

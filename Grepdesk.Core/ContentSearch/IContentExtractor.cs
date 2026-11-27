@@ -4,6 +4,13 @@ using System.Threading.Tasks;
 
 namespace Grepdesk.Core.ContentSearch;
 
+public readonly record struct ExtractionResult(string? Text, SkipReason? FailureReason = null, string? Detail = null)
+{
+    public bool IsSuccess => Text is not null;
+    public static ExtractionResult Ok(string text) => new(text);
+    public static ExtractionResult Fail(SkipReason reason, string? detail = null) => new(null, reason, detail);
+}
+
 /// <summary>
 /// A pluggable extractor that knows how to pull searchable plain text out of
 /// one or more file extensions. Register new formats by implementing this
@@ -22,4 +29,14 @@ public interface IContentExtractor
     /// so ContentSearcher can just skip it.
     /// </summary>
     Task<string?> ExtractTextAsync(string path, CancellationToken ct);
+
+    /// <summary>
+    /// Extracts text and returns a structured failure reason and optional detail
+    /// when extraction fails.
+    /// </summary>
+    async Task<ExtractionResult> ExtractDetailedAsync(string path, CancellationToken ct)
+    {
+        var text = await ExtractTextAsync(path, ct);
+        return text is not null ? ExtractionResult.Ok(text) : ExtractionResult.Fail(SkipReason.ExtractionFailed);
+    }
 }

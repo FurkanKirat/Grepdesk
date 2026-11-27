@@ -19,13 +19,26 @@ public class PlainTextExtractor : IContentExtractor
         ".csproj", ".sln", ".vue", ".svelte"
     ];
 
-    public async Task<string?> ExtractTextAsync(string path, CancellationToken ct)
+    public async Task<string?> ExtractTextAsync(string path, CancellationToken ct) =>
+        (await ExtractDetailedAsync(path, ct)).Text;
+
+    public async Task<ExtractionResult> ExtractDetailedAsync(string path, CancellationToken ct)
     {
         try
         {
-            return await File.ReadAllTextAsync(path, ct);
+            return ExtractionResult.Ok(await File.ReadAllTextAsync(path, ct));
         }
-        catch (IOException) { return null; }
-        catch (UnauthorizedAccessException) { return null; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ExtractionResult.Fail(SkipReason.AccessDenied, ex.Message);
+        }
+        catch (IOException ex)
+        {
+            return ExtractionResult.Fail(SkipClassifier.FromIoException(ex), ex.Message);
+        }
     }
 }

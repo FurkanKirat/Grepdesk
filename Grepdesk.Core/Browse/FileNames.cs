@@ -109,5 +109,13 @@ public static class FileNames
         return path;
     }
 
+    /// <summary>Creates a new empty file with a free name based on <paramref name="name"/> and returns its path.</summary>
+    public static string CreateFile(string parent, string name)
+    {
+        var path = Path.Combine(parent, UniqueName(parent, name, isDirectory: false));
+        using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+        return path;
+    }
+
     private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
 }
