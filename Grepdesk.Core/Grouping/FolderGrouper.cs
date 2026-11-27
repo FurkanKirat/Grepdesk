@@ -88,12 +88,17 @@ public static partial class FolderGrouper
     private static readonly TimeSpan SessionGap = TimeSpan.FromMinutes(30);
 
     /// <summary>The folder's direct children; subfolders carry the total size of their contents.</summary>
-    public static List<GroupMember> ReadFolder(string folder, CancellationToken ct)
+    public static List<GroupMember> ReadFolder(string folder, CancellationToken ct, Action<double>? onProgress = null)
     {
-        var members = new List<GroupMember>();
-        foreach (var info in new DirectoryInfo(folder).EnumerateFileSystemInfos())
+        var entries = new DirectoryInfo(folder).GetFileSystemInfos();
+        var members = new List<GroupMember>(entries.Length);
+        var total = entries.Length;
+        var lastReport = Environment.TickCount64;
+
+        for (var i = 0; i < total; i++)
         {
             ct.ThrowIfCancellationRequested();
+            var info = entries[i];
             try
             {
                 if (info is FileInfo file)
@@ -103,16 +108,29 @@ public static partial class FolderGrouper
                 else if (info is DirectoryInfo dir)
                 {
                     long size = 0;
-                    foreach (var f in dir.EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+                    if (!(dir.Attributes.HasFlag(FileAttributes.ReparsePoint) && dir.LinkTarget is not null))
                     {
-                        ct.ThrowIfCancellationRequested();
-                        size += f.Length;
+                        foreach (var f in dir.EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            size += f.Length;
+                        }
                     }
                     members.Add(new GroupMember(dir.FullName, true, size, dir.LastWriteTime));
                 }
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+
+            if (onProgress is not null && total > 0)
+            {
+                var now = Environment.TickCount64;
+                if (i == total - 1 || now - lastReport >= 80)
+                {
+                    lastReport = now;
+                    onProgress((double)(i + 1) / total);
+                }
+            }
         }
         return members;
     }

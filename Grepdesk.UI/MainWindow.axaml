@@ -352,6 +352,7 @@
                 <Border DockPanel.Dock="Top" Classes="card" Margin="0,0,0,10">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+                            <Button x:Name="UseCurrentFolderButton" Content="Current Folder" IsEnabled="False"/>
                             <Button x:Name="ChooseFolderButton" Content="Choose Folder..."/>
                             <Button x:Name="ScanAllButton" Content="Scan Entire PC"/>
                             <Button x:Name="ReindexButton" Content="Rescan" IsEnabled="False"/>
@@ -409,10 +410,10 @@
 
                 <Border DockPanel.Dock="Top" Classes="card" Margin="0,0,0,10">
                     <DockPanel>
-                        <Button x:Name="ContentChooseFolderButton"
-                                DockPanel.Dock="Right"
-                                Margin="12,0,0,0"
-                                Content="Choose Folder..."/>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" Margin="12,0,0,0">
+                            <Button x:Name="ContentCurrentFolderButton" Content="Current Folder" IsEnabled="False"/>
+                            <Button x:Name="ContentChooseFolderButton" Content="Choose Folder..."/>
+                        </StackPanel>
                         <TextBlock x:Name="ContentScopeLabel" Classes="label" DockPanel.Dock="Left" Margin="0,0,8,0" Text="Search in:"/>
                         <TextBlock x:Name="ContentFolderText"
                                    Foreground="#cdd6f4"
@@ -517,6 +518,10 @@
                                 <StackPanel>
                                     <CheckBox x:Name="MenuPasteCheckBox"/>
                                     <TextBlock x:Name="MenuPasteHint" Classes="hint" Margin="28,-4,0,0"/>
+                                </StackPanel>
+                                <StackPanel>
+                                    <CheckBox x:Name="MenuCopyPathCheckBox"/>
+                                    <TextBlock x:Name="MenuCopyPathHint" Classes="hint" Margin="28,-4,0,0"/>
                                 </StackPanel>
                             </StackPanel>
 

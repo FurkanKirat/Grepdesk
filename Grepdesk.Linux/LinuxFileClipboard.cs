@@ -44,6 +44,35 @@ public sealed class LinuxFileClipboard : IFileClipboard
             Run("xclip", ["-selection", "clipboard", "-i", "/dev/null"], out _);
     }
 
+    public bool SetText(string text)
+    {
+        var tool = UseWayland ? "wl-copy" : "xclip";
+        var args = UseWayland ? Array.Empty<string>() : new[] { "-selection", "clipboard", "-in" };
+        if (FindOnPath(tool) is not { } exe)
+            return false;
+
+        var info = new ProcessStartInfo(exe) { RedirectStandardInput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in args)
+            info.ArgumentList.Add(argument);
+
+        try
+        {
+            using var process = Process.Start(info)!;
+            process.StandardInput.Write(text);
+            process.StandardInput.Close();
+            if (!process.WaitForExit(ToolTimeout))
+            {
+                process.Kill();
+                return false;
+            }
+            return process.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>True when the tool this session needs (wl-paste or xclip) is installed.</summary>
     public static bool IsToolAvailable => FindOnPath(UseWayland ? "wl-paste" : "xclip") is not null;
 

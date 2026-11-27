@@ -3,9 +3,11 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Grepdesk.Core;
 using Grepdesk.Core.Grouping;
+using Grepdesk.UI.Helpers;
 using Grepdesk.UI.Jobs;
 
 namespace Grepdesk.UI.Organize;
@@ -29,11 +31,23 @@ public partial class OrganizeView : UserControl
     private bool _updating;
 
     public IPlatformShell? Shell { get; set; }
+    public Func<string?>? CurrentBrowseFolderProvider { get; set; }
+    public bool HasFolder => _folder is not null;
+    public event Action<IReadOnlyList<string>>? Modified;
 
     public OrganizeView()
     {
         InitializeComponent();
 
+        CurrentFolderButton.Click += async (_, _) =>
+        {
+            if (CurrentBrowseFolderProvider?.Invoke() is { } cur)
+            {
+                AppSettings.Current.LastOrganizeFolder = cur;
+                AppSettings.Current.Save();
+                await OpenFolderAsync(cur);
+            }
+        };
         DownloadsButton.Click += async (_, _) => await OpenFolderAsync(KnownFolders.Downloads());
         ChooseButton.Click += async (_, _) => await ChooseFolderAsync();
         RefreshButton.Click += async (_, _) => await ReloadAsync();
@@ -80,6 +94,8 @@ public partial class OrganizeView : UserControl
         SubtitleText.Text = Loc.Get("OrganizeSubtitle");
         FolderLabel.Text = Loc.Get("OrganizeFolder");
         FolderText.Text = _folder ?? Loc.Get("NotSelected");
+        CurrentFolderButton.Content = Loc.Get("UseCurrentFolder");
+        UpdateCurrentFolderButton();
         DownloadsButton.Content = Loc.Get("OrganizeDownloads");
         ChooseButton.Content = Loc.Get("ChooseFolder");
         RefreshButton.Content = Loc.Get("OrganizeRefresh");
@@ -115,12 +131,28 @@ public partial class OrganizeView : UserControl
         await ReloadAsync();
     }
 
+    public void UpdateCurrentFolderButton()
+    {
+        var cur = CurrentBrowseFolderProvider?.Invoke();
+        CurrentFolderButton.IsEnabled = cur is not null;
+        ToolTip.SetTip(CurrentFolderButton, cur is not null ? Loc.Get("UseCurrentFolderTip", cur) : Loc.Get("UseCurrentFolderEmptyTip"));
+    }
+
     private async Task ChooseFolderAsync()
     {
         if (TopLevel.GetTopLevel(this)?.StorageProvider is not { } provider) return;
-        var folders = await provider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = Loc.Get("OrganizeChooseTitle") });
-        if (folders.FirstOrDefault()?.TryGetLocalPath() is { } path)
+        var paths = await FolderPickerHelper.PickFoldersAsync(
+            provider,
+            Loc.Get("OrganizeChooseTitle"),
+            allowMultiple: false,
+            preferredStart: _folder ?? AppSettings.Current.LastOrganizeFolder,
+            currentBrowseFolder: CurrentBrowseFolderProvider?.Invoke());
+        if (paths.FirstOrDefault() is { } path)
+        {
+            AppSettings.Current.LastOrganizeFolder = path;
+            AppSettings.Current.Save();
             await OpenFolderAsync(path);
+        }
     }
 
     private async Task ReloadAsync(string? keepKey = null)
@@ -130,11 +162,16 @@ public partial class OrganizeView : UserControl
         _cts.Cancel();
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
-        StatusText.Text = Loc.Get("OrganizeReading");
+        StatusText.Text = Loc.Get("OrganizeReadingProgress", 0.0);
 
         try
         {
-            _members = await Task.Run(() => FolderGrouper.ReadFolder(folder, token), token);
+            _members = await Task.Run(() => FolderGrouper.ReadFolder(folder, token, frac =>
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!token.IsCancellationRequested)
+                        StatusText.Text = Loc.Get("OrganizeReadingProgress", frac);
+                })), token);
             await RegroupAsync(keepKey ?? SelectedGroup?.Group.Key);
         }
         catch (OperationCanceledException) { }
@@ -352,6 +389,7 @@ public partial class OrganizeView : UserControl
             UndoButton.IsVisible = _lastMove is not null;
 
             var message = MoveMessage(result, name);
+            if (result.Moved.Count > 0) Modified?.Invoke(paths);
             await ReloadAsync(SelectedGroup?.Group.Key);
             StatusText.Text = message; // set after the reload, which shows its own progress
         }
@@ -379,6 +417,7 @@ public partial class OrganizeView : UserControl
         var restored = await Task.Run(() => FolderOrganizer.Undo(move));
         _lastMove = null;
         UndoButton.IsVisible = false;
+        Modified?.Invoke([move.TargetFolder]);
         await ReloadAsync();
         StatusText.Text = Loc.Get("OrganizeUndone", restored);
     }
@@ -401,6 +440,7 @@ public partial class OrganizeView : UserControl
         var paths = chosen.Select(m => m.Member.Path).ToList();
         var failed = await Task.Run(() => paths.Count(p => !shell.MoveToTrash(p).IsSuccess));
 
+        Modified?.Invoke(paths);
         await ReloadAsync(SelectedGroup?.Group.Key);
         StatusText.Text = Loc.Get("CleanupMovedToTrash", Format.Size(bytes))
                           + (failed > 0 ? " " + Loc.Get("OrganizeSkippedInUse", failed, "") : "");
@@ -421,7 +461,9 @@ public partial class OrganizeView : UserControl
     private void OnMemberRightClick(object? sender, PointerReleasedEventArgs e)
     {
         if (e.InitialPressMouseButton != MouseButton.Right) return;
-        if (e.Source is not Control { DataContext: MemberRow row }) return;
+        var row = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as MemberRow
+                  ?? (e.Source as Control)?.DataContext as MemberRow;
+        if (row is null) return;
         MemberList.SelectedItem = row;
 
         var open = new MenuItem { Header = Loc.Get("ContextMenuOpen"), Icon = MenuIcons.For("ContextMenuOpen") };

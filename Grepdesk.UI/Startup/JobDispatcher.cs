@@ -7,7 +7,7 @@ namespace Grepdesk.UI.Startup;
 /// Collects Explorer shell-extension job commands of the same kind that arrive
 /// close together (one per selected file) into a single job window.
 /// </summary>
-internal sealed class JobDispatcher(Action<JobWindow> openWindow)
+internal sealed class JobDispatcher(Action<JobWindow> openWindow, Action<IReadOnlyList<string>>? onCopyPath = null)
 {
     // Explorer starts the processes almost at once, but each needs ~100 ms of
     // .NET startup before it can connect; wait until arrivals go quiet.
@@ -71,7 +71,10 @@ internal sealed class JobDispatcher(Action<JobWindow> openWindow)
                 continue;
 
             _pending.Remove(batch.Kind);
-            Open(new AppCommand(batch.Kind, batch.Paths, batch.Benchmark));
+            if (batch.Kind == CommandKind.CopyPath)
+                onCopyPath?.Invoke(batch.Paths);
+            else
+                Open(new AppCommand(batch.Kind, batch.Paths, batch.Benchmark));
         }
 
         if (_pending.Count == 0)

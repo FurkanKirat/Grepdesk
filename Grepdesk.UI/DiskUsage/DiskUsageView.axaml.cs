@@ -2,10 +2,13 @@ using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Grepdesk.Core;
+using Grepdesk.Core.Browse;
 using Grepdesk.Core.DiskUsage;
 using Grepdesk.UI.Jobs;
 
@@ -36,6 +39,9 @@ public partial class DiskUsageView : UserControl
     private DiskCategory? _categoryFilter;
     private CancellationTokenSource _cts = new();
     private int _scanProgress;
+    private double _scanFraction;
+    private double _analyzeFraction;
+    private bool _isAnalyzing;
     private bool _updating;
 
     /// <summary>The drive scan shared with the other pages; set once by the window.</summary>
@@ -46,11 +52,12 @@ public partial class DiskUsageView : UserControl
         {
             _scans = value;
             if (value is null) return;
-            value.Progress += count =>
+            value.ScanProgress += p =>
             {
                 if (!CancelButton.IsVisible) return; // someone else's scan
-                _scanProgress = count;
-                StatusText.Text = Loc.Get("DiskScanning", count);
+                _scanProgress = p.IndexedFiles;
+                _scanFraction = p.Fraction;
+                StatusText.Text = Loc.Get("DiskScanning", p.IndexedFiles, p.Fraction);
             };
         }
     }
@@ -87,6 +94,8 @@ public partial class DiskUsageView : UserControl
         {
             if (!_updating) UpdateAnalyzeButton();
         };
+        DriveList.AddHandler(PointerReleasedEvent, OnDriveRightClick, RoutingStrategies.Bubble, handledEventsToo: true);
+        FolderPathText.AddHandler(PointerReleasedEvent, OnFolderHeaderRightClick, RoutingStrategies.Bubble, handledEventsToo: true);
 
         ApplyLanguage();
     }
@@ -121,16 +130,34 @@ public partial class DiskUsageView : UserControl
             RenderReport();
             UpdateFolderHeader();
         }
-        if (CancelButton.IsVisible && _scans?.IsScanning == true)
-            StatusText.Text = Loc.Get("DiskScanning", _scanProgress);
+        if (CancelButton.IsVisible)
+        {
+            if (_isAnalyzing)
+                StatusText.Text = Loc.Get("DiskAnalyzingProgress", _analyzeFraction);
+            else if (_scans?.IsScanning == true)
+                StatusText.Text = Loc.Get("DiskScanning", _scanProgress, _scanFraction);
+        }
     }
 
-    /// <summary>Drops a deleted path from the lists (totals stay as analyzed until the next analysis).</summary>
+    /// <summary>Drops a deleted path from the lists and refreshes the displayed folder totals.</summary>
     public void Remove(string path)
     {
+        _index?.Remove(path);
+
+        var removedFromFolder = false;
         foreach (var list in new[] { _folderRows, _largestRows })
+        {
             foreach (var row in list.Where(r => string.Equals(r.FullPath, path, StringComparison.OrdinalIgnoreCase)).ToList())
+            {
                 list.Remove(row);
+                if (list == _folderRows) removedFromFolder = true;
+            }
+        }
+
+        if (_folder is { } currentFolder && _index is not null && PathUtil.IsSameOrInside(path, currentFolder))
+            _ = ShowFolderAsync(currentFolder);
+        else if (removedFromFolder)
+            UpdateFolderHeader(_folderRows.Sum(r => r.Result.Size));
     }
 
     // =====================================================================
@@ -182,12 +209,29 @@ public partial class DiskUsageView : UserControl
             if (index is null)
             {
                 _scanProgress = 0;
-                StatusText.Text = Loc.Get("DiskScanning", 0);
+                _scanFraction = 0;
+                StatusText.Text = Loc.Get("DiskScanning", 0, 0.0);
                 index = await scans.ScanAsync(root, token);
             }
 
-            StatusText.Text = Loc.Get("DiskAnalyzing");
-            var report = await Task.Run(() => DiskAnalyzer.Analyze(index, root, LargestPerCategory, token), token);
+            _isAnalyzing = true;
+            _analyzeFraction = 0;
+            StatusText.Text = Loc.Get("DiskAnalyzingProgress", 0.0);
+            long lastAnalyzeTick = 0;
+            var report = await Task.Run(() => DiskAnalyzer.Analyze(index, root, LargestPerCategory, token, onProgress: frac =>
+            {
+                var now = Environment.TickCount64;
+                var prev = Volatile.Read(ref lastAnalyzeTick);
+                if (now - prev < 100) return;
+                if (Interlocked.CompareExchange(ref lastAnalyzeTick, now, prev) != prev) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!CancelButton.IsVisible || !_isAnalyzing) return;
+                    _analyzeFraction = frac;
+                    StatusText.Text = Loc.Get("DiskAnalyzingProgress", frac);
+                });
+            }), token);
+            _isAnalyzing = false;
 
             _index = index;
             _report = report;
@@ -203,6 +247,7 @@ public partial class DiskUsageView : UserControl
         }
         finally
         {
+            _isAnalyzing = false;
             CancelButton.IsVisible = false;
             UpdateAnalyzeButton();
         }
@@ -430,6 +475,34 @@ public partial class DiskUsageView : UserControl
     // =====================================================================
     // Helpers
     // =====================================================================
+
+    private void OnDriveRightClick(object? sender, PointerReleasedEventArgs e)
+    {
+        if (e.InitialPressMouseButton != MouseButton.Right) return;
+        var row = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as DriveRow;
+        if (row is null) return;
+        DriveList.SelectedItem = row;
+        var copy = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath") };
+        copy.Click += async (_, _) => await CopyTextAsync(row.Root);
+        new ContextMenu { ItemsSource = new Control[] { copy } }.Open(DriveList);
+        e.Handled = true;
+    }
+
+    private void OnFolderHeaderRightClick(object? sender, PointerReleasedEventArgs e)
+    {
+        if (e.InitialPressMouseButton != MouseButton.Right || _folder is not { } folder) return;
+        var copy = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath") };
+        copy.Click += async (_, _) => await CopyTextAsync(folder);
+        new ContextMenu { ItemsSource = new Control[] { copy } }.Open(FolderPathText);
+        e.Handled = true;
+    }
+
+    private async Task CopyTextAsync(string path)
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
+        await clipboard.SetTextAsync(path);
+        StatusText.Text = Loc.Get("PathCopied");
+    }
 
     private static string CategoryName(DiskCategory category) => Loc.Get("DiskCategory" + category);
 

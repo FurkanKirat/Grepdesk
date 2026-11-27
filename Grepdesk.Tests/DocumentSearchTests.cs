@@ -241,4 +241,22 @@ public class DocumentSearchTests
         Assert.Equal(0, DocumentSearch.StepIndex(2, 3, backward: false));
         Assert.Equal(2, DocumentSearch.StepIndex(0, 3, backward: true));
     }
+
+    [Fact]
+    public async Task ContentSearcher_reports_scanned_file_counts()
+    {
+        using var dir = new TempDir();
+        var a = dir.WriteFile("a.txt", "hello world");
+        var b = dir.WriteFile("b.txt", "nothing here");
+        var c = dir.WriteFile("c.txt", "hello again");
+
+        var counts = new System.Collections.Concurrent.ConcurrentBag<int>();
+        var matches = new List<Grepdesk.Core.ContentSearch.ContentMatch>();
+        await foreach (var m in Grepdesk.Core.ContentSearch.ContentSearcher.SearchAsync([a, b, c], "hello", null, c => counts.Add(c)))
+            matches.Add(m);
+
+        Assert.Equal(2, matches.Count);
+        Assert.Equal(3, counts.Count);
+        Assert.Equal(3, counts.Max());
+    }
 }

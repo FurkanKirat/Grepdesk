@@ -174,6 +174,8 @@ public partial class BrowseView
         if (effect == DragDropEffects.None) return;
 
         SessionTrail.Note($"Dropped {sources.Count} item(s) into {folder} ({effect})");
+        SizeCache.InvalidateMany(sources);
+        SizeCache.Invalidate(folder);
         StartJob(effect == DragDropEffects.Move ? "--move-to" : "--copy-to", [.. sources, folder]);
     }
 

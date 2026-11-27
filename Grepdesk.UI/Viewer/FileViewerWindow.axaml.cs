@@ -2314,9 +2314,17 @@ public partial class FileViewerWindow : Window
             reloadItem.Click += async (_, _) => await ReloadAsync(confirmUnsaved: true);
             items.Add(reloadItem);
 
-            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder") };
+            var showItem = new MenuItem { Header = Loc.Get("ContextMenuShowInFolder"), Icon = MenuIcons.For("ContextMenuShowInFolder") };
             showItem.Click += (_, _) => ShowInFolderRequested?.Invoke(FilePath);
             items.Add(showItem);
+
+            var copyPathItem = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath") };
+            copyPathItem.Click += async (_, _) =>
+            {
+                if (Clipboard is { } cb)
+                    await cb.SetTextAsync(FilePath);
+            };
+            items.Add(copyPathItem);
         }
         if (items.Count > 0)
             new ContextMenu { ItemsSource = items }.Open(anchor);

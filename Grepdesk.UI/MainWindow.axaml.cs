@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private List<string>? _selectedRoots; // null = whole PC
     private string? _searchScopeFolder; // sub-folder filter when searching inside an already-built index
     private bool _scopeChosen;
+    private bool _nameScopeExplicit;
     private List<SearchResult> _allMatches = []; // every match for the last query (after filters), unsorted
     private ResultFilter _filter = new();
 
@@ -57,6 +58,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource _contentSearchCts = new();
     private string? _contentSearchFolder;
     private string? _contentQuery;
+    private bool _contentFolderExplicit;
     private FileViewerWindow? _viewer;
     private readonly UpdateChecker _updateChecker = UpdateChecker.CreateDefault();
 
@@ -88,13 +90,14 @@ public partial class MainWindow : Window
         ResultsList.PointerReleased += OnAnyResultRightClick;
         ShowMoreButton.Click += async (_, _) => await ShowMoreAsync();
 
+        UseCurrentFolderButton.Click += async (_, _) => await UseCurrentBrowseFolderForNameSearchAsync();
         ChooseFolderButton.Click += async (_, _) => await ChooseFolderAsync();
         ScanAllButton.Click += async (_, _) => await ScanWholeComputerAsync();
         ReindexButton.Click += async (_, _) => await StartIndexingAsync();
 
-        _index.ProgressChanged += count =>
+        _index.ScanProgressChanged += p =>
             Dispatcher.UIThread.Post(() =>
-                SetStatus(StatusText, () => Loc.Get("IndexingProgress", count)));
+                SetStatus(StatusText, () => Loc.Get("IndexingProgress", p.IndexedFiles, p.Fraction)));
 
         _index.IndexingComplete += () =>
             Dispatcher.UIThread.Post(() =>
@@ -110,6 +113,7 @@ public partial class MainWindow : Window
         ContentResultsList.ItemsSource = _contentResults;
         ContentResultsList.DoubleTapped += OnAnyResultDoubleTapped;
         ContentResultsList.PointerReleased += OnAnyResultRightClick;
+        ContentCurrentFolderButton.Click += (_, _) => UseCurrentBrowseFolderForContentSearch();
         ContentChooseFolderButton.Click += async (_, _) => await ChooseContentFolderAsync();
         ContentSearchBox.KeyDown += OnContentSearchKeyDown;
         SetStatus(ContentStatusText, () => Loc.Get("SelectFolderFirst"));
@@ -179,8 +183,19 @@ public partial class MainWindow : Window
         SettingsPage.IsVisible = page == SettingsPage;
 
         if (page == BrowsePage) Dispatcher.UIThread.Post(() => BrowsePage.FocusList(selectFirst: false), DispatcherPriority.Loaded);
-        else if (page == NameSearchPage) SearchBox.Focus();
+        else if (page == NameSearchPage)
+        {
+            SearchBox.Focus();
+            if (!_nameScopeExplicit && _selectedRoots is [var folder] && !_index.IsIndexing && !_index.CoversFolder(folder))
+                _ = StartIndexingIfSmallAsync(folder);
+        }
         else if (page == ContentSearchPage) ContentSearchBox.Focus();
+        else if (page == OrganizePage)
+        {
+            if (!OrganizePage.HasFolder && BrowsePage.CurrentFileSystemFolder is { } cur
+                && !Grepdesk.Core.Browse.FolderListing.IsKnownHugeFolder(cur))
+                _ = OrganizePage.OpenFolderAsync(cur);
+        }
         else if (page == ProgramsPage) _ = ProgramsPage.OnShownAsync();
     }
 
@@ -241,6 +256,8 @@ public partial class MainWindow : Window
 
             // File name search
             SearchBox.Watermark = Loc.Get("SearchWatermark");
+            UseCurrentFolderButton.Content = ContentCurrentFolderButton.Content = Loc.Get("UseCurrentFolder");
+            UpdateCurrentFolderButtons(BrowsePage.CurrentFileSystemFolder);
             ChooseFolderButton.Content = Loc.Get("ChooseFolder");
             ScanAllButton.Content = Loc.Get("ScanAllPc");
             ReindexButton.Content = Loc.Get("Rescan");
@@ -318,6 +335,7 @@ public partial class MainWindow : Window
             SetFeatureText(MenuExtractCheckBox, MenuExtractHint, "FeatureExtract");
             SetFeatureText(MenuCompressCheckBox, MenuCompressHint, "FeatureCompress");
             SetFeatureText(MenuPasteCheckBox, MenuPasteHint, "FeaturePaste");
+            SetFeatureText(MenuCopyPathCheckBox, MenuCopyPathHint, "FeatureCopyPath");
             if (SettingsStatusText.IsVisible)
                 SettingsStatusText.Text = Loc.Get("ContextMenuUpdateFailed");
 
@@ -572,6 +590,7 @@ public partial class MainWindow : Window
         Bind(MenuExtractCheckBox, ShellFeature.Extract);
         Bind(MenuCompressCheckBox, ShellFeature.Compress);
         Bind(MenuPasteCheckBox, ShellFeature.Paste);
+        Bind(MenuCopyPathCheckBox, ShellFeature.CopyPath);
 
         // Already opted in: rewrite the entries so they follow the exe if
         // it was moved, and pick up the current language for the labels.
@@ -678,12 +697,14 @@ public partial class MainWindow : Window
     private void OpenWithFolder(string folder, bool navigate = true)
     {
         _contentSearchFolder = folder;
+        _contentFolderExplicit = true;
         ContentFolderText.Text = folder;
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
 
         _searchScopeFolder = null;
         _selectedRoots = [folder];
         _scopeChosen = true;
+        _nameScopeExplicit = true;
         UpdateScopeText();
         ReindexButton.IsEnabled = true;
         _ = StartIndexingIfSmallAsync(folder);
@@ -721,24 +742,46 @@ public partial class MainWindow : Window
         var provider = StorageProvider;
         if (provider is null) return;
 
-        var folders = await provider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = Loc.Get("ChooseFolderDialogTitle"),
-            AllowMultiple = true
-        });
-
-        if (folders.Count == 0) return;
-
-        var paths = folders
-            .Select(f => f.TryGetLocalPath())
-            .Where(p => p is not null)
-            .Select(p => p!)
-            .ToList();
+        var preferred = (_nameScopeExplicit ? _selectedRoots?.FirstOrDefault() : null) ?? Settings.LastNameSearchFolder;
+        var paths = await FolderPickerHelper.PickFoldersAsync(
+            provider,
+            Loc.Get("ChooseFolderDialogTitle"),
+            allowMultiple: true,
+            preferredStart: preferred,
+            currentBrowseFolder: BrowsePage.CurrentFileSystemFolder);
 
         if (paths.Count == 0) return;
 
         _searchScopeFolder = null;
         _selectedRoots = paths;
+        _nameScopeExplicit = true;
+        Settings.LastNameSearchFolder = paths[0];
+        Settings.Save();
+        await StartIndexingAsync();
+    }
+
+    private async Task UseCurrentBrowseFolderForNameSearchAsync()
+    {
+        if (BrowsePage.CurrentFileSystemFolder is not { } folder) return;
+
+        _nameScopeExplicit = true;
+        Settings.LastNameSearchFolder = folder;
+        Settings.Save();
+
+        if (_index.CoversFolder(folder))
+        {
+            _searchScopeFolder = folder;
+            _scopeChosen = true;
+            UpdateScopeText();
+            ReindexButton.IsEnabled = true;
+            await _searchCts.CancelAsync();
+            _searchCts = new CancellationTokenSource();
+            await RunSearchAsync(SearchBox.Text ?? "", _searchCts.Token);
+            return;
+        }
+
+        _searchScopeFolder = null;
+        _selectedRoots = [folder];
         await StartIndexingAsync();
     }
 
@@ -746,6 +789,7 @@ public partial class MainWindow : Window
     {
         _searchScopeFolder = null;
         _selectedRoots = null;
+        _nameScopeExplicit = true;
         await StartIndexingAsync();
     }
 
@@ -921,7 +965,9 @@ public partial class MainWindow : Window
         if (sender is not ListBox list) return;
 
         // Find and select the right-clicked item
-        if (e.Source is Control { DataContext: ResultItem item })
+        var item = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as ResultItem
+                   ?? (e.Source as Control)?.DataContext as ResultItem;
+        if (item is not null)
         {
             list.SelectedItem = item;
 
@@ -1084,6 +1130,7 @@ public partial class MainWindow : Window
         foreach (var match in _contentResults.Where(r => r.FullPath == item.FullPath).ToList())
             _contentResults.Remove(match);
         DiskPage.Remove(item.FullPath);
+        BrowsePage.InvalidateFolderSizes([item.FullPath]);
 
         var name = item.FileName;
         SetStatus(CurrentStatusText, () => Loc.Get("MovedToTrash", name));
@@ -1107,12 +1154,24 @@ public partial class MainWindow : Window
         CleanupPage.Scans = _driveScans;
         CleanupPage.Shell = _shell;
         OrganizePage.Shell = _shell;
+        OrganizePage.CurrentBrowseFolderProvider = () => BrowsePage.CurrentFileSystemFolder;
+        OrganizePage.Modified += paths =>
+        {
+            BrowsePage.InvalidateFolderSizes(paths);
+            foreach (var path in paths)
+            {
+                _index.Remove(path);
+                DiskPage.Remove(path);
+            }
+            BrowsePage.InvalidateFolderSizes(paths);
+        };
         ProgramsPage.Shell = _shell;
         CleanupPage.OrganizeRequested += async folder => await OpenOrganizeAsync(folder);
         CleanupPage.Removed += paths =>
         {
             var gone = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var path in paths) DiskPage.Remove(path);
+            BrowsePage.InvalidateFolderSizes(paths);
             _allMatches.RemoveAll(r => gone.Contains(r.FullPath));
             foreach (var item in _results.Where(r => gone.Contains(r.FullPath)).ToList()) _results.Remove(item);
             UpdateShowMoreButton();
@@ -1136,8 +1195,10 @@ public partial class MainWindow : Window
         BrowsePage.ViewRequested += item => ViewFile(item, null);
         BrowsePage.SelectionFollowed += item => FollowInViewer(item, null);
         BrowsePage.OrganizeRequested += async folder => await OpenOrganizeAsync(folder);
+        BrowsePage.CurrentFolderChanged += OnBrowseFolderChanged;
         BrowsePage.SearchRequested += async (folder, query) =>
         {
+            _nameScopeExplicit = true;
             FeatureNav.SelectedIndex = PageNameSearch;
             _contentSearchFolder = folder;
             ContentFolderText.Text = folder;
@@ -1171,6 +1232,7 @@ public partial class MainWindow : Window
                 _index.Remove(path);
                 DiskPage.Remove(path);
             }
+            BrowsePage.InvalidateFolderSizes(paths);
             _allMatches.RemoveAll(r => gone.Contains(r.FullPath));
             foreach (var item in _results.Where(r => gone.Contains(r.FullPath)).ToList()) _results.Remove(item);
             foreach (var item in _contentResults.Where(r => gone.Contains(r.FullPath)).ToList()) _contentResults.Remove(item);
@@ -1184,6 +1246,39 @@ public partial class MainWindow : Window
             return;
         }
         _ = BrowsePage.RestoreOrInitAsync(null);
+    }
+
+    private void OnBrowseFolderChanged(string? folder)
+    {
+        UpdateCurrentFolderButtons(folder);
+
+        if (!_nameScopeExplicit && folder is not null && !_index.IsIndexing)
+        {
+            _searchScopeFolder = null;
+            _selectedRoots = [folder];
+            _scopeChosen = true;
+            UpdateScopeText();
+            ReindexButton.IsEnabled = true;
+        }
+
+        if (!_contentFolderExplicit && folder is not null)
+        {
+            _contentSearchFolder = folder;
+            ContentFolderText.Text = folder;
+            if (_contentResults.Count == 0)
+                SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
+        }
+    }
+
+    private void UpdateCurrentFolderButtons(string? folder)
+    {
+        var hasFolder = folder is not null;
+        UseCurrentFolderButton.IsEnabled = hasFolder;
+        ContentCurrentFolderButton.IsEnabled = hasFolder;
+        var tip = hasFolder ? Loc.Get("UseCurrentFolderTip", folder!) : Loc.Get("UseCurrentFolderEmptyTip");
+        ToolTip.SetTip(UseCurrentFolderButton, tip);
+        ToolTip.SetTip(ContentCurrentFolderButton, tip);
+        OrganizePage.UpdateCurrentFolderButton();
     }
 
     /// <summary>Switches to the Organize page showing <paramref name="folder"/>.</summary>
@@ -1438,6 +1533,9 @@ public partial class MainWindow : Window
         if (page == ContentSearchPage)
         {
             _contentSearchFolder = folders[0];
+            _contentFolderExplicit = true;
+            Settings.LastContentSearchFolder = folders[0];
+            Settings.Save();
             ContentFolderText.Text = folders[0];
             SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
             ContentSearchBox.Focus();
@@ -1445,6 +1543,9 @@ public partial class MainWindow : Window
         else
         {
             _selectedRoots = folders;
+            _nameScopeExplicit = true;
+            Settings.LastNameSearchFolder = folders[0];
+            Settings.Save();
             await StartIndexingAsync();
         }
     }
@@ -1458,18 +1559,32 @@ public partial class MainWindow : Window
         var provider = StorageProvider;
         if (provider is null) return;
 
-        var folders = await provider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = Loc.Get("ChooseContentFolderDialogTitle"),
-            AllowMultiple = false
-        });
+        var preferred = (_contentFolderExplicit ? _contentSearchFolder : null) ?? Settings.LastContentSearchFolder;
+        var paths = await FolderPickerHelper.PickFoldersAsync(
+            provider,
+            Loc.Get("ChooseContentFolderDialogTitle"),
+            allowMultiple: false,
+            preferredStart: preferred,
+            currentBrowseFolder: BrowsePage.CurrentFileSystemFolder);
 
-        if (folders.Count == 0) return;
+        if (paths.Count == 0) return;
 
-        var path = folders[0].TryGetLocalPath();
-        if (path is null) return;
-
+        var path = paths[0];
         _contentSearchFolder = path;
+        _contentFolderExplicit = true;
+        Settings.LastContentSearchFolder = path;
+        Settings.Save();
+        ContentFolderText.Text = path;
+        SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
+    }
+
+    private void UseCurrentBrowseFolderForContentSearch()
+    {
+        if (BrowsePage.CurrentFileSystemFolder is not { } path) return;
+        _contentSearchFolder = path;
+        _contentFolderExplicit = true;
+        Settings.LastContentSearchFolder = path;
+        Settings.Save();
         ContentFolderText.Text = path;
         SetStatus(ContentStatusText, () => Loc.Get("ContentReadyPrompt"));
     }
@@ -1498,30 +1613,65 @@ public partial class MainWindow : Window
         _contentQuery = query;
         SetStatus(ContentStatusText, () => Loc.Get("ScanningFiles"));
 
-        // Walk the chosen folder directly — content search doesn't depend on
-        // the name index, so it works even if that index was never built.
-        var candidates = EnumerateSearchableFiles(_contentSearchFolder);
-
-        var matchCount = 0;
-        var skippedCount = 0; // too large, or extraction failed (corrupt/locked/unsupported-compression)
-
-        void OnSkipped(SkippedFile _)
-        {
-            Interlocked.Increment(ref skippedCount);
-            Dispatcher.UIThread.Post(() =>
-                SetStatus(ContentStatusText, () => Loc.Get("ScanningProgress", matchCount, skippedCount)));
-        }
-
         try
         {
-            await foreach (var match in ContentSearcher.SearchAsync(candidates, query, OnSkipped, token))
+            // Walk the chosen folder off the UI thread so we know the total file count for percentage progress.
+            var folder = _contentSearchFolder;
+            var candidates = await Task.Run(() => EnumerateSearchableFiles(folder, token).ToList(), token);
+            if (token.IsCancellationRequested) return;
+
+            var totalFiles = candidates.Count;
+            if (totalFiles == 0)
+            {
+                SetStatus(ContentStatusText, () => Loc.Get("NoMatchesFound"));
+                return;
+            }
+
+            var matchCount = 0;
+            var skippedCount = 0; // too large, or extraction failed (corrupt/locked/unsupported-compression)
+            var scannedCount = 0;
+            long lastUiTick = 0;
+
+            void PostScanStatus(bool force = false)
+            {
+                var now = Environment.TickCount64;
+                var prev = Volatile.Read(ref lastUiTick);
+                if (!force && now - prev < 80) return;
+                if (!force && Interlocked.CompareExchange(ref lastUiTick, now, prev) != prev) return;
+
+                var scanned = Volatile.Read(ref scannedCount);
+                var matches = Volatile.Read(ref matchCount);
+                var skipped = Volatile.Read(ref skippedCount);
+                var fraction = Math.Clamp((double)scanned / totalFiles, 0.0, 1.0);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (token.IsCancellationRequested) return;
+                    SetStatus(ContentStatusText, () => skipped == 0
+                        ? Loc.Get("ScanningMatches", matches, fraction, scanned, totalFiles)
+                        : Loc.Get("ScanningProgress", matches, skipped, fraction, scanned, totalFiles));
+                });
+            }
+
+            void OnSkipped(SkippedFile _)
+            {
+                Interlocked.Increment(ref skippedCount);
+                PostScanStatus(force: true);
+            }
+
+            void OnFileScanned(int _)
+            {
+                Interlocked.Increment(ref scannedCount);
+                PostScanStatus();
+            }
+
+            SetStatus(ContentStatusText, () => Loc.Get("ScanningMatches", 0, 0.0, 0, totalFiles));
+
+            await foreach (var match in ContentSearcher.SearchAsync(candidates, query, OnSkipped, OnFileScanned, token))
             {
                 var item = new ResultItem(SearchResult.FromDisk(match.FullPath), match.Snippet, snippetHighlight: query);
                 InsertSorted(_contentResults, item, ResultOrdering.ForItems(Settings.Sort));
-                matchCount++;
-                SetStatus(ContentStatusText, () => skippedCount == 0
-                    ? Loc.Get("ScanningMatches", matchCount)
-                    : Loc.Get("ScanningProgress", matchCount, skippedCount));
+                Interlocked.Increment(ref matchCount);
+                PostScanStatus(force: true);
             }
 
             if (!token.IsCancellationRequested)
@@ -1538,7 +1688,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) { }
     }
 
-    private static IEnumerable<string> EnumerateSearchableFiles(string root)
+    private static IEnumerable<string> EnumerateSearchableFiles(string root, CancellationToken ct)
     {
         var extensions = new HashSet<string>(ExtractorRegistry.AllSupportedExtensions, System.StringComparer.OrdinalIgnoreCase);
         var pending = new Stack<string>();
@@ -1546,6 +1696,7 @@ public partial class MainWindow : Window
 
         while (pending.Count > 0)
         {
+            ct.ThrowIfCancellationRequested();
             var dir = pending.Pop();
 
             IEnumerable<string> files = System.Array.Empty<string>();
@@ -1556,12 +1707,16 @@ public partial class MainWindow : Window
                 if (extensions.Contains(Path.GetExtension(f)))
                     yield return f;
 
-            IEnumerable<string> subDirs = System.Array.Empty<string>();
-            try { subDirs = Directory.EnumerateDirectories(dir).ToList(); }
+            IEnumerable<DirectoryInfo> subDirs = System.Array.Empty<DirectoryInfo>();
+            try { subDirs = new DirectoryInfo(dir).EnumerateDirectories().ToList(); }
             catch { /* locked / unauthorized — skip subdirectories */ }
 
             foreach (var sub in subDirs)
-                pending.Push(sub);
+            {
+                if (sub.Attributes.HasFlag(FileAttributes.ReparsePoint) && sub.LinkTarget is not null)
+                    continue;
+                pending.Push(sub.FullName);
+            }
         }
     }
 }

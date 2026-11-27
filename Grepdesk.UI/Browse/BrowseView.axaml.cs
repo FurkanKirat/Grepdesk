@@ -40,10 +40,10 @@ public partial class BrowseView : UserControl
     private ObservableCollection<BrowseRow> _rows = [];
     private int _totalRows; // what the folder shows; _rows can lag behind while an icon view is still filling
     private Dictionary<string, BrowseRow> _rowsByPath = new(PathUtil.Comparer);
-    private readonly Dictionary<string, long> _folderSizes = new(PathUtil.Comparer);
     private List<FolderEntry> _entries = [];
     private FolderListingError _error;
     private bool _calculatingSizes;
+    private double _sizeCalcFraction;
     private FolderSort _sort = new(Settings.BrowseSortColumn, Settings.BrowseSortDescending);
     private CancellationTokenSource _loadCts = new();
     private FileSystemWatcher? _watcher;
@@ -60,6 +60,9 @@ public partial class BrowseView : UserControl
 
     public IPlatformShell? Shell { get; set; }
     public IReadOnlyList<AvailableEditor> Editors { get; set; } = [];
+    public FolderSizeCache SizeCache { get; set; } = new();
+
+    public void RequestReload() => ScheduleReload();
 
     /// <summary>The folder shown, or <see cref="ThisPc"/>; null before the first navigation.</summary>
     public string? CurrentFolder => _history.Current;
@@ -94,7 +97,7 @@ public partial class BrowseView : UserControl
         BackButton.Click += async (_, _) => await GoBackAsync();
         ForwardButton.Click += async (_, _) => await GoForwardAsync();
         UpButton.Click += async (_, _) => await GoUpAsync();
-        RefreshButton.Click += async (_, _) => await ReloadAsync();
+        RefreshButton.Click += async (_, _) => await ReloadAsync(clearSizeCache: true);
         HistoryButton.Click += (_, _) => ShowHistoryMenu();
         FavoriteButton.Click += (_, _) => ToggleFavorite(CurrentFolder);
         ClearHistoryButton.Click += (_, _) => ClearHistory();
@@ -252,7 +255,13 @@ public partial class BrowseView : UserControl
         await NavigateAsync(PathUtil.Parent(from) ?? ThisPc, select: from);
     }
 
-    private Task ReloadAsync() => _history.Current is null ? Task.CompletedTask : LoadAsync(folderChanged: false, select: null);
+    private Task ReloadAsync(bool clearSizeCache = false)
+    {
+        if (_history.Current is null) return Task.CompletedTask;
+        if (clearSizeCache && InWritableFolder)
+            SizeCache.InvalidateChildrenOf(CurrentFolder!);
+        return LoadAsync(folderChanged: false, select: null);
+    }
 
     /// <param name="folderChanged">A different folder: start at the top with the filter cleared, instead of keeping selection and scroll.</param>
     /// <param name="select">Select this item once listed (the folder we came up from, a renamed file).</param>
@@ -331,10 +340,11 @@ public partial class BrowseView : UserControl
         FolderChanged?.Invoke(folder);
 
         _entries = contents.Entries
-            .Select(e => e.IsDirectory && e.Size < 0 && _folderSizes.TryGetValue(e.FullPath, out var known) ? e with { Size = known } : e)
+            .Select(e => e.IsDirectory && e.Size < 0 && SizeCache.TryGet(e.FullPath, e.Modified, out var known) ? e with { Size = known } : e)
             .ToList();
         var hasUncalculated = folder != ThisPc && _entries.Any(e => e.IsDirectory && e.Size < 0);
         _calculatingSizes = hasUncalculated;
+        _sizeCalcFraction = 0;
         _error = contents.Error;
         RefreshCutMarks();
         Render(reset: folderChanged);
@@ -354,6 +364,7 @@ public partial class BrowseView : UserControl
         if (folders.Count == 0) return Task.CompletedTask;
 
         _calculatingSizes = true;
+        _sizeCalcFraction = 0;
         UpdateStatus();
         return ComputeFolderSizesAsync(folders, forceFull, _loadCts.Token);
     }
@@ -363,6 +374,7 @@ public partial class BrowseView : UserControl
         if (folders.Count == 0)
         {
             _calculatingSizes = false;
+            _sizeCalcFraction = 1;
             UpdateStatus();
             return;
         }
@@ -370,31 +382,68 @@ public partial class BrowseView : UserControl
         var maxBytes = forceFull ? long.MaxValue : FolderListing.DefaultMaxAutoBytes;
         var maxEntries = forceFull ? int.MaxValue : FolderListing.DefaultMaxAutoEntries;
         var parallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+        var progress = new double[folders.Count];
+        long lastUiPost = 0;
+
+        double AggregateProgress()
+        {
+            double sum = 0;
+            for (var i = 0; i < progress.Length; i++)
+                sum += Volatile.Read(ref progress[i]);
+            return Math.Clamp(sum / progress.Length, 0.0, 1.0);
+        }
+
+        void PostProgress(bool force = false)
+        {
+            var now = Environment.TickCount64;
+            var prev = Volatile.Read(ref lastUiPost);
+            if (!force && now - prev < 100) return;
+            if (!force && Interlocked.CompareExchange(ref lastUiPost, now, prev) != prev) return;
+            var frac = AggregateProgress();
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ct.IsCancellationRequested) return;
+                _sizeCalcFraction = frac;
+                UpdateStatus();
+            });
+        }
+
         try
         {
-            await Parallel.ForEachAsync(folders, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, async (folder, token) =>
+            var indexed = folders.Select((f, idx) => (Folder: f, Index: idx));
+            await Parallel.ForEachAsync(indexed, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, async (item, token) =>
             {
                 var result = await Task.Run(() => FolderListing.TryGetFolderSize(
-                    folder.FullPath,
+                    item.Folder.FullPath,
                     maxBytes,
                     maxEntries,
                     token,
-                    forceFull
-                        ? partial =>
+                    p =>
+                    {
+                        Volatile.Write(ref progress[item.Index], p.Fraction);
+                        if (forceFull)
                         {
                             Dispatcher.UIThread.Post(() =>
                             {
                                 if (!token.IsCancellationRequested)
-                                    ApplyFolderSize(folder.FullPath, partial, complete: false);
+                                    ApplyFolderSize(item.Folder.FullPath, p.Bytes, complete: false);
                             });
                         }
-                        : null), token);
+                        PostProgress();
+                    }), token);
+
+                Volatile.Write(ref progress[item.Index], 1.0);
+                PostProgress();
+
                 if (token.IsCancellationRequested || !result.Complete) return;
 
                 Dispatcher.UIThread.Post(() =>
                 {
                     if (!token.IsCancellationRequested)
-                        ApplyFolderSize(folder.FullPath, result.Size, complete: true);
+                    {
+                        _sizeCalcFraction = AggregateProgress();
+                        ApplyFolderSize(item.Folder.FullPath, result.Size, complete: true);
+                    }
                 });
             });
 
@@ -404,6 +453,7 @@ public partial class BrowseView : UserControl
                 {
                     if (ct.IsCancellationRequested) return;
                     _calculatingSizes = false;
+                    _sizeCalcFraction = 1;
                     UpdateStatus();
                 });
             }
@@ -413,14 +463,17 @@ public partial class BrowseView : UserControl
 
     private void ApplyFolderSize(string path, long size, bool complete)
     {
-        if (complete)
-            _folderSizes[path] = size;
-
         var index = _entries.FindIndex(e => PathUtil.Comparer.Equals(e.FullPath, path));
-        if (index < 0) return;
+        if (index < 0)
+        {
+            if (complete) SizeCache.Invalidate(path);
+            return;
+        }
 
         var updated = _entries[index] with { Size = size };
         _entries[index] = updated;
+        if (complete)
+            SizeCache.Set(path, size, updated.Modified);
 
         if (_rowsByPath.TryGetValue(path, out var row))
         {
@@ -629,7 +682,11 @@ public partial class BrowseView : UserControl
             var hasUncalculated = _entries.Any(e => e.IsDirectory && e.Size < 0);
             CalculateSizesButton.IsVisible = hasUncalculated && !_calculatingSizes;
             var totalBytes = _entries.Where(e => e.Size >= 0).Sum(e => e.Size);
-            TotalSizeText.Text = Loc.Get(_calculatingSizes ? "BrowseTotalSizeLoading" : "BrowseTotalSize", Format.Size(totalBytes));
+            TotalSizeText.Text = _calculatingSizes
+                ? Loc.Get("BrowseTotalSizeLoading", Format.Size(totalBytes), _sizeCalcFraction)
+                : hasUncalculated
+                    ? Loc.Get("BrowseTotalSizePartial", Format.Size(totalBytes))
+                    : Loc.Get("BrowseTotalSize", Format.Size(totalBytes));
         }
         else
         {
@@ -740,12 +797,27 @@ public partial class BrowseView : UserControl
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite
                                | NotifyFilters.Size | NotifyFilters.Attributes
             };
-            FileSystemEventHandler changed = (_, _) => ScheduleReload();
+            FileSystemEventHandler changed = (_, e) =>
+            {
+                SizeCache.Invalidate(e.FullPath);
+                SizeCache.Invalidate(folder);
+                ScheduleReload();
+            };
             watcher.Created += changed;
             watcher.Deleted += changed;
             watcher.Changed += changed;
-            watcher.Renamed += (_, _) => ScheduleReload();
-            watcher.Error += (_, _) => ScheduleReload(); // buffer overflow: just read the folder again
+            watcher.Renamed += (_, e) =>
+            {
+                SizeCache.Invalidate(e.OldFullPath);
+                SizeCache.Invalidate(e.FullPath);
+                SizeCache.Invalidate(folder);
+                ScheduleReload();
+            };
+            watcher.Error += (_, _) =>
+            {
+                SizeCache.InvalidateChildrenOf(folder);
+                ScheduleReload();
+            }; // buffer overflow: just read the folder again
             watcher.EnableRaisingEvents = true;
             _watcher = watcher;
         }
@@ -975,7 +1047,7 @@ public partial class BrowseView : UserControl
     {
         if (path == ThisPc)
             return [!InFolder
-                ? Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))
+                ? Item("BrowseRefresh", () => _ = ReloadAsync(clearSizeCache: true), new KeyGesture(Key.F5))
                 : Item("ContextMenuOpen", () => _ = NavigateAsync(ThisPc))];
 
         if (string.Equals(path, CurrentFolder, PathUtil.Comparison))
@@ -1003,6 +1075,7 @@ public partial class BrowseView : UserControl
         menu.Add(new Separator());
         if (ClipboardHasFiles())
             menu.Add(Item("BrowsePasteInto", () => Paste(folder)));
+        menu.Add(Item("ContextMenuCopyPath", () => _ = CopySinglePathAsync(folder, quoted: false)));
         menu.Add(Item("BrowseCopyPath", () => _ = CopySinglePathAsync(folder)));
 
         menu.Add(new Separator());
@@ -1030,11 +1103,11 @@ public partial class BrowseView : UserControl
         if (items.Count > 0) new ContextMenu { ItemsSource = items }.Open(target);
     }
 
-    private async Task CopySinglePathAsync(string path)
+    private async Task CopySinglePathAsync(string path, bool quoted = true)
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard is null) return;
-        await clipboard.SetTextAsync($"\"{path}\"");
+        await clipboard.SetTextAsync(quoted ? $"\"{path}\"" : path);
         SetMessage(() => Loc.Get("PathCopied"));
     }
 
@@ -1288,7 +1361,7 @@ public partial class BrowseView : UserControl
             Key.Right when alt => GoForwardAsync,
             Key.BrowserForward => GoForwardAsync,
             Key.Up when alt => GoUpAsync,
-            Key.F5 or Key.BrowserRefresh => ReloadAsync,
+            Key.F5 or Key.BrowserRefresh => () => ReloadAsync(clearSizeCache: true),
             Key.L when ctrl => Do(BeginEditAddress),
             Key.D when ctrl && !InZip && (SingleSelected is { IsDirectory: true } || InFolder) =>
                 Do(() => ToggleFavorite(SingleSelected is { IsDirectory: true } dir ? dir.FullPath : CurrentFolder)),
@@ -1420,7 +1493,16 @@ public partial class BrowseView : UserControl
                     menu.Add(Item("ContextMenuOpenWith", () => Report(Shell?.OpenWithDialog(single.FullPath), "FileOpenFailed")));
             }
         }
-        if (!InFolder) return menu; // drives in This PC: just open them
+        if (!InFolder)
+        {
+            if (single is not null)
+            {
+                menu.Add(new Separator());
+                menu.Add(Item("ContextMenuCopyPath", () => _ = CopyPathsAsync(quoted: false)));
+                menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
+            }
+            return menu; // drives in This PC: open or copy path
+        }
         if (InZip)
         {
             if (ZipBrowsePath.TrySplit(CurrentFolder!, out var archivePath, out _))
@@ -1430,6 +1512,7 @@ public partial class BrowseView : UserControl
                 menu.Add(Item("ContextMenuExtractTo", () => StartJob("--extract-to", [archivePath])));
             }
             menu.Add(new Separator());
+            menu.Add(Item("ContextMenuCopyPath", () => _ = CopyPathsAsync(quoted: false)));
             menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
             return menu;
         }
@@ -1439,6 +1522,7 @@ public partial class BrowseView : UserControl
         menu.Add(Item("BrowseCopy", () => PutOnClipboard(cut: false), new KeyGesture(Key.C, KeyModifiers.Control)));
         if (single is { IsDirectory: true } && ClipboardHasFiles())
             menu.Add(Item("BrowsePasteInto", () => Paste(single.FullPath)));
+        menu.Add(Item("ContextMenuCopyPath", () => _ = CopyPathsAsync(quoted: false)));
         menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
         if (selection.Any(r => r.IsDirectory))
             menu.Add(Item("BrowseCalculateSizes", () => _ = CalculateFolderSizesAsync(forceFull: true, selection.Where(r => r.IsDirectory).Select(r => r.Entry).ToList()), new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift)));
@@ -1482,12 +1566,12 @@ public partial class BrowseView : UserControl
 
     private List<Control> BackgroundMenu()
     {
-        if (!InFolder) return [Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))];
+        if (!InFolder) return [Item("BrowseRefresh", () => _ = ReloadAsync(clearSizeCache: true), new KeyGesture(Key.F5))];
         if (InZip)
         {
             var zipMenu = new List<Control>
             {
-                Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5))
+                Item("BrowseRefresh", () => _ = ReloadAsync(clearSizeCache: true), new KeyGesture(Key.F5))
             };
             if (ZipBrowsePath.TrySplit(CurrentFolder!, out var archivePath, out _))
             {
@@ -1496,6 +1580,7 @@ public partial class BrowseView : UserControl
                 zipMenu.Add(Item("ContextMenuExtractTo", () => StartJob("--extract-to", [archivePath])));
             }
             zipMenu.Add(new Separator());
+            zipMenu.Add(Item("ContextMenuCopyPath", () => _ = CopyPathsAsync(quoted: false)));
             zipMenu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
             return zipMenu;
         }
@@ -1505,7 +1590,7 @@ public partial class BrowseView : UserControl
         if (ClipboardHasFiles())
             menu.Add(Item("BrowsePaste", () => _ = PasteAsync(folder), new KeyGesture(Key.V, KeyModifiers.Control)));
         menu.Add(Item("BrowseNewFolder", NewFolder, new KeyGesture(Key.N, KeyModifiers.Control | KeyModifiers.Shift)));
-        menu.Add(Item("BrowseRefresh", () => _ = ReloadAsync(), new KeyGesture(Key.F5)));
+        menu.Add(Item("BrowseRefresh", () => _ = ReloadAsync(clearSizeCache: true), new KeyGesture(Key.F5)));
 
         menu.Add(new Separator());
         var favKey = _bookmarks.IsFavorite(folder) ? "BrowseRemoveFavorite" : "BrowseAddFavorite";
@@ -1514,6 +1599,7 @@ public partial class BrowseView : UserControl
         if (_entries.Any(e => e.IsDirectory))
             menu.Add(Item("BrowseCalculateSizes", () => _ = CalculateFolderSizesAsync(forceFull: true), new KeyGesture(Key.S, KeyModifiers.Control | KeyModifiers.Shift)));
         menu.Add(Item("ContextMenuOrganize", () => OrganizeRequested?.Invoke(folder)));
+        menu.Add(Item("ContextMenuCopyPath", () => _ = CopyPathsAsync(quoted: false)));
         menu.Add(Item("BrowseCopyPath", () => _ = CopyPathsAsync(), new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift)));
 
         menu.Add(new Separator());
@@ -1600,6 +1686,7 @@ public partial class BrowseView : UserControl
             SetMessage(() => Loc.Get("JobClipboardEmpty"));
             return;
         }
+        SizeCache.Invalidate(destination);
         StartJob("--paste", [destination]);
     }
 
@@ -1628,6 +1715,8 @@ public partial class BrowseView : UserControl
                 bitmap.Save(stream);
             });
             SessionTrail.Note($"Pasted clipboard image as {path}");
+            SizeCache.Invalidate(path);
+            SizeCache.Invalidate(destination);
             _selectAfterLoad = path;
             FilterBox.Text = "";
             var saved = Path.GetFileName(path);
@@ -1644,7 +1733,9 @@ public partial class BrowseView : UserControl
         }
     }
 
-    private async Task CopyPathsAsync()
+    private Task CopyPathsAsync() => CopyPathsAsync(quoted: true);
+
+    private async Task CopyPathsAsync(bool quoted)
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard is null) return;
@@ -1652,7 +1743,8 @@ public partial class BrowseView : UserControl
         var paths = SelectedRows.Select(r => r.FullPath).ToList();
         if (paths.Count == 0 && InFolder) paths.Add(CurrentFolder!);
         // Quoted like Explorer's "Copy as path", so a path with spaces pastes into a terminal as one argument.
-        await clipboard.SetTextAsync(string.Join(Environment.NewLine, paths.Select(p => $"\"{p}\"")));
+        var formatted = quoted ? paths.Select(p => $"\"{p}\"") : paths;
+        await clipboard.SetTextAsync(string.Join(Environment.NewLine, formatted));
         SetMessage(() => Loc.Get("PathCopied"));
     }
 
@@ -1688,6 +1780,8 @@ public partial class BrowseView : UserControl
         if (removed.Count == 0) return;
 
         foreach (var path in removed) _bookmarks.Forget(path);
+        SizeCache.InvalidateMany(removed);
+        SizeCache.Invalidate(CurrentFolder!);
         SaveBookmarks();
         FillBookmarks();
         if (CurrentFolder is { } cur) SelectPlace(cur);
@@ -1708,6 +1802,8 @@ public partial class BrowseView : UserControl
         try
         {
             var path = FileNames.CreateFolder(CurrentFolder!, Loc.Get("BrowseNewFolderName"));
+            SizeCache.Invalidate(path);
+            SizeCache.Invalidate(CurrentFolder!);
             _undo.Push(new CreatedFolderAction(path));
             _selectAfterLoad = path;
             _renameAfterLoad = true;
@@ -1731,9 +1827,12 @@ public partial class BrowseView : UserControl
                 return;
             case UndoOutcome.Done:
                 var path = result.Path!;
+                SizeCache.Invalidate(path);
+                if (CurrentFolder is { } curFolder) SizeCache.Invalidate(curFolder);
                 var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
                 if (result.Action is RenamedAction renamed)
                 {
+                    SizeCache.Invalidate(renamed.NewPath);
                     if (Directory.Exists(path))
                     {
                         _history.Forget(renamed.NewPath);
@@ -1865,6 +1964,9 @@ public partial class BrowseView : UserControl
         switch (result.Outcome)
         {
             case RenameOutcome.Renamed:
+                SizeCache.Invalidate(row.FullPath);
+                SizeCache.Invalidate(result.Path);
+                if (CurrentFolder is { } curFolder) SizeCache.Invalidate(curFolder);
                 _undo.Push(new RenamedAction(row.FullPath, result.Path));
                 if (row.IsDirectory)
                 {

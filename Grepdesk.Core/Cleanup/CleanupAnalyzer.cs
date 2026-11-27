@@ -39,7 +39,7 @@ public static class CleanupAnalyzer
 
     /// <param name="classify">Classification of a full path; defaults to <see cref="DiskClassifier.ClassifyDetailed"/>.</param>
     public static List<CleanupSuggestion> Analyze(FileIndex index, string root, CleanupContext ctx, CancellationToken ct,
-        Func<string, Classification>? classify = null)
+        Func<string, Classification>? classify = null, Action<double>? onProgress = null)
     {
         classify ??= DiskClassifier.ClassifyDetailed;
         var sep = Path.DirectorySeparatorChar;
@@ -60,10 +60,15 @@ public static class CleanupAnalyzer
         var largeOld = new List<CleanupItem>();
         CleanupItem? hibernation = null;
 
+        var totalEntries = Math.Max(1, index.Count);
         var scanned = 0;
         foreach (var (path, e) in index.Entries)
         {
-            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+            if ((++scanned & 0x3FFF) == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                onProgress?.Invoke(Math.Clamp((double)scanned / totalEntries, 0.0, 1.0));
+            }
             if (e.IsDirectory || e.IsCloudOnly || !path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) continue;
 
             // Temp: grouped by the temp folder's direct children (an installer's

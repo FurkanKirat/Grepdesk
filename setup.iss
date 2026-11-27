@@ -75,6 +75,9 @@ Root: HKCU; Subkey: "Software\Classes\*\shell\GrepdeskCompress"; Flags: dontcrea
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskCompress"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskPaste"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\GrepdeskCopyPath"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\GrepdeskCopyPath"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\*\shell\GrepdeskCopyPath"; Flags: dontcreatekey uninsdeletekey
 ; "Birlikte aç" kaydı: dosya türü ve uygulama anahtarı. Uzantıların altına dağılan
 ; kayıtları (varsayılan uygulama seçimi dahil) [UninstallRun]'daki --unregister siler.
 Root: HKCU; Subkey: "Software\Classes\Grepdesk.File"; Flags: dontcreatekey uninsdeletekey

@@ -9,6 +9,8 @@ using Grepdesk.Core.Browse;
 
 namespace Grepdesk.Core;
 
+public readonly record struct IndexProgress(int IndexedFiles, double Fraction);
+
 public class FileIndex : IDisposable
 {
     // path → lowercase name (for fast search) plus the metadata needed to sort
@@ -26,6 +28,7 @@ public class FileIndex : IDisposable
     internal IEnumerable<KeyValuePair<string, IndexEntry>> Entries => _index;
 
     public event Action<int>? ProgressChanged;   // indexed count
+    public event Action<IndexProgress>? ScanProgressChanged;
     public event Action? IndexingComplete;
 
     // Drives to skip — these cause hangs or are irrelevant
@@ -56,16 +59,18 @@ public class FileIndex : IDisposable
             foreach (var root in rootList)
                 TryAdd(new DirectoryInfo(root));
 
+            var expectedBytes = ComputeExpectedBytes(rootList);
             await Task.Run(() =>
             {
-                ParallelIndex(rootList, ct);
-                ComputeFolderSizes(ct);
+                ParallelIndex(rootList, expectedBytes, ct);
+                ComputeFolderSizes(ct, _index.Count);
             }, ct);
 
             if (!ct.IsCancellationRequested)
             {
                 if (watch)
                     StartWatchers(rootList);
+                ScanProgressChanged?.Invoke(new IndexProgress(_index.Count, 1.0));
                 IndexingComplete?.Invoke();
             }
         }
@@ -75,16 +80,83 @@ public class FileIndex : IDisposable
         }
     }
 
-    private void ParallelIndex(List<string> roots, CancellationToken ct)
+    private static long ComputeExpectedBytes(List<string> roots)
     {
-        var queue = new ConcurrentQueue<string>(roots);
+        if (roots.Count == 0) return 0;
+        long total = 0;
+        foreach (var root in roots)
+        {
+            var pathRoot = Path.GetPathRoot(root);
+            if (pathRoot is null) return 0;
+            var normalizedRoot = Path.TrimEndingDirectorySeparator(pathRoot);
+            if (!string.Equals(root, pathRoot, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(root, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                return 0;
+
+            try
+            {
+                var drive = new DriveInfo(root);
+                if (!drive.IsReady) continue;
+                total += Math.Max(0, drive.TotalSize - drive.AvailableFreeSpace);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return total;
+    }
+
+    private void ParallelIndex(List<string> roots, long expectedBytes, CancellationToken ct)
+    {
+        const long TotalWeight = 1_000_000_000_000L;
+        var queue = new ConcurrentQueue<(string Dir, long Weight)>();
+        if (roots.Count > 0)
+        {
+            var perRoot = TotalWeight / roots.Count;
+            var remainder = TotalWeight - perRoot * roots.Count;
+            for (var i = 0; i < roots.Count; i++)
+                queue.Enqueue((roots[i], perRoot + (i == 0 ? remainder : 0)));
+        }
+
         var threads = Math.Max(2, Environment.ProcessorCount - 1);
         long reported = 0;
+        long completedWeight = 0;
+        long scannedBytes = 0;
+        long lastReportTick = 0;
+        long maxFractionBits = 0;
 
         // Folders queued or still being listed. The scan is over only when this
         // reaches zero: an empty queue alone just means every worker is busy
         // listing a big folder whose subfolders haven't been queued yet.
         long pending = roots.Count;
+
+        double ClampMonotonic(double value)
+        {
+            while (true)
+            {
+                var curBits = Volatile.Read(ref maxFractionBits);
+                var cur = BitConverter.Int64BitsToDouble(curBits);
+                if (value <= cur) return cur;
+                var newBits = BitConverter.DoubleToInt64Bits(value);
+                if (Interlocked.CompareExchange(ref maxFractionBits, newBits, curBits) == curBits)
+                    return value;
+            }
+        }
+
+        void MaybeReport(long count, bool force = false)
+        {
+            var now = Environment.TickCount64;
+            var prev = Volatile.Read(ref lastReportTick);
+            if (!force && now - prev < 120) return;
+            if (Interlocked.CompareExchange(ref lastReportTick, now, prev) != prev && !force) return;
+
+            var treeFrac = Math.Clamp((double)Volatile.Read(ref completedWeight) / TotalWeight, 0.0, 1.0);
+            var raw = expectedBytes > 0
+                ? 0.65 * Math.Min(1.0, (double)Volatile.Read(ref scannedBytes) / expectedBytes) + 0.35 * treeFrac
+                : treeFrac;
+            var fraction = ClampMonotonic(Math.Clamp(raw * 0.95, 0.0, 0.95));
+            ProgressChanged?.Invoke((int)count);
+            ScanProgressChanged?.Invoke(new IndexProgress((int)count, fraction));
+        }
 
         // NoBuffering: each worker takes one folder at a time, so no folder sits
         // in a worker's private buffer while the queue looks finished.
@@ -94,15 +166,19 @@ public class FileIndex : IDisposable
         Parallel.ForEach(
             source,
             new ParallelOptions { MaxDegreeOfParallelism = threads, CancellationToken = ct },
-            dir =>
+            item =>
             {
+                var (dir, weight) = item;
+                List<string>? subDirs = null;
+                long dirBytes = 0;
                 try
                 {
                     // One enumeration gives both files and subfolders, and the
                     // OS returns size and timestamps with each entry for free.
                     foreach (var info in new DirectoryInfo(dir).EnumerateFileSystemInfos())
                     {
-                        _index[info.FullName] = IndexEntry.From(info);
+                        var entry = IndexEntry.From(info);
+                        _index[info.FullName] = entry;
 
                         if (info is DirectoryInfo)
                         {
@@ -112,21 +188,44 @@ public class FileIndex : IDisposable
                             if (info.Attributes.HasFlag(FileAttributes.ReparsePoint) && info.LinkTarget is not null)
                                 continue;
 
-                            Interlocked.Increment(ref pending);
-                            queue.Enqueue(info.FullName);
+                            subDirs ??= [];
+                            subDirs.Add(info.FullName);
                             continue;
                         }
 
+                        if (!entry.IsCloudOnly && entry.Size > 0)
+                            dirBytes += entry.Size;
+
                         var count = Interlocked.Increment(ref reported);
-                        if (count % 5000 == 0)
-                            ProgressChanged?.Invoke((int)count);
+                        if ((count & 0x3FF) == 0)
+                            MaybeReport(count);
                     }
                 }
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
                 finally
                 {
+                    if (subDirs is { Count: > 0 })
+                    {
+                        var childWeight = weight / (subDirs.Count + 1);
+                        var selfWeight = weight - childWeight * subDirs.Count;
+                        foreach (var sub in subDirs)
+                        {
+                            Interlocked.Increment(ref pending);
+                            queue.Enqueue((sub, childWeight));
+                        }
+                        Interlocked.Add(ref completedWeight, selfWeight);
+                    }
+                    else
+                    {
+                        Interlocked.Add(ref completedWeight, weight);
+                    }
+
+                    if (dirBytes > 0)
+                        Interlocked.Add(ref scannedBytes, dirBytes);
+
                     Interlocked.Decrement(ref pending);
+                    MaybeReport(Volatile.Read(ref reported));
                 }
             });
     }
@@ -138,7 +237,7 @@ public class FileIndex : IDisposable
     /// is complete before it is added to the folder above.
     /// Totals are as of the scan; the watchers keep names current, not sizes.
     /// </summary>
-    private void ComputeFolderSizes(CancellationToken ct)
+    private void ComputeFolderSizes(CancellationToken ct, int indexedFiles)
     {
         var totals = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
@@ -155,9 +254,11 @@ public class FileIndex : IDisposable
             .OrderByDescending(p => p.Length)
             .ToList();
 
-        foreach (var folder in folders)
+        var lastReport = Environment.TickCount64;
+        for (var i = 0; i < folders.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
+            var folder = folders[i];
 
             var total = totals.GetValueOrDefault(folder);
             if (_index.TryGetValue(folder, out var entry))
@@ -165,6 +266,16 @@ public class FileIndex : IDisposable
 
             if (total > 0 && Path.GetDirectoryName(folder) is { } parent && _index.ContainsKey(parent))
                 totals[parent] = totals.GetValueOrDefault(parent) + total;
+
+            if ((i & 0xFFF) == 0 && folders.Count > 0)
+            {
+                var now = Environment.TickCount64;
+                if (now - lastReport >= 120)
+                {
+                    lastReport = now;
+                    ScanProgressChanged?.Invoke(new IndexProgress(indexedFiles, 0.95 + 0.04 * (i + 1) / folders.Count));
+                }
+            }
         }
     }
 
@@ -215,8 +326,8 @@ public class FileIndex : IDisposable
         var comparer = StringComparer.OrdinalIgnoreCase;
         var sep = Path.DirectorySeparatorChar;
 
-        var gone = new HashSet<string>(removed.Select(p => Path.TrimEndingDirectorySeparator(p)), comparer);
-        var cleared = emptied.Select(p => Path.TrimEndingDirectorySeparator(p)).ToList();
+        var gone = new HashSet<string>(removed.Select(PathUtil.Normalize), comparer);
+        var cleared = emptied.Select(PathUtil.Normalize).ToList();
         if (gone.Count == 0 && cleared.Count == 0) return;
 
         // "C:\a\"-style prefixes. Sorted, a nested prefix comes right after its
@@ -231,23 +342,47 @@ public class FileIndex : IDisposable
         }
         var sorted = prefixes.ToArray();
 
+        var removedBytesByParent = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        void RecordRemoved(string path, IndexEntry entry)
+        {
+            if (!entry.IsDirectory && !entry.IsCloudOnly && entry.Size > 0 && Path.GetDirectoryName(path) is { } parent)
+                removedBytesByParent[parent] = removedBytesByParent.GetValueOrDefault(parent) + entry.Size;
+        }
+
         var scanned = 0;
         foreach (var key in _index.Keys)
         {
             if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
 
-            if (gone.Contains(key)) { _index.TryRemove(key, out _); continue; }
+            if (gone.Contains(key))
+            {
+                if (_index.TryRemove(key, out var entry)) RecordRemoved(key, entry);
+                continue;
+            }
 
             // With disjoint prefixes, only the greatest prefix <= key can be an ancestor of it.
             var i = Array.BinarySearch(sorted, key, comparer);
             if (i < 0) i = ~i - 1;
             if (i >= 0 && key.Length > sorted[i].Length && key.StartsWith(sorted[i], StringComparison.OrdinalIgnoreCase))
-                _index.TryRemove(key, out _);
+            {
+                if (_index.TryRemove(key, out var entry)) RecordRemoved(key, entry);
+            }
+        }
+
+        foreach (var (dir, bytes) in removedBytesByParent)
+        {
+            var cur = dir;
+            while (cur is not null)
+            {
+                if (_index.TryGetValue(cur, out var folderEntry) && folderEntry.IsDirectory)
+                    _index[cur] = folderEntry with { Size = Math.Max(0, folderEntry.Size - bytes) };
+                cur = Path.GetDirectoryName(cur);
+            }
         }
     }
 
     // Yields folders from the queue until it is empty and no folder is still being listed.
-    private static IEnumerable<string> PartitionQueue(ConcurrentQueue<string> queue, Func<bool> finished, CancellationToken ct)
+    private static IEnumerable<(string Dir, long Weight)> PartitionQueue(ConcurrentQueue<(string Dir, long Weight)> queue, Func<bool> finished, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -347,7 +482,26 @@ public class FileIndex : IDisposable
 
                 w.Created += (_, e) => TryAdd(e.FullPath);
                 w.Changed += (_, e) => { if (_index.ContainsKey(e.FullPath)) TryAdd(e.FullPath); };
-                w.Deleted += (_, e) => _index.TryRemove(e.FullPath, out var _unused1);
+                w.Deleted += (_, e) =>
+                {
+                    if (_index.TryGetValue(e.FullPath, out var existing))
+                    {
+                        if (existing.IsDirectory)
+                        {
+                            Remove(e.FullPath);
+                        }
+                        else if (_index.TryRemove(e.FullPath, out var removed) && !removed.IsCloudOnly && removed.Size > 0)
+                        {
+                            var cur = Path.GetDirectoryName(e.FullPath);
+                            while (cur is not null)
+                            {
+                                if (_index.TryGetValue(cur, out var folderEntry) && folderEntry.IsDirectory)
+                                    _index[cur] = folderEntry with { Size = Math.Max(0, folderEntry.Size - removed.Size) };
+                                cur = Path.GetDirectoryName(cur);
+                            }
+                        }
+                    }
+                };
                 w.Renamed += (_, e) =>
                 {
                     _index.TryRemove(e.OldFullPath, out var _unused2);

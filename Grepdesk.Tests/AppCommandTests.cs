@@ -73,4 +73,16 @@ public class AppCommandTests
         Assert.Equal(command.Paths, AppCommand.Deserialize(command.Serialize())!.Paths);
         Assert.Equal(command.Kind, AppCommand.Deserialize(command.Serialize())!.Kind);
     }
+
+    [WindowsFact]
+    public void Copy_path_flag_parses_paths_and_cleans_drive_roots()
+    {
+        var command = AppCommand.Parse(["--copy-path", "D:\"", @"C:\Users\x\file.txt"]);
+
+        Assert.Equal(CommandKind.CopyPath, command.Kind);
+        Assert.True(command.IsJob);
+        Assert.Equal(2, command.Paths.Count);
+        Assert.Equal(@"D:\", command.Paths[0]);
+        Assert.Equal(@"C:\Users\x\file.txt", command.Paths[1]);
+    }
 }

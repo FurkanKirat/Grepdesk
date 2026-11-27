@@ -58,6 +58,10 @@ public class LinuxShellIntegration : IShellIntegration
         [ShellFeature.Paste] =
         [
             new("paste", "MenuPaste", "--paste", "inode/directory;", new NemoTarget(true, "s", "dir;"))
+        ],
+        [ShellFeature.CopyPath] =
+        [
+            new("copy-path", "MenuCopyPath", "--copy-path", "all/all;inode/directory;", new NemoTarget(true, "any", "any;"))
         ]
     };
 
@@ -148,6 +152,22 @@ public class LinuxShellIntegration : IShellIntegration
     {
         // Selected files arrive as arguments; with nothing selected the script
         // runs in the folder being viewed, which is where "open"/"paste" should act.
+        if (feature == ShellFeature.CopyPath)
+        {
+            var copyContent = $"""
+                #!/bin/sh
+                {ScriptMarker}{feature}
+                if [ $# -gt 0 ]; then
+                    exec {ShellQuote(exe)} {verb.Flag} "$@"
+                else
+                    exec {ShellQuote(exe)} {verb.Flag} "$PWD"
+                fi
+
+                """;
+            WriteExecutable(Path.Combine(NautilusDir, SafeFileName(label)), copyContent);
+            return;
+        }
+
         var arguments = feature is ShellFeature.OpenWith or ShellFeature.Paste ? "\"${1:-$PWD}\"" : "\"$@\"";
         var flag = verb.Flag.Length > 0 ? verb.Flag + " " : "";
         var content = $"""

@@ -50,7 +50,7 @@ public static class DiskAnalyzer
     /// </summary>
     /// <param name="classify">Classification of a full path; defaults to <see cref="DiskClassifier.ClassifyDetailed"/>.</param>
     public static DiskReport Analyze(FileIndex index, string root, int largestPerCategory, CancellationToken ct,
-        Func<string, Classification>? classify = null)
+        Func<string, Classification>? classify = null, Action<double>? onProgress = null)
     {
         classify ??= DiskClassifier.ClassifyDetailed;
         var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
@@ -74,10 +74,15 @@ public static class DiskAnalyzer
             .Select(_ => new PriorityQueue<SearchResult, long>(largestPerCategory + 1))
             .ToArray();
 
+        var totalEntries = Math.Max(1, index.Count);
         var scanned = 0;
         foreach (var (path, e) in index.Entries)
         {
-            if ((++scanned & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
+            if ((++scanned & 0x3FFF) == 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                onProgress?.Invoke(Math.Clamp((double)scanned / totalEntries, 0.0, 1.0));
+            }
             if (e.IsDirectory || !path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
 
             if (e.IsCloudOnly)

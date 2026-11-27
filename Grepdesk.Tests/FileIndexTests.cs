@@ -103,4 +103,51 @@ public class FileIndexTests
         Assert.Single(filtered);
         Assert.Equal("notes.txt", filtered[0].FileName);
     }
+
+    [Fact]
+    public async Task ScanProgressChanged_reports_monotonic_fraction_ending_at_one()
+    {
+        using var tmp = new TempDir();
+        for (var i = 0; i < 10; i++)
+            tmp.WriteFile($"sub{i}/file{i}.txt", "hello");
+
+        var index = new FileIndex();
+        var fractions = new List<double>();
+        index.ScanProgressChanged += p => fractions.Add(p.Fraction);
+
+        await index.BuildIndexAsync([tmp.Path]);
+
+        Assert.NotEmpty(fractions);
+        Assert.Equal(1.0, fractions[^1]);
+        for (var i = 1; i < fractions.Count; i++)
+            Assert.True(fractions[i] >= fractions[i - 1], $"Fraction decreased at {i}: {fractions[i - 1]} -> {fractions[i]}");
+    }
+
+    [Fact]
+    public async Task Remove_and_RemoveMany_decrement_ancestor_folder_sizes()
+    {
+        using var tmp = new TempDir();
+        var f1 = tmp.WriteFile("a/b/one.bin", new string('x', 100));
+        tmp.WriteFile("a/b/two.bin", new string('x', 250));
+        tmp.WriteFile("a/c/three.bin", new string('x', 400));
+
+        var index = await Build(tmp);
+        Assert.Equal(750, Find(index, tmp.Path).Size);
+        Assert.Equal(750, Find(index, tmp.Combine("a")).Size);
+        Assert.Equal(350, Find(index, tmp.Combine("a", "b")).Size);
+
+        index.Remove(f1);
+        Assert.Equal(650, Find(index, tmp.Path).Size);
+        Assert.Equal(650, Find(index, tmp.Combine("a")).Size);
+        Assert.Equal(250, Find(index, tmp.Combine("a", "b")).Size);
+
+        index.RemoveMany([tmp.Combine("a", "c")], []);
+        Assert.Equal(250, Find(index, tmp.Path).Size);
+        Assert.Equal(250, Find(index, tmp.Combine("a")).Size);
+
+        index.RemoveMany([], [tmp.Combine("a", "b")]);
+        Assert.Equal(0, Find(index, tmp.Path).Size);
+        Assert.Equal(0, Find(index, tmp.Combine("a")).Size);
+        Assert.Equal(0, Find(index, tmp.Combine("a", "b")).Size);
+    }
 }

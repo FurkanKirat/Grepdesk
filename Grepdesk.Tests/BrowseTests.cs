@@ -61,6 +61,48 @@ public class BrowseTests
     }
 
     [Fact]
+    public void TryGetFolderSize_reports_monotonic_progress_fraction()
+    {
+        using var dir = new TempDir();
+        dir.WriteFile(Path.Combine("sub", "a.txt"), "hello");
+        dir.WriteFile(Path.Combine("sub", "nested", "b.txt"), "world!");
+
+        var fractions = new List<double>();
+        var res = FolderListing.TryGetFolderSize(dir.Combine("sub"), long.MaxValue, int.MaxValue, CancellationToken.None, p => fractions.Add(p.Fraction));
+
+        Assert.True(res.Complete);
+        Assert.Equal(11, res.Size);
+        for (var i = 1; i < fractions.Count; i++)
+            Assert.True(fractions[i] >= fractions[i - 1]);
+    }
+
+    [Fact]
+    public void FolderSizeCache_invalidates_ancestors_descendants_and_stale_timestamps()
+    {
+        using var dir = new TempDir();
+        var parent = dir.Combine("parent");
+        var child = Path.Combine(parent, "child");
+        var sibling = dir.Combine("sibling");
+        var t1 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var t2 = t1.AddMinutes(5);
+
+        var cache = new FolderSizeCache();
+        cache.Set(dir.Path, 1000, t1);
+        cache.Set(parent, 600, t1);
+        cache.Set(child, 200, t1);
+        cache.Set(sibling, 400, t1);
+
+        Assert.True(cache.TryGet(parent, t1, out var s1) && s1 == 600);
+        Assert.False(cache.TryGet(parent, t2, out _)); // timestamp changed
+
+        cache.Invalidate(child);
+        Assert.False(cache.TryGet(child, t1, out _));
+        Assert.False(cache.TryGet(parent, t1, out _));
+        Assert.False(cache.TryGet(dir.Path, t1, out _));
+        Assert.True(cache.TryGet(sibling, t1, out var s2) && s2 == 400);
+    }
+
+    [Fact]
     public void Hidden_files_are_listed_only_when_asked()
     {
         if (!OperatingSystem.IsWindows()) return; // "hidden" is an attribute on Windows, a leading dot elsewhere

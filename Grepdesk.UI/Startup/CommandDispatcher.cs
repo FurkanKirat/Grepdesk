@@ -23,7 +23,20 @@ internal sealed class CommandDispatcher
     {
         _desktop = desktop;
         _host = host;
-        _jobs = new JobDispatcher(TrackAndShow);
+        _jobs = new JobDispatcher(TrackAndShow, HandleCopyPath);
+    }
+
+    private void HandleCopyPath(IReadOnlyList<string> paths)
+    {
+        if (paths.Count > 0)
+        {
+            var text = string.Join(Environment.NewLine, paths);
+            var ok = Helpers.PlatformShellFactory.CreateFileClipboard()?.SetText(text) ?? false;
+            if (!ok && _mainWindows.LastOrDefault()?.Clipboard is { } clipboard)
+                _ = clipboard.SetTextAsync(text);
+            SessionTrail.Note($"copy-path: {paths.Count} path(s)");
+        }
+        ShutdownIfIdle();
     }
 
     public void Start(AppCommand first)

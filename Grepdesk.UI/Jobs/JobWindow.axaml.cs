@@ -154,6 +154,8 @@ public partial class JobWindow : Window
         var stats = Loc.Get("JobStats",
             snap.DoneFiles.ToString("N0"), snap.TotalFiles.ToString("N0"),
             Format.Size(snap.DoneBytes), Format.Size(snap.TotalBytes));
+        if (!Bar.IsIndeterminate)
+            stats = $"{(_finished ? 1.0 : snap.Fraction):P0} · " + stats;
 
         if (!_finished && !_context.Pause.IsPaused && _bytesPerSecond > 0)
         {

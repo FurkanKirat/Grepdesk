@@ -36,6 +36,8 @@ public sealed record FolderSort(FolderSortColumn Column = FolderSortColumn.Name,
 
 public sealed record FolderSizeResult(long Size, bool Complete);
 
+public readonly record struct FolderSizeProgress(long Bytes, double Fraction);
+
 public static class FolderListing
 {
     /// <summary>Automatic folder-size calculation stops once a subfolder exceeds 1 GB or 5,000 entries.</summary>
@@ -112,8 +114,18 @@ public static class FolderListing
         long maxBytes = DefaultMaxAutoBytes,
         int maxEntries = DefaultMaxAutoEntries,
         CancellationToken ct = default,
-        Action<long>? onProgress = null)
+        Action<long>? onProgress = null) =>
+        TryGetFolderSize(folder, maxBytes, maxEntries, ct,
+            onProgress is null ? null : (Action<FolderSizeProgress>)(p => onProgress(p.Bytes)));
+
+    public static FolderSizeResult TryGetFolderSize(
+        string folder,
+        long maxBytes,
+        int maxEntries,
+        CancellationToken ct,
+        Action<FolderSizeProgress>? onProgress)
     {
+        const long TotalWeight = 1_000_000_000_000L;
         var bounded = maxBytes < long.MaxValue || maxEntries < int.MaxValue;
         if (bounded && IsKnownHugeFolder(folder))
             return new FolderSizeResult(0, Complete: false);
@@ -127,15 +139,16 @@ public static class FolderListing
         };
 
         long total = 0;
+        long completedWeight = 0;
         var entriesVisited = 0;
         var filesVisited = 0;
         var lastReport = Environment.TickCount64;
-        var pending = new Stack<DirectoryInfo>();
+        var pending = new Stack<(DirectoryInfo Dir, long Weight)>();
         try
         {
             var root = new DirectoryInfo(folder);
             if (!root.Exists) return new FolderSizeResult(0, Complete: true);
-            pending.Push(root);
+            pending.Push((root, TotalWeight));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -145,7 +158,8 @@ public static class FolderListing
         while (pending.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            var dir = pending.Pop();
+            var (dir, weight) = pending.Pop();
+            List<DirectoryInfo>? subDirs = null;
             try
             {
                 foreach (var info in dir.EnumerateFileSystemInfos("*", options))
@@ -164,13 +178,13 @@ public static class FolderListing
                             if (bounded && total > maxBytes)
                                 return new FolderSizeResult(total, Complete: false);
 
-                            if (onProgress is not null && (++filesVisited & 0xFFF) == 0)
+                            if (onProgress is not null && (++filesVisited & 0x3FF) == 0)
                             {
                                 var now = Environment.TickCount64;
                                 if (now - lastReport >= 100)
                                 {
                                     lastReport = now;
-                                    onProgress(total);
+                                    onProgress(new FolderSizeProgress(total, Math.Clamp((double)completedWeight / TotalWeight, 0.0, 0.99)));
                                 }
                             }
                         }
@@ -178,7 +192,8 @@ public static class FolderListing
                         {
                             if (sub.Attributes.HasFlag(FileAttributes.ReparsePoint) && sub.LinkTarget is not null)
                                 continue;
-                            pending.Push(sub);
+                            subDirs ??= [];
+                            subDirs.Add(sub);
                         }
                     }
                     catch (IOException) { }
@@ -187,6 +202,29 @@ public static class FolderListing
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+
+            if (subDirs is { Count: > 0 })
+            {
+                var childWeight = weight / (subDirs.Count + 1);
+                var selfWeight = weight - childWeight * subDirs.Count;
+                for (var i = subDirs.Count - 1; i >= 0; i--)
+                    pending.Push((subDirs[i], childWeight));
+                completedWeight += selfWeight;
+            }
+            else
+            {
+                completedWeight += weight;
+            }
+
+            if (onProgress is not null)
+            {
+                var now = Environment.TickCount64;
+                if (now - lastReport >= 100)
+                {
+                    lastReport = now;
+                    onProgress(new FolderSizeProgress(total, Math.Clamp((double)completedWeight / TotalWeight, 0.0, 0.99)));
+                }
+            }
         }
         return new FolderSizeResult(total, Complete: true);
     }

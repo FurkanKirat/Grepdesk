@@ -32,6 +32,7 @@ public partial class BrowsePane : UserControl
 
     public IPlatformShell? Shell { get; set; }
     public IReadOnlyList<AvailableEditor> Editors { get; set; } = [];
+    public FolderSizeCache SizeCache { get; set; } = new();
 
     public int TabCount => _tabs.Count;
     public int ActiveIndex => _activeIndex;
@@ -40,6 +41,7 @@ public partial class BrowsePane : UserControl
 
     public event Action<BrowsePane>? Activated;
     public event Action? SessionChanged;
+    public event Action<string?>? CurrentFolderChanged;
     public event Action<ResultItem>? ViewRequested;
     public event Action<ResultItem?>? SelectionFollowed;
     public event Action<string, string>? SearchRequested;
@@ -97,6 +99,7 @@ public partial class BrowsePane : UserControl
         {
             Shell = Shell,
             Editors = Editors,
+            SizeCache = SizeCache,
             IsVisible = false
         };
         view.SetPaneChrome(_showPlaces, _showPreview);
@@ -110,6 +113,8 @@ public partial class BrowsePane : UserControl
         {
             RebuildTabStrip();
             SessionChanged?.Invoke();
+            if (view == ActiveView)
+                CurrentFolderChanged?.Invoke(view.CurrentFolder);
         };
 
         _tabs.Add(view);
@@ -134,6 +139,7 @@ public partial class BrowsePane : UserControl
             _tabs[i].IsVisible = i == _activeIndex;
         RebuildTabStrip();
         SessionChanged?.Invoke();
+        CurrentFolderChanged?.Invoke(ActiveView?.CurrentFolder);
         ActiveView?.FocusList(selectFirst: false);
     }
 
@@ -161,8 +167,20 @@ public partial class BrowsePane : UserControl
             _tabs[i].IsVisible = i == _activeIndex;
         RebuildTabStrip();
         SessionChanged?.Invoke();
+        CurrentFolderChanged?.Invoke(ActiveView?.CurrentFolder);
         ActiveView?.FocusList(selectFirst: false);
         return true;
+    }
+
+    public void InvalidateVisibleReloads(IEnumerable<string> paths)
+    {
+        var pathList = paths.ToList();
+        foreach (var tab in _tabs)
+        {
+            if (tab.CurrentFolder is not { Length: > 0 } cur || ZipBrowsePath.IsZipPath(cur)) continue;
+            if (pathList.Any(p => PathUtil.IsSameOrInside(p, cur) || PathUtil.Comparer.Equals(p, cur)))
+                tab.RequestReload();
+        }
     }
 
     public bool CloseActiveTab() => CloseTab(_activeIndex);
@@ -230,6 +248,40 @@ public partial class BrowsePane : UserControl
                     e.Handled = true;
                 }
             };
+            tab.AddHandler(PointerReleasedEvent, (_, e) =>
+            {
+                if (e.InitialPressMouseButton != MouseButton.Right) return;
+                var menu = new List<Control>();
+                if (!string.IsNullOrEmpty(path))
+                {
+                    var copyPlain = new MenuItem { Header = Loc.Get("ContextMenuCopyPath"), Icon = MenuIcons.For("ContextMenuCopyPath") };
+                    copyPlain.Click += async (_, _) =>
+                    {
+                        if (TopLevel.GetTopLevel(this)?.Clipboard is { } cb)
+                            await cb.SetTextAsync(path);
+                    };
+                    var copyQuoted = new MenuItem { Header = Loc.Get("BrowseCopyPath"), Icon = MenuIcons.For("BrowseCopyPath") };
+                    copyQuoted.Click += async (_, _) =>
+                    {
+                        if (TopLevel.GetTopLevel(this)?.Clipboard is { } cb)
+                            await cb.SetTextAsync($"\"{path}\"");
+                    };
+                    menu.Add(copyPlain);
+                    menu.Add(copyQuoted);
+                    menu.Add(new Separator());
+                }
+                var dup = new MenuItem { Header = Loc.Get("BrowseOpenInNewTab") };
+                dup.Click += (_, _) => _ = AddTabAsync(path, select: true);
+                menu.Add(dup);
+                if (_tabs.Count > 1)
+                {
+                    var close = new MenuItem { Header = Loc.Get("BrowseCloseTab") };
+                    close.Click += (_, _) => CloseTab(idx);
+                    menu.Add(close);
+                }
+                new ContextMenu { ItemsSource = menu }.Open(tab);
+                e.Handled = true;
+            }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
             TabStrip.Children.Add(tab);
         }
     }

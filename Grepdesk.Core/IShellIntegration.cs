@@ -10,7 +10,9 @@ public enum ShellFeature
     /// <summary>"Compress with Grepdesk" on files and folders.</summary>
     Compress,
     /// <summary>"Paste with Grepdesk" on folders and folder backgrounds.</summary>
-    Paste
+    Paste,
+    /// <summary>"Copy path" on files, folders and folder backgrounds.</summary>
+    CopyPath
 }
 
 /// <summary>

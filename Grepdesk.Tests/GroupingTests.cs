@@ -215,4 +215,22 @@ public class GroupingTests
         Assert.Equal(TargetState.Invalid, FolderOrganizer.CheckTarget(tmp.Path, "*?"));
         Assert.Equal(TargetState.New, FolderOrganizer.CheckTarget(tmp.Path, "fresh"));
     }
+
+    [Fact]
+    public void ReadFolder_reports_monotonic_progress_ending_at_one()
+    {
+        using var tmp = new TempDir();
+        tmp.WriteFile("a.txt", "1");
+        tmp.WriteFile("b.txt", "2");
+        tmp.WriteFile("sub/c.txt", "3");
+
+        var fractions = new List<double>();
+        var members = FolderGrouper.ReadFolder(tmp.Path, CancellationToken.None, f => fractions.Add(f));
+
+        Assert.Equal(3, members.Count);
+        Assert.NotEmpty(fractions);
+        Assert.Equal(1.0, fractions[^1]);
+        for (var i = 1; i < fractions.Count; i++)
+            Assert.True(fractions[i] >= fractions[i - 1]);
+    }
 }

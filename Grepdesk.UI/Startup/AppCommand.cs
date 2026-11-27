@@ -17,7 +17,9 @@ public enum CommandKind
     /// <summary>Copy the paths (all but the last) into the folder given last: a drag and drop.</summary>
     Copy,
     /// <summary>Move the paths (all but the last) into the folder given last: a drag and drop.</summary>
-    Move
+    Move,
+    /// <summary>Copy path(s) to clipboard from OS context menu.</summary>
+    CopyPath
 }
 
 /// <summary>
@@ -47,6 +49,7 @@ public sealed record AppCommand(CommandKind Kind, IReadOnlyList<string> Paths, b
                 case "--paste": kind = CommandKind.Paste; hasJobFlag = true; break;
                 case "--copy-to": kind = CommandKind.Copy; hasJobFlag = true; break;
                 case "--move-to": kind = CommandKind.Move; hasJobFlag = true; break;
+                case "--copy-path": kind = CommandKind.CopyPath; hasJobFlag = true; break;
                 case "--benchmark": benchmark = true; break;
                 default:
                     if (CleanPath(arg) is { } path)

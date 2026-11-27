@@ -39,16 +39,25 @@ public static class ContentSearcher
     /// this one at all". Files with unsupported extensions are expected to
     /// already be filtered out by the caller before this runs.
     /// </summary>
-    public static async IAsyncEnumerable<ContentMatch> SearchAsync(
+    public static IAsyncEnumerable<ContentMatch> SearchAsync(
         IEnumerable<string> filePaths,
         string query,
         Action<SkippedFile>? onSkipped = null,
+        CancellationToken ct = default) =>
+        SearchAsync(filePaths, query, onSkipped, onFileScanned: null, ct);
+
+    public static async IAsyncEnumerable<ContentMatch> SearchAsync(
+        IEnumerable<string> filePaths,
+        string query,
+        Action<SkippedFile>? onSkipped,
+        Action<int>? onFileScanned,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query)) yield break;
 
         var channel = Channel.CreateUnbounded<ContentMatch>();
         using var semaphore = new SemaphoreSlim(MaxConcurrency);
+        var scanned = 0;
 
         var producer = Task.Run(async () =>
         {
@@ -76,7 +85,11 @@ public static class ContentSearcher
                         {
                             onSkipped?.Invoke(new SkippedFile(path, SkipReason.ExtractionFailed));
                         }
-                        finally { semaphore.Release(); }
+                        finally
+                        {
+                            onFileScanned?.Invoke(Interlocked.Increment(ref scanned));
+                            semaphore.Release();
+                        }
                     }, ct));
                 }
 

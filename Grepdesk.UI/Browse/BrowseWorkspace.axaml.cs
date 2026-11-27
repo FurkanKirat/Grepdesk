@@ -35,7 +35,14 @@ public partial class BrowseWorkspace : UserControl
     public BrowseView? ActiveView => _activePane.ActiveView ?? LeftPane.ActiveView;
     public TextBlock StatusLine => ActiveView?.StatusLine ?? _fallbackStatus;
     public PreviewPane PreviewPanel => ActiveView?.PreviewPanel ?? _fallbackPreview;
+    public FolderSizeCache SizeCache { get; } = new();
 
+    public string? CurrentFileSystemFolder =>
+        ActiveView?.CurrentFolder is { Length: > 0 } f && !ZipBrowsePath.IsZipPath(f) && Directory.Exists(f)
+            ? f
+            : null;
+
+    public event Action<string?>? CurrentFolderChanged;
     public event Action<ResultItem>? ViewRequested;
     public event Action<ResultItem?>? SelectionFollowed;
     public event Action<string, string>? SearchRequested;
@@ -46,6 +53,9 @@ public partial class BrowseWorkspace : UserControl
     {
         InitializeComponent();
         _activePane = LeftPane;
+
+        LeftPane.SizeCache = SizeCache;
+        RightPane.SizeCache = SizeCache;
 
         LeftPane.DualPaneButton.IsVisible = true;
         LeftPane.DualPaneButton.IsCheckedChanged += (_, _) =>
@@ -65,6 +75,7 @@ public partial class BrowseWorkspace : UserControl
     {
         pane.Activated += p => SetActivePane(p);
         pane.SessionChanged += () => { if (!_restoring) SaveSession(); };
+        pane.CurrentFolderChanged += _ => { if (pane == _activePane) CurrentFolderChanged?.Invoke(CurrentFileSystemFolder); };
         pane.ViewRequested += item => ViewRequested?.Invoke(item);
         pane.SelectionFollowed += item => SelectionFollowed?.Invoke(item);
         pane.SearchRequested += (f, q) => SearchRequested?.Invoke(f, q);
@@ -78,7 +89,17 @@ public partial class BrowseWorkspace : UserControl
         if (_activePane == pane) return;
         _activePane = pane;
         UpdateChrome();
+        CurrentFolderChanged?.Invoke(CurrentFileSystemFolder);
         if (!_restoring) SaveSession();
+    }
+
+    public void InvalidateFolderSizes(IEnumerable<string> paths)
+    {
+        var list = paths.ToList();
+        if (list.Count == 0) return;
+        SizeCache.InvalidateMany(list);
+        LeftPane.InvalidateVisibleReloads(list);
+        RightPane.InvalidateVisibleReloads(list);
     }
 
     private void UpdateChrome()

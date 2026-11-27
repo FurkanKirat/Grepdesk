@@ -48,6 +48,12 @@ public class WindowsShellIntegration : IShellIntegration
         [
             new(@"Directory\Background\shell", "GrepdeskPaste", "MenuPaste", "--paste \"%V\""),
             new(@"Directory\shell", "GrepdeskPaste", "MenuPaste", "--paste \"%1\"")
+        ],
+        [ShellFeature.CopyPath] =
+        [
+            new(@"Directory\Background\shell", "GrepdeskCopyPath", "MenuCopyPath", "--copy-path \"%V\""),
+            new(@"Directory\shell", "GrepdeskCopyPath", "MenuCopyPath", "--copy-path \"%1\"", MultiSelect: true),
+            new(@"*\shell", "GrepdeskCopyPath", "MenuCopyPath", "--copy-path \"%1\"", MultiSelect: true)
         ]
     };
 

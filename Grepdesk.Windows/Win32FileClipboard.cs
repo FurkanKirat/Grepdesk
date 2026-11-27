@@ -17,6 +17,7 @@ namespace Grepdesk.Windows;
 public sealed class Win32FileClipboard : IFileClipboard
 {
     private const uint CfHdrop = 15;
+    private const uint CfUnicodeText = 13;
     private const int DropEffectMove = 2;
 
     private static readonly uint PreferredDropEffect = RegisterClipboardFormatW("Preferred DropEffect");
@@ -93,6 +94,35 @@ public sealed class Win32FileClipboard : IFileClipboard
             }
             if (SetClipboardData(PreferredDropEffect, effect) == IntPtr.Zero)
                 GlobalFree(effect); // the files are on the clipboard; a missing hint just reads as a copy
+            return true;
+        }
+        finally
+        {
+            CloseClipboard();
+        }
+    }
+
+    public bool SetText(string text)
+    {
+        var handle = GlobalFrom((text.Length + 1) * 2, data =>
+        {
+            Marshal.Copy(text.ToCharArray(), 0, data, text.Length);
+            Marshal.WriteInt16(data, text.Length * 2, 0);
+        });
+        if (handle == IntPtr.Zero || !TryOpen(OwnerWindow()))
+        {
+            GlobalFree(handle);
+            return false;
+        }
+
+        try
+        {
+            EmptyClipboard();
+            if (SetClipboardData(CfUnicodeText, handle) == IntPtr.Zero)
+            {
+                GlobalFree(handle);
+                return false;
+            }
             return true;
         }
         finally

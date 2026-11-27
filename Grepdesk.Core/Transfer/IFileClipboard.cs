@@ -13,4 +13,7 @@ public interface IFileClipboard
 
     /// <summary>Puts files on the clipboard the way the file manager's Copy / Cut does, so they paste there too. False if that isn't supported.</summary>
     bool SetFiles(ClipboardFiles files) => false;
+
+    /// <summary>Puts plain text on the clipboard. False if that isn't supported.</summary>
+    bool SetText(string text) => false;
 }

@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Grepdesk.Core;
 using Grepdesk.Core.Cleanup;
@@ -36,6 +37,7 @@ public partial class CleanupView : UserControl
     private List<SuggestionRow> _rows = [];
     private CancellationTokenSource _cts = new();
     private int _scanProgress;
+    private double _scanFraction;
     private bool _updating;
 
     public IPlatformShell? Shell { get; set; }
@@ -53,11 +55,12 @@ public partial class CleanupView : UserControl
         {
             _scans = value;
             if (value is null) return;
-            value.Progress += count =>
+            value.ScanProgress += p =>
             {
                 if (!CancelButton.IsVisible) return;
-                _scanProgress = count;
-                StatusText.Text = Loc.Get("DiskScanning", count);
+                _scanProgress = p.IndexedFiles;
+                _scanFraction = p.Fraction;
+                StatusText.Text = Loc.Get("DiskScanning", p.IndexedFiles, p.Fraction);
             };
         }
     }
@@ -151,13 +154,26 @@ public partial class CleanupView : UserControl
             if (index is null)
             {
                 _scanProgress = 0;
-                StatusText.Text = Loc.Get("DiskScanning", 0);
+                _scanFraction = 0;
+                StatusText.Text = Loc.Get("DiskScanning", 0, 0.0);
                 index = await scans.ScanAsync(root, token);
             }
 
-            StatusText.Text = Loc.Get("CleanupAnalyzing");
+            StatusText.Text = Loc.Get("CleanupAnalyzingProgress", 0.0);
             var ctx = CleanupContext.ForCurrentUser();
-            _suggestions = await Task.Run(() => CleanupAnalyzer.Analyze(index, root, ctx, token), token);
+            long lastAnalyzeTick = 0;
+            _suggestions = await Task.Run(() => CleanupAnalyzer.Analyze(index, root, ctx, token, onProgress: frac =>
+            {
+                var now = Environment.TickCount64;
+                var prev = Volatile.Read(ref lastAnalyzeTick);
+                if (now - prev < 100) return;
+                if (Interlocked.CompareExchange(ref lastAnalyzeTick, now, prev) != prev) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (CancelButton.IsVisible)
+                        StatusText.Text = Loc.Get("CleanupAnalyzingProgress", frac);
+                });
+            }), token);
             _trashBytes = Shell?.GetTrashSize() ?? 0;
             _duplicates = null;
             _index = index;
@@ -650,7 +666,9 @@ public partial class CleanupView : UserControl
     private void OnItemRightClick(object? sender, PointerReleasedEventArgs e)
     {
         if (e.InitialPressMouseButton != MouseButton.Right) return;
-        if (e.Source is not Control { DataContext: ItemRow { Item: { } item } row }) return;
+        var row = (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext as ItemRow
+                  ?? (e.Source as Control)?.DataContext as ItemRow;
+        if (row?.Item is not { } item) return;
         ItemList.SelectedItem = row;
 
         var open = new MenuItem { Header = Loc.Get("ContextMenuOpen"), Icon = MenuIcons.For("ContextMenuOpen") };

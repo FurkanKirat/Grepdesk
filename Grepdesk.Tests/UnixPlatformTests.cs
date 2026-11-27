@@ -140,6 +140,7 @@ public class LinuxShellIntegrationTests
         "MenuExtractTo" => "Grepdesk: Klasöre çıkart",
         "MenuCompress" => "Grepdesk ile sıkıştır",
         "MenuPaste" => "Grepdesk ile yapıştır",
+        "MenuCopyPath" => "Grepdesk Yolu kopyala",
         _ => key
     };
 
@@ -175,6 +176,12 @@ public class LinuxShellIntegrationTests
         var background = File.ReadAllText(home.Combine("nemo", "actions", "grepdesk-paste-here.nemo_action"));
         Assert.Contains("Selection=none", background);
         Assert.Contains("--paste %P", background);
+
+        var copyDolphin = File.ReadAllText(home.Combine("kio", "servicemenus", "grepdesk-copy-path.desktop"));
+        Assert.Contains("--copy-path %F", copyDolphin);
+        var copyNautilus = File.ReadAllText(home.Combine("nautilus", "scripts", "Grepdesk Yolu kopyala"));
+        Assert.Contains("--copy-path \"$@\"", copyNautilus);
+        Assert.Contains("--copy-path \"$PWD\"", copyNautilus);
 
         if (!OperatingSystem.IsWindows())
             Assert.True(File.GetUnixFileMode(home.Combine("kio", "servicemenus", "grepdesk-compress.desktop")).HasFlag(UnixFileMode.UserExecute));

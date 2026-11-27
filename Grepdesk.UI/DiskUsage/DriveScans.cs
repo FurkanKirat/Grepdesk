@@ -14,14 +14,20 @@ public sealed class DriveScans
     private Task? _running;
     private string? _runningRoot;
 
-    public DriveScans() =>
+    public DriveScans()
+    {
         _index.ProgressChanged += count => Dispatcher.UIThread.Post(() => Progress?.Invoke(count));
+        _index.ScanProgressChanged += p => Dispatcher.UIThread.Post(() => ScanProgress?.Invoke(p));
+    }
 
     /// <summary>Returns an index built elsewhere (the name search page) that covers a drive root, if any.</summary>
     public Func<string, FileIndex?>? FindExisting { get; set; }
 
     /// <summary>Files found so far by a running scan (on the UI thread).</summary>
     public event Action<int>? Progress;
+
+    /// <summary>Files found and estimated progress fraction so far by a running scan (on the UI thread).</summary>
+    public event Action<IndexProgress>? ScanProgress;
 
     /// <summary>A scan of this root finished (on the UI thread), so pages can refresh.</summary>
     public event Action<string>? Scanned;

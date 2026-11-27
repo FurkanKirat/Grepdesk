@@ -143,17 +143,30 @@ public partial class ProgramsView : UserControl
         var ct = _scanCts.Token;
 
         RefreshButton.IsEnabled = false;
-        StatusText.Text = Loc.Get("ProgramsScanning");
+        StatusText.Text = Loc.Get("ProgramsScanningProgress", 0.0);
 
         try
         {
             var custom = _bookmarks.Custom.ToList();
             var favorites = _bookmarks.Favorites.ToList();
+            long lastScanTick = 0;
             var programs = await Task.Run(() => ProgramCatalog.Scan(
                 roots: null,
                 customPaths: custom,
                 favoritePaths: favorites,
-                ct: ct), ct);
+                ct: ct,
+                onProgress: frac =>
+                {
+                    var now = Environment.TickCount64;
+                    var prev = Volatile.Read(ref lastScanTick);
+                    if (frac < 1.0 && now - prev < 80) return;
+                    if (frac < 1.0 && Interlocked.CompareExchange(ref lastScanTick, now, prev) != prev) return;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (!ct.IsCancellationRequested && !RefreshButton.IsEnabled)
+                            StatusText.Text = Loc.Get("ProgramsScanningProgress", frac);
+                    });
+                }), ct);
 
             if (ct.IsCancellationRequested) return;
 

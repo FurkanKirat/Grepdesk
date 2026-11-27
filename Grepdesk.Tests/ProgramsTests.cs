@@ -136,4 +136,24 @@ public class ProgramsTests
         var searchAcronym = ProgramCatalog.FilterAndSort(entries, bookmarks, query: "vsc", ProgramFilter.All);
         Assert.Equal(["Visual Studio Code"], searchAcronym.Select(e => e.Name));
     }
+
+    [Fact]
+    public void Scan_reports_monotonic_progress_ending_at_one()
+    {
+        using var dir = new TempDir();
+        var root1 = Path.Combine(dir.Path, "R1");
+        var root2 = Path.Combine(dir.Path, "R2");
+        Directory.CreateDirectory(root1);
+        Directory.CreateDirectory(root2);
+        File.WriteAllText(Path.Combine(root1, "One.exe"), "bin");
+        File.WriteAllText(Path.Combine(root2, "Two.exe"), "bin");
+
+        var fractions = new List<double>();
+        var results = ProgramCatalog.Scan(
+            [(root1, ProgramSource.StartMenu), (root2, ProgramSource.Desktop)],
+            onProgress: f => fractions.Add(f));
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal([0.5, 1.0], fractions);
+    }
 }

@@ -32,6 +32,12 @@ internal sealed class AppSettings
     /// <summary>Where the folder browser was left, opened again on the next start.</summary>
     public string? LastBrowseFolder { get; set; }
 
+    /// <summary>Last folder picked in any folder selection popup.</summary>
+    public string? LastPickedFolder { get; set; }
+    public string? LastNameSearchFolder { get; set; }
+    public string? LastContentSearchFolder { get; set; }
+    public string? LastOrganizeFolder { get; set; }
+
     /// <summary>Browser tabs and dual-pane layout restored on the next start.</summary>
     public bool DualPaneEnabled { get; set; }
     public int ActivePaneIndex { get; set; }

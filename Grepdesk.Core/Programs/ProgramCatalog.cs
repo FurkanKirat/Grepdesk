@@ -118,25 +118,14 @@ public static class ProgramCatalog
         IEnumerable<(string Path, ProgramSource Source)>? roots = null,
         IEnumerable<string>? customPaths = null,
         IEnumerable<string>? favoritePaths = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<double>? onProgress = null)
     {
         var effectiveRoots = roots?.ToList() ?? DefaultRoots().ToList();
         var entries = new List<ProgramEntry>();
         var seenLaunchPaths = new HashSet<string>(PathUtil.Comparer);
         var seenTargetsByName = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1. Scan OS program roots
-        foreach (var (rootPath, source) in effectiveRoots)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath)) continue;
-
-            var normalizedRoot = PathUtil.Normalize(rootPath);
-            var recursive = source != ProgramSource.Desktop;
-            ScanDirectory(normalizedRoot, normalizedRoot, source, recursive, entries, seenLaunchPaths, seenTargetsByName, ct);
-        }
-
-        // 2. Include user-added custom programs and favorited paths that may live outside standard roots
         var extraPaths = new List<(string Path, bool IsCustom)>();
         if (customPaths is not null)
         {
@@ -149,6 +138,24 @@ public static class ProgramCatalog
                 if (!string.IsNullOrWhiteSpace(p)) extraPaths.Add((p, false));
         }
 
+        var totalSteps = Math.Max(1, effectiveRoots.Count + (extraPaths.Count > 0 ? 1 : 0));
+        var doneSteps = 0;
+
+        // 1. Scan OS program roots
+        foreach (var (rootPath, source) in effectiveRoots)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!string.IsNullOrWhiteSpace(rootPath) && Directory.Exists(rootPath))
+            {
+                var normalizedRoot = PathUtil.Normalize(rootPath);
+                var recursive = source != ProgramSource.Desktop;
+                ScanDirectory(normalizedRoot, normalizedRoot, source, recursive, entries, seenLaunchPaths, seenTargetsByName, ct);
+            }
+            doneSteps++;
+            onProgress?.Invoke(Math.Clamp((double)doneSteps / totalSteps, 0.0, 1.0));
+        }
+
+        // 2. Include user-added custom programs and favorited paths that may live outside standard roots
         foreach (var (rawPath, isCustom) in extraPaths)
         {
             ct.ThrowIfCancellationRequested();
@@ -159,6 +166,8 @@ public static class ProgramCatalog
             if (entry is not null && seenLaunchPaths.Add(entry.LaunchPath))
                 entries.Add(entry);
         }
+        if (extraPaths.Count > 0)
+            onProgress?.Invoke(1.0);
 
         entries.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Name, b.Name));
         return entries;
